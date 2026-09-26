@@ -131,8 +131,33 @@ class _PageBreakOverlay(QWidget):
                 label = (f"— page {n} / {n + 1} —" if mode == "compiled"
                          else f"— page {n} / {n + 1} (estimate) —")
                 painter.drawText(8, y_vp - 4, label)
+                self._draw_folio(painter, y_vp, n)
+                painter.setPen(pen)
             n += 1
+        self._draw_last_folio(painter, n)
         painter.end()
+
+    def _draw_folio(self, painter: QPainter, y_vp: int, number: int) -> None:
+        """The page number LaTeX prints centred in the footer (the
+        default `plain` page style), just above the page's end."""
+        font = painter.font()
+        painter.save()
+        f = self._edit.font()
+        f.setPointSizeF(max(6.0, f.pointSizeF() * 0.9))
+        painter.setFont(f)
+        painter.setPen(QColor(90, 90, 90))
+        fm = painter.fontMetrics()
+        text = str(number)
+        x = (self.width() - fm.horizontalAdvance(text)) // 2
+        painter.drawText(x, y_vp - fm.descent() - 6, text)
+        painter.restore()
+        painter.setFont(font)
+
+    def _draw_last_folio(self, painter: QPainter, number: int) -> None:
+        doc_h = self._edit.document().size().height()
+        y_vp = int(doc_h - self._edit.verticalScrollBar().value())
+        if 0 <= y_vp <= self.height() + 20:
+            self._draw_folio(painter, y_vp, number)
 
     def _paint_anchored(self,
                         anchors: list[tuple[int, float]]) -> None:
@@ -155,6 +180,9 @@ class _PageBreakOverlay(QWidget):
             # which PDF page numbers the anchors originally came from.
             painter.drawText(8, y_vp - 4,
                              f"— page {seq} / {seq + 1} —")
+            self._draw_folio(painter, y_vp, seq)
+            painter.setPen(pen)
+        self._draw_last_folio(painter, len(anchors) + 1)
         painter.end()
 
 
