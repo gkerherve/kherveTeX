@@ -135,7 +135,10 @@ class _ProjectSidebar(QWidget):
         self._project: Project | None = None
 
     def _set_project_controls_visible(self, visible: bool) -> None:
-        for w in (self._auto_page_cb, self._summary_label, self._up_btn,
+        # The dock already says "Documents"; the project title heading
+        # is only worth its space once there is a project.
+        for w in (self._title_label, self._auto_page_cb,
+                  self._summary_label, self._up_btn,
                   self._down_btn, self._compile_btn):
             w.setVisible(visible)
 
@@ -145,7 +148,6 @@ class _ProjectSidebar(QWidget):
         self._project = None
         self._chapters = []
         self._active_index = 0
-        self._title_label.setText("<b>DOCUMENTS</b>")
         self._set_project_controls_visible(False)
         self._list.blockSignals(True)
         self._list.clear()
@@ -835,7 +837,7 @@ class MainWindow(QMainWindow):
         # Read persisted theme when not explicitly provided (e.g. new windows).
         if theme_name is None:
             s = QSettings("kherveDOC", "kherveDOC")
-            theme_name = s.value("theme_name", "") or "Light"
+            theme_name = s.value("theme_name", "") or themes.DEFAULT_THEME
         self._theme_name = theme_name
         self._theme = themes.THEMES.get(theme_name, themes.THEMES["Light"])
         self._current_path: Path | None = None
@@ -3389,6 +3391,7 @@ class MainWindow(QMainWindow):
         desk = self._editor.findChild(QWidget, "desk")
         if desk:
             desk.setStyleSheet(themes.editor_desk_stylesheet(t))
+        self._editor.text_edit.set_desk_color(QColor(t["desk_bg"]))
 
         # Status bar labels
         sl = themes.status_label_stylesheet(t)

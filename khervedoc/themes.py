@@ -317,6 +317,71 @@ THEMES: dict[str, dict[str, str]] = {
     },
 }
 
+def _tinted(bg, bg2, fg, fg2, accent, border, btn, btn_hover, menu_sel,
+            link, desk, dark=False) -> dict[str, str]:
+    """A theme in the Kherve family style (as in KherveSheet): the chrome
+    — menus, toolbars, tabs, status bar — carries the tint, while the
+    document itself stays on white paper."""
+    return {
+        "dark": "1" if dark else "0",
+        "base": "#1e1e22" if dark else "#ffffff",
+        "surface": bg, "chrome": bg2,
+        "text": fg, "text_muted": fg2,
+        "accent": accent, "accent2": accent, "link": link,
+        "highlight": accent, "highlight_text": "#ffffff",
+        "bright_text": "#ff3333", "disabled": fg2, "placeholder": fg2,
+        "alt_base": btn if dark else "#f6f6f8",
+        "tab_active": bg, "tab_inactive": btn, "tab_hover": btn_hover,
+        "border": border, "button": btn, "button_hover": btn_hover,
+        "menu_sel": menu_sel,
+        "desk_bg": desk, "page_bg": "#ffffff", "page_border": border,
+        "status_text": fg2,
+    }
+
+
+# The Kherve family themes, shared with KherveSheet. "Word Blue" is the
+# default: KherveSheet is green like a spreadsheet, kherveDOC blue like
+# a word processor.
+THEMES.update({
+    "Word Blue": _tinted(
+        "#eef3fa", "#dce8f7", "#10233a", "#44607e", "#1f63c6",
+        "#aac4e6", "#e6eef9", "#cfe0f5", "#c4d9f3", "#1a55b0", "#c9d3df"),
+    "Emerald": _tinted(
+        "#eef7f1", "#d4f0df", "#0d2a1d", "#2e5a44", "#0a9d5b",
+        "#a8dcbd", "#e2f3ea", "#bfe9cf", "#bfe9cf", "#0a7d49", "#cbd8d0"),
+    "Arctic": _tinted(
+        "#f0f5fa", "#ffffff", "#1a2a3a", "#5a6a7a", "#2a8ad0",
+        "#c8d4e0", "#f5f8fc", "#dce8f4", "#bcd4f0", "#1a6fbb", "#cfd6de"),
+    "Sky": _tinted(
+        "#f0f8ff", "#f8fcff", "#1a2838", "#5a6878", "#3090d0",
+        "#c0d8f0", "#f4faff", "#d4e8fa", "#b8d8f4", "#2070b0", "#cdd6e0"),
+    "Seafoam": _tinted(
+        "#ecf7f3", "#d2f0e8", "#0e2e28", "#36605a", "#16a98a",
+        "#a8ddd0", "#dff3ee", "#bce8de", "#bce8de", "#0e8a70", "#c9d8d4"),
+    "Teal": _tinted(
+        "#ecf6f7", "#d2eeef", "#0e2a2e", "#365e62", "#179a9a",
+        "#a8dadc", "#def2f3", "#bce6e8", "#bce6e8", "#0e7d7d", "#c8d7d8"),
+    "Lavender": _tinted(
+        "#f4f0fa", "#faf8ff", "#2a1a3a", "#6a5a7a", "#7a50b0",
+        "#d0c0e0", "#f6f2fa", "#e4d8f0", "#d0c0e4", "#6a40a0", "#d4cfdc"),
+    "Rose": _tinted(
+        "#faf0f3", "#fff8fa", "#3a1a22", "#7a5a62", "#c0506a",
+        "#e0c0ca", "#fcf2f5", "#f4d8e0", "#e8bcc8", "#a83050", "#dccfd3"),
+    "Sand": _tinted(
+        "#f8f4ee", "#fffcf5", "#38301a", "#7a7060", "#b89040",
+        "#dcd0b8", "#faf6ee", "#f0e0c8", "#e0ccaa", "#987020", "#d9d3c8"),
+    "Charcoal": _tinted(
+        "#222226", "#2c2c32", "#d8d8dc", "#909098", "#5898d0",
+        "#3c3c44", "#343438", "#40404a", "#3a6090", "#70b0e8", "#18181b",
+        dark=True),
+    "Midnight": _tinted(
+        "#0e1420", "#141c2a", "#c8d0e0", "#8090a8", "#4488cc",
+        "#202838", "#1c2838", "#283850", "#2a5588", "#5ea0e0", "#0a0e16",
+        dark=True),
+})
+
+DEFAULT_THEME = "Word Blue"
+
 THEME_NAMES: list[str] = list(THEMES.keys())
 
 
@@ -357,7 +422,94 @@ def apply_theme(app: QApplication, theme_name: str) -> dict[str, str]:
     pal.setColor(QPalette.Disabled, QPalette.Highlight,  disabled_color)
 
     app.setPalette(pal)
+    app.setStyleSheet(chrome_stylesheet(t))
     return t
+
+
+def chrome_stylesheet(t: dict[str, str]) -> str:
+    """Application-wide styling of the window chrome, after KherveSheet.
+
+    Without it only the palette changed, so menus, toolbars, the status
+    bar, docks and buttons kept Qt's bare flat look and the app read as
+    a web page rather than a desktop application."""
+    bg = t["surface"]
+    bg2 = t.get("chrome", t["surface"])
+    fg, fg2 = t["text"], t["text_muted"]
+    accent = t["accent"]
+    border = t.get("border", t["page_border"])
+    btn = t.get("button", t["tab_inactive"])
+    btn_hover = t.get("button_hover", t["tab_hover"])
+    menu_sel = t.get("menu_sel", t["alt_base"])
+    base = t["base"]
+    return f"""
+QMainWindow, QDialog {{ background: {bg}; }}
+QMenuBar {{
+    background: {bg2}; color: {fg};
+    border-bottom: 1px solid {border}; padding: 2px;
+}}
+QMenuBar::item {{ background: transparent; padding: 3px 8px; }}
+QMenuBar::item:selected {{ background: {menu_sel}; border-radius: 3px; }}
+QMenu {{ background: {bg2}; color: {fg}; border: 1px solid {border}; }}
+QMenu::item {{ padding: 4px 24px 4px 20px; }}
+QMenu::item:selected {{ background: {menu_sel}; color: {fg}; }}
+QMenu::separator {{ height: 1px; background: {border}; margin: 3px 8px; }}
+QToolBar {{
+    background: {bg2}; border: none; border-bottom: 1px solid {border};
+    padding: 1px; spacing: 1px;
+}}
+QToolBar::separator {{ background: {border}; width: 1px; margin: 4px 3px; }}
+QToolButton {{
+    color: {fg}; padding: 1px; margin: 0px; background: transparent;
+    border: 1px solid transparent; border-radius: 3px;
+}}
+QToolButton:hover {{ background: {btn_hover}; }}
+QToolButton:pressed, QToolButton:checked {{
+    background: {menu_sel}; border: 1px solid {border};
+}}
+QToolButton::menu-button {{ border: none; background: transparent; width: 14px; }}
+QStatusBar {{
+    background: {bg2}; color: {fg2}; border-top: 1px solid {border};
+}}
+QStatusBar::item {{ border: none; }}
+QDockWidget {{ color: {fg}; }}
+QDockWidget::title {{
+    background: {bg2}; padding: 4px 6px; border-bottom: 1px solid {border};
+}}
+QPushButton {{
+    background: {btn}; color: {fg};
+    border: 1px solid {border}; padding: 3px 10px; border-radius: 3px;
+}}
+QPushButton:hover {{ background: {btn_hover}; border-color: {accent}; }}
+QPushButton:pressed {{ background: {menu_sel}; }}
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {{
+    background: {base}; color: {fg};
+    border: 1px solid {border}; border-radius: 3px; padding: 2px 4px;
+}}
+QComboBox:hover, QLineEdit:focus {{ border-color: {accent}; }}
+QComboBox QAbstractItemView {{
+    background: {base}; color: {fg}; selection-background-color: {menu_sel};
+    selection-color: {fg};
+}}
+QListWidget, QTreeWidget, QTableWidget {{
+    background: {base}; color: {fg}; border: 1px solid {border};
+    alternate-background-color: {t["alt_base"]};
+}}
+QListWidget::item:selected, QTreeWidget::item:selected {{
+    background: {menu_sel}; color: {fg};
+}}
+QHeaderView::section {{
+    background: {bg2}; color: {fg2}; border: 1px solid {border};
+    padding: 2px 4px;
+}}
+QToolTip {{ background: {bg2}; color: {fg}; border: 1px solid {border}; }}
+QScrollBar:vertical {{ background: {bg}; width: 12px; margin: 0; }}
+QScrollBar:horizontal {{ background: {bg}; height: 12px; margin: 0; }}
+QScrollBar::handle {{ background: {border}; border-radius: 4px; min-height: 24px; min-width: 24px; margin: 2px; }}
+QScrollBar::handle:hover {{ background: {accent}; }}
+QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
+QScrollBar::add-page, QScrollBar::sub-page {{ background: none; }}
+QSplitter::handle {{ background: {border}; }}
+"""
 
 
 # ------------------------------------------------------------------ #

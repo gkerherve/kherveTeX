@@ -235,6 +235,7 @@ class PagedTextEdit(QTextEdit):
         super().__init__(parent)
         self._page_height_px = 0
         self._page_width_px = 0
+        self._desk_color = QColor(DESK_COLOR)
         # Number of pages in the most recent compiled PDF. The
         # overlay uses this (when >= 2) to position break lines
         # proportionally to the editor's actual content height —
@@ -358,6 +359,11 @@ class PagedTextEdit(QTextEdit):
             if self.document().pageSize() != size:
                 self.document().setPageSize(size)
 
+    def set_desk_color(self, color: QColor) -> None:
+        """Colour of the gaps between sheets — the theme's desk colour."""
+        self._desk_color = QColor(color)
+        self.viewport().update()
+
     def page_gap_px(self) -> int:
         """Grey gap drawn between sheets, scaled with the page."""
         return max(6, round(self._page_height_px * 0.011))
@@ -415,7 +421,7 @@ class PagedTextEdit(QTextEdit):
                 continue
             if k < pages - 1:
                 gap = QRectF(0, bottom, w, g)
-                p.fillRect(gap, DESK_COLOR)
+                p.fillRect(gap, self._desk_color)
                 shade = QLinearGradient(0, bottom, 0, bottom + g * 0.6)
                 shade.setColorAt(0, QColor(0, 0, 0, 55))
                 shade.setColorAt(1, QColor(0, 0, 0, 0))
