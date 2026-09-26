@@ -17,7 +17,7 @@ import time
 
 from PySide6.QtCore import QEvent, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import (
-    QAction, QColor, QFont, QImage, QKeySequence, QTextBlockFormat,
+    QAction, QColor, QFont, QFontDatabase, QImage, QKeySequence, QTextBlockFormat,
     QTextCharFormat, QTextCursor, QTextFrameFormat, QTextImageFormat,
     QTextLength, QTextListFormat, QTextTable, QTextTableFormat,
 )
@@ -388,6 +388,38 @@ _ALIGNMENT_FROM_QT = {
     Qt.AlignJustify: "justify",
 }
 _TITLE_FONT_SIZE = 28
+
+_PX_PER_CM = 96 / 2.54
+
+# Screen stand-ins for the LaTeX body fonts, best match first. Georgia
+# (the old fixed default) is much wider than Computer Modern, so lines
+# and pages broke in different places on screen than in the PDF.
+_SCREEN_FONTS_FOR_LATEX = {
+    "default":   ["Latin Modern Roman", "LM Roman 10", "CMU Serif",
+                  "Computer Modern", "Times New Roman", "Times"],
+    "times":     ["Times New Roman", "Times", "TeX Gyre Termes",
+                  "Nimbus Roman"],
+    "palatino":  ["Palatino Linotype", "Palatino", "TeX Gyre Pagella",
+                  "Book Antiqua"],
+    "helvetica": ["Helvetica", "Arial", "TeX Gyre Heros", "Liberation Sans"],
+    "courier":   ["Courier New", "Courier", "TeX Gyre Cursor"],
+    "charter":   ["Charter", "Bitstream Charter", "XCharter"],
+    "libertine": ["Linux Libertine O", "Linux Libertine",
+                  "Libertinus Serif"],
+}
+
+
+def screen_font_for(meta: DocMeta) -> str:
+    """The editor font for *meta*: the user's explicit choice, or — when
+    left at the default — the closest installed match to the PDF font."""
+    chosen = meta.visual_font_family
+    if chosen and chosen != "Georgia":
+        return chosen
+    installed = set(QFontDatabase.families())
+    for family in _SCREEN_FONTS_FOR_LATEX.get(meta.body_font_family, []):
+        if family in installed:
+            return family
+    return chosen or "Georgia"
 
 
 def _heading_char_format(level: int) -> QTextCharFormat:
@@ -854,6 +886,7 @@ class DocumentEditor(QWidget):
         page_layout.setSpacing(0)
         page_layout.addWidget(self._edit, 1)
         self._apply_page_size(page_sizes.by_code(self._meta.page_size))
+        self._apply_page_layout()
 
         # Attach the live spell-check highlighter. The class is a
         # graceful no-op when pyspellchecker isn't installed, so this
@@ -1027,8 +1060,9 @@ class DocumentEditor(QWidget):
         self._meta = meta
         if meta.page_size != prev_size:
             self._apply_page_size(page_sizes.by_code(meta.page_size))
-        if meta.visual_font_family != prev_vfont:
-            self._apply_visual_font(meta.visual_font_family)
+        if screen_font_for(meta) != prev_vfont:
+            self._apply_visual_font(screen_font_for(meta))
+        self._apply_page_layout()
         self._on_text_changed()
 
     def set_page_size(self, code: str) -> None:
@@ -1099,8 +1133,8 @@ class DocumentEditor(QWidget):
         self._building = True
         try:
             self._meta = doc.meta
-            if doc.meta.visual_font_family != self._visual_font_family:
-                self._visual_font_family = doc.meta.visual_font_family
+            if screen_font_for(doc.meta) != self._visual_font_family:
+                self._visual_font_family = screen_font_for(doc.meta)
                 f = QFont(self._visual_font_family)
                 f.setPointSize(self._body_font_pt)
                 self._edit.setFont(f)
@@ -1114,6 +1148,7 @@ class DocumentEditor(QWidget):
                     cursor.insertBlock(QTextBlockFormat(), QTextCharFormat())
                 first = False
                 self._render_block(cursor, block)
+            self._apply_page_layout()
         finally:
             self._building = False
         self.documentChanged.emit()
@@ -1144,6 +1179,7 @@ class DocumentEditor(QWidget):
             first = False
             self._render_block(cursor, block)
         cursor.endEditBlock()
+        self._apply_page_layout()
         self._edit.setTextCursor(cursor)
         self._edit.ensureCursorVisible()
 
@@ -1172,6 +1208,7 @@ class DocumentEditor(QWidget):
             first = False
             self._render_block(cursor, block)
         cursor.endEditBlock()
+        self._apply_page_layout()
         cursor.movePosition(QTextCursor.Start)
         self._edit.setTextCursor(cursor)
         self._edit.ensureCursorVisible()
@@ -2018,6 +2055,7 @@ class DocumentEditor(QWidget):
             fmt.setFont(f)
             block_cursor.setCharFormat(fmt)
         block_cursor.endEditBlock()
+        self._apply_page_layout()
         self._on_text_changed()
 
     def toggle_heading_numbered(self, numbered: bool) -> None:
@@ -2143,7 +2181,60 @@ class DocumentEditor(QWidget):
                 block = block.next()
         finally:
             self._building = False
+        self._apply_page_layout()
         self._on_text_changed()
+
+    def _apply_page_layout(self) -> None:
+        """Mirror the PDF's geometry on screen: per-side margins from the
+        document settings, plus line spacing and paragraph indentation.
+        Must be re-run after zoom, meta or content changes because the
+        pixel values scale with zoom."""
+        zoom = self._zoom_percent / 100 if self._zoom_percent else 1.0
+        m = self._meta
+        doc = self._edit.document()
+        root = doc.rootFrame()
+        ff = root.frameFormat()
+        ff.setTopMargin(m.margin_top_cm * _PX_PER_CM * zoom)
+        ff.setBottomMargin(m.margin_bottom_cm * _PX_PER_CM * zoom)
+        ff.setLeftMargin(m.margin_left_cm * _PX_PER_CM * zoom)
+        ff.setRightMargin(m.margin_right_cm * _PX_PER_CM * zoom)
+        root.setFrameFormat(ff)
+
+        em_px = self._body_font_pt * 96 / 72 * zoom
+        spacing = max(0.5, float(m.line_spacing or 1.0))
+        was_building = self._building
+        self._building = True
+        # Fold the layout pass into the previous undo step so Ctrl+Z
+        # undoes the user's edit, not an invisible reformat.
+        edit = QTextCursor(doc)
+        edit.joinPreviousEditBlock()
+        try:
+            prev_state = None
+            block = doc.firstBlock()
+            while block.isValid():
+                state = block.userState()
+                bfmt = block.blockFormat()
+                if abs(spacing - 1.0) > 0.01:
+                    bfmt.setLineHeight(spacing * 100, 1)  # ProportionalHeight
+                else:
+                    bfmt.setLineHeight(0, 0)              # SingleHeight
+                if state in (_STATE_PARAGRAPH, -1):
+                    # LaTeX never indents the first paragraph after a
+                    # heading, title or display block.
+                    follows_para = prev_state in (_STATE_PARAGRAPH, -1)
+                    if m.paragraph_indent:
+                        bfmt.setTextIndent(1.5 * em_px if follows_para else 0)
+                        bfmt.setBottomMargin(0)
+                    else:
+                        bfmt.setTextIndent(0)
+                        bfmt.setBottomMargin(0.8 * em_px)
+                QTextCursor(block).setBlockFormat(bfmt)
+                if block.text().strip() or state not in (_STATE_PARAGRAPH, -1):
+                    prev_state = state
+                block = block.next()
+        finally:
+            edit.endEditBlock()
+            self._building = was_building
 
     def zoom_percent(self) -> int:
         return self._zoom_percent
@@ -2202,8 +2293,7 @@ class DocumentEditor(QWidget):
         scaled_h = round(page.height_px * percent / 100)
         self._page.setFixedWidth(scaled_w)
         self._edit.set_page_size_px(scaled_w, scaled_h)
-        self._edit.document().setDocumentMargin(
-            self._base_doc_margin * percent / 100)
+        self._apply_page_layout()
         self._resize_to_document()
 
     def set_fit_to_width(self, enabled: bool) -> None:
