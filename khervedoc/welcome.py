@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 LAYOUT_SIDE = "side"
 LAYOUT_VISUAL = "visual"
+LAYOUT_PAGE = "page"
 
 
 class WelcomeDialog(QDialog):
@@ -129,10 +130,13 @@ class WelcomeDialog(QDialog):
                 (LAYOUT_SIDE, "Visual + PDF side by side",
                  "Edit on the left and watch the compiled LaTeX PDF on "
                  "the right, updated as you type."),
-                (LAYOUT_VISUAL, "Visual only — like Word",
-                 "Just the page. The PDF and console are hidden and "
-                 "nothing compiles while you write; export a PDF or turn "
-                 "the side panel on whenever you need it.")):
+                (LAYOUT_VISUAL, "Visual only",
+                 "The page with the Documents list beside it. The PDF "
+                 "and console are hidden and nothing compiles while you "
+                 "write."),
+                (LAYOUT_PAGE, "Page only — like Word",
+                 "Just the page: the Documents list is hidden too. "
+                 "Bring anything back from the View menu.")):
             box = QVBoxLayout()
             rb = QRadioButton(title)
             f = rb.font()

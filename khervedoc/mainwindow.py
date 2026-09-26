@@ -4492,9 +4492,11 @@ class MainWindow(QMainWindow):
 
     def apply_layout_mode(self, mode: str) -> None:
         """"side": visual editor with the live PDF beside it.
-        "visual": the page alone, like Word — the PDF / console panel is
-        hidden and nothing compiles in the background."""
-        visual = mode == "visual"
+        "visual": no PDF / console panel and no background compiles.
+        "page": as "visual", with the Documents list hidden as well —
+        just the page, like Word."""
+        visual = mode in ("visual", "page")
+        self._project_dock.setVisible(mode != "page")
         self.act_visual_only.setChecked(visual)
         self.act_side_by_side.setChecked(not visual)
         self.act_auto_compile.setChecked(not visual)

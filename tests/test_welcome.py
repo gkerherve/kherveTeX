@@ -72,3 +72,20 @@ def test_welcome_example_choice_loads_it(window, monkeypatch):
     window.show_welcome()
     assert window._auto_compile is False
     assert "Welcome to KherveTeX" not in window._editor.text_edit.toPlainText()
+
+
+def test_page_only_also_hides_the_documents_list(window):
+    window.show()
+    window.apply_layout_mode("page")
+    assert window._project_dock.isHidden()
+    assert window._side_tabs.isHidden() and window._auto_compile is False
+    window.apply_layout_mode("visual")
+    assert not window._project_dock.isHidden()
+    assert window._side_tabs.isHidden()
+
+
+def test_welcome_offers_three_ways_to_work(qapp):
+    from khervedoc.welcome import WelcomeDialog
+    d = WelcomeDialog([], [])
+    labels = [b.text() for b in d._group.buttons()]
+    assert len(labels) == 3 and any("Page only" in t for t in labels)
