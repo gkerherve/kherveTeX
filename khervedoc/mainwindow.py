@@ -31,7 +31,6 @@ from .compiler import (
     download_tectonic_bundle, tectonic_available, tectonic_cache_size_mb,
     typst_available,
 )
-from .ai_assistant import AiDock
 from .editor import DocumentEditor, TEMPLATE_CHOICES
 from .equation_editor import (
     ChemfigEditorDialog, ChemistryEditorDialog, EquationEditorDialog,
@@ -860,8 +859,9 @@ class MainWindow(QMainWindow):
         self._tabs = QTabWidget(self)
         self._tabs.addTab(self._editor, "Visual")
         self._tabs.addTab(self._latex_view, "Code")
-        self._tabs.addTab(self._preview, "PDF")
-        self._tabs.addTab(self._console, "Console")
+        # The PDF and compiler log live only in the right-hand side panel;
+        # _preview / _console stay as off-screen mirrors so existing
+        # update paths keep working.
         self._tabs.currentChanged.connect(self._on_tab_changed)
 
         # Splitter: left = tabs, right = side panel (hidden until toggled).
@@ -913,20 +913,6 @@ class MainWindow(QMainWindow):
         self._project_sidebar.chapterToggled.connect(self._on_chapter_toggled)
         self._project_sidebar.addChapterRequested.connect(self._add_chapter_to_project)
         self._project_sidebar.compileRequested.connect(self._compile_project)
-
-        # AI chat side panel. Visible by default (persisted per user);
-        # toggled from the toolbar sparkle button, the View menu or Ctrl+7.
-        # Writes generated LaTeX straight into the visual editor.
-        self._ai_dock = AiDock(lambda: self._editor, self)
-        self._ai_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
-        self.addDockWidget(Qt.RightDockWidgetArea, self._ai_dock)
-        self._ai_dock.setVisible(
-            self._settings.value("ai_dock_visible", True, bool))
-        self._act_ai_chat = self._ai_dock.toggleViewAction()
-        self._act_ai_chat.setText("AI &Chat")
-        self._act_ai_chat.setShortcut(QKeySequence("Ctrl+7"))
-        self._act_ai_chat.setIcon(icons.ai_chat())
-        self._act_ai_chat.setToolTip("Show or hide the AI chat panel (Ctrl+7)")
 
         self._status = QStatusBar(self)
         self.setStatusBar(self._status)
@@ -1097,7 +1083,8 @@ class MainWindow(QMainWindow):
         # triggers _kick_compile(), and compiling before the event loop is
         # running crashes QPdfView's OpenGL init on some Windows GPU
         # drivers (STATUS_STACK_BUFFER_OVERRUN / 0xC0000409).
-        if self._settings.value("side_by_side", False, type=bool):
+        # Default on: with no PDF tab, the side panel is where the PDF is.
+        if self._settings.value("side_by_side", True, type=bool):
             self.act_side_by_side.setChecked(True)
             self._side_by_side = True
             self._side_tabs.show()
@@ -1346,12 +1333,12 @@ class MainWindow(QMainWindow):
         self.act_view_latex = QAction("Show &Code tab", self,
                                       shortcut=QKeySequence("Ctrl+2"),
                                       triggered=lambda: self._tabs.setCurrentIndex(1))
-        self.act_view_pdf = QAction("Show &PDF tab", self,
+        self.act_view_pdf = QAction("Show &PDF", self,
                                     shortcut=QKeySequence("Ctrl+3"),
-                                    triggered=lambda: self._tabs.setCurrentIndex(2))
-        self.act_view_console = QAction("Show Co&nsole tab", self,
+                                    triggered=lambda: self._show_side_tab(0))
+        self.act_view_console = QAction("Show Co&nsole", self,
                                         shortcut=QKeySequence("Ctrl+6"),
-                                        triggered=lambda: self._tabs.setCurrentIndex(3))
+                                        triggered=lambda: self._show_side_tab(1))
         self.act_side_by_side = QAction("PDF &side panel", self,
                                         shortcut=QKeySequence("Ctrl+4"),
                                         checkable=True, triggered=self._toggle_side_by_side)
@@ -1620,7 +1607,6 @@ class MainWindow(QMainWindow):
         m_view.addSeparator()
         m_view.addAction(self.act_side_by_side)
         m_view.addAction(self._project_dock.toggleViewAction())
-        m_view.addAction(self._ai_dock.toggleViewAction())
         m_view.addSeparator()
         m_view.addAction(self.act_fit_page_width)
         m_view.addSeparator()
@@ -1904,7 +1890,6 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
         tb.addAction(self.act_commit_now); tb.addAction(self.act_history)
         tb.addSeparator()
-        tb.addAction(self._act_ai_chat)
 
         # Right-aligned compile buttons: push them to the far right
         # with a stretching spacer widget.
@@ -2035,12 +2020,6 @@ class MainWindow(QMainWindow):
         self._settings.setValue("theme_name", self._theme_name)
         self._settings.setValue("theme_dark", self._is_dark)
         self._settings.setValue("side_by_side", self._side_by_side)
-        if self.isVisible():
-            # Only trust the dock state when the window was actually shown;
-            # an offscreen construct-and-close (tests) would persist False
-            # and silently hide the panel for real sessions.
-            self._settings.setValue("ai_dock_visible",
-                                    self._ai_dock.isVisible())
         self._settings.setValue("fit_page_width", self._editor.fit_to_width())
         # Persist document-default preferences so new documents start
         # with the user's preferred font size, family, margins etc.
@@ -3022,17 +3001,12 @@ class MainWindow(QMainWindow):
     # ----- find bar -----
 
     def _show_find_bar(self) -> None:
-        if self._tabs.currentIndex() == 2:
-            self._preview.show_find_bar()
-            return
         self._find_bar.set_replace_visible(False)
         self._find_bar.show()
         self._find_bar.field.setFocus()
         self._find_bar.field.selectAll()
 
     def _show_replace_bar(self) -> None:
-        if self._tabs.currentIndex() >= 2:
-            return
         self._find_bar.set_replace_visible(True)
         self._find_bar.show()
         self._find_bar.field.setFocus()
@@ -3155,6 +3129,12 @@ class MainWindow(QMainWindow):
             "}")
         return w
 
+    def _show_side_tab(self, index: int) -> None:
+        if not self._side_by_side:
+            self.act_side_by_side.setChecked(True)
+            self._toggle_side_by_side(True)
+        self._side_tabs.setCurrentIndex(index)
+
     def _toggle_side_by_side(self, checked: bool) -> None:
         self._side_by_side = checked
         if checked:
@@ -3221,7 +3201,6 @@ class MainWindow(QMainWindow):
         self.act_equation_builder.setIcon(icons.equation_builder())
         self.act_chemistry.setIcon(icons.chemistry())
         self.act_chemfig.setIcon(icons.chemfig_structure())
-        self._act_ai_chat.setIcon(icons.ai_chat())
         self.act_pagebreak.setIcon(icons.page_break())
         self.act_hrule.setIcon(icons.horizontal_rule())
         self.act_commit_now.setIcon(icons.commit())
@@ -4476,9 +4455,9 @@ class MainWindow(QMainWindow):
         # Signal the error without stealing focus from the Visual tab,
         # so the user can fix the LaTeX without losing their place.
         if not result.ok:
-            self._tabs.tabBar().setTabTextColor(3, QColor("#c0392b"))
+            self._side_tabs.tabBar().setTabTextColor(1, QColor("#c0392b"))
         else:
-            self._tabs.tabBar().setTabTextColor(3, QColor())
+            self._side_tabs.tabBar().setTabTextColor(1, QColor())
 
     # ----- cross-tab "Show in …" navigation -----
 
@@ -4491,10 +4470,8 @@ class MainWindow(QMainWindow):
         snippet = self._editor.cursor_snippet()
         if not snippet:
             return
-        target = self._pdf_side_panel if self._side_by_side else self._preview
-        if not self._side_by_side:
-            self._tabs.setCurrentIndex(2)
-        target.find_text(snippet)
+        self._show_side_tab(0)
+        self._pdf_side_panel.find_text(snippet)
 
     def _nav_latex_to_formatted(self) -> None:
         snippet = self._latex_view.cursor_snippet()
@@ -4505,13 +4482,11 @@ class MainWindow(QMainWindow):
         snippet = self._latex_view.cursor_snippet()
         if not snippet:
             return
-        target = self._pdf_side_panel if self._side_by_side else self._preview
-        if not self._side_by_side:
-            self._tabs.setCurrentIndex(2)
-        target.find_text(snippet)
+        self._show_side_tab(0)
+        self._pdf_side_panel.find_text(snippet)
 
     def _nav_pdf_to_formatted(self) -> None:
-        page = self._preview.current_page()
+        page = self._pdf_side_panel.current_page()
         anchors = self._editor.text_edit.page_anchor_positions()
         # Find the anchor for this page and scroll the editor there
         for page_no, y in anchors:
@@ -4530,7 +4505,7 @@ class MainWindow(QMainWindow):
         self._tabs.setCurrentIndex(0)
 
     def _nav_pdf_to_latex(self) -> None:
-        page = self._preview.current_page()
+        page = self._pdf_side_panel.current_page()
         anchors = self._editor.text_edit._page_anchors
         # Get the text snippet for the current page
         for page_no, snippet in anchors:
