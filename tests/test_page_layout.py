@@ -100,3 +100,29 @@ def test_citations_display_resolved_but_roundtrip_keys(qapp):
                for c in para.children)
     assert any(isinstance(c, CrossRef) and c.label == "sec:intro"
                for c in para.children)
+
+
+def test_headings_scale_like_latex_and_are_numbered(qapp):
+    from khervedoc.editor import _P_HEADING_NUMBER
+    ed = DocumentEditor()
+    ed.set_fit_to_width(False)
+    ed.set_document(Document(children=[
+        Section(level=1, children=[Text("A")]),
+        Section(level=2, children=[Text("A1")]),
+        Section(level=1, numbered=False, children=[Text("Star")]),
+        Section(level=1, children=[Text("B")]),
+    ]))
+    blocks = _blocks(ed)
+    z = ed.zoom_percent() / 100
+    size = blocks[0].begin().fragment().charFormat().font().pointSizeF()
+    assert size == pytest.approx(12 * 17.28 / 12 * z)
+    numbers = [b.blockFormat().property(_P_HEADING_NUMBER) for b in blocks]
+    assert numbers == ["1", "1.1", None, "2"]
+    assert blocks[0].blockFormat().textIndent() > 0
+
+
+def test_bold_first_word_stays_a_paragraph(qapp):
+    ed = _editor(DocMeta())
+    ed.set_document(Document(children=[Paragraph(children=[
+        Text("Note:", marks=["bold"]), Text(" plain")])]))
+    assert isinstance(ed.get_document().children[0], Paragraph)

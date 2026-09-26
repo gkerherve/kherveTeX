@@ -14,8 +14,8 @@ import shutil
 import unicodedata
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, Qt, Signal
-from PySide6.QtGui import QColor, QImage, QPainter, QPen
+from PySide6.QtCore import QEvent, QPointF, Qt, Signal
+from PySide6.QtGui import QColor, QImage, QPainter, QPen, QTextFormat
 from PySide6.QtWidgets import QTextEdit, QWidget
 
 
@@ -43,6 +43,12 @@ def _is_document_file(p: Path) -> bool:
     if name.endswith(".kdoc.json") or name.endswith(".ktex.json"):
         return True
     return p.suffix.lower() in _DOCUMENT_SUFFIXES
+
+
+# Block-format property carrying a heading's display number ("2.1").
+# The number is painted, never stored as text, so it can't leak into the
+# model or the LaTeX (which numbers headings itself).
+HEADING_NUMBER_PROPERTY = QTextFormat.UserProperty + 40
 
 
 class _PageBreakOverlay(QWidget):
@@ -285,6 +291,43 @@ class PagedTextEdit(QTextEdit):
         self._page_width_px = width_px
         self._page_height_px = height_px
         self._overlay.update()
+
+    def paintEvent(self, ev):
+        super().paintEvent(ev)
+        self._paint_heading_numbers()
+
+    def _paint_heading_numbers(self) -> None:
+        doc = self.document()
+        layout = doc.documentLayout()
+        dx = -self.horizontalScrollBar().value()
+        dy = -self.verticalScrollBar().value()
+        visible = self.viewport().rect()
+        painter = None
+        block = doc.firstBlock()
+        while block.isValid():
+            number = block.blockFormat().property(HEADING_NUMBER_PROPERTY)
+            if number:
+                rect = layout.blockBoundingRect(block).translated(dx, dy)
+                line = block.layout().lineAt(0) if block.layout() else None
+                if line is not None and line.isValid() \
+                        and rect.bottom() >= visible.top() \
+                        and rect.top() <= visible.bottom():
+                    if painter is None:
+                        painter = QPainter(self.viewport())
+                    it = block.begin()
+                    if not it.atEnd():
+                        cf = it.fragment().charFormat()
+                        painter.setFont(cf.font())
+                        painter.setPen(cf.foreground().color()
+                                       if cf.hasProperty(QTextFormat.ForegroundBrush)
+                                       else self.palette().text().color())
+                    painter.drawText(
+                        QPointF(rect.left(),
+                                rect.top() + line.y() + line.ascent()),
+                        str(number))
+            block = block.next()
+        if painter is not None:
+            painter.end()
 
     def resizeEvent(self, ev):
         super().resizeEvent(ev)

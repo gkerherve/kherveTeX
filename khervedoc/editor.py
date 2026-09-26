@@ -17,7 +17,7 @@ import time
 
 from PySide6.QtCore import QEvent, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import (
-    QAction, QColor, QFont, QFontDatabase, QImage, QKeySequence, QTextBlockFormat,
+    QAction, QColor, QFont, QFontDatabase, QFontMetricsF, QImage, QKeySequence, QTextBlockFormat,
     QTextCharFormat, QTextCursor, QTextFrameFormat, QTextImageFormat,
     QTextLength, QTextListFormat, QTextTable, QTextTableFormat,
 )
@@ -260,6 +260,7 @@ _STATE_RAW = 102
 # Re-export from model so existing imports (tests, etc.) keep working.
 from .model import CHAPTER_CLASSES, class_supports_chapter  # noqa: F401
 from .references import ReferenceResolver
+from .paged_edit import HEADING_NUMBER_PROPERTY
 
 
 # ---- char-format custom property ids ----
@@ -376,7 +377,18 @@ _LINE_SEP = chr(0x2028)
 # Heading sizes: 0 is reserved for \chapter (the largest), then the
 # usual section / subsection / … hierarchy. Chapter sits above
 # Heading 1 because that's how LaTeX's book / report layout typesets it.
-_HEADING_FONT_SIZES = {0: 26, 1: 22, 2: 18, 3: 15, 4: 13, 5: 12}
+# Heading size as a multiple of the body size, from LaTeX's standard
+# classes at 12pt: \chapter \huge, \section \Large, \subsection
+# \large, and body size below that.
+_HEADING_SCALE = {0: 24.88 / 12, 1: 17.28 / 12, 2: 14.4 / 12,
+                  3: 1.0, 4: 1.0, 5: 1.0}
+# Space above / below headings in body ems, after article.cls
+# (\section 3.5ex / 2.3ex, \subsection 3.25ex / 1.5ex; 1ex ~ 0.43em).
+_HEADING_SPACING = {0: (3.0, 2.0), 1: (1.5, 1.0), 2: (1.4, 0.65),
+                    3: (1.4, 0.65), 4: (1.4, 0.0), 5: (1.4, 0.0)}
+# Levels LaTeX numbers by default (secnumdepth 3 in article).
+_NUMBERED_HEADING_LEVELS = (0, 1, 2, 3)
+_P_HEADING_NUMBER = HEADING_NUMBER_PROPERTY
 
 # Bidirectional mapping for paragraph alignment.
 _QT_ALIGNMENT = {
@@ -394,7 +406,7 @@ _ALIGNMENT_FROM_QT = {
     Qt.AlignRight: "right",
     Qt.AlignJustify: "justify",
 }
-_TITLE_FONT_SIZE = 28
+_TITLE_SCALE = 20.74 / 12   # \maketitle uses \LARGE
 
 _PX_PER_CM = 96 / 2.54
 
@@ -429,11 +441,12 @@ def screen_font_for(meta: DocMeta) -> str:
     return chosen or "Georgia"
 
 
-def _heading_char_format(level: int) -> QTextCharFormat:
+def _heading_char_format(level: int, body_pt: float = 12,
+                         family: str | None = None) -> QTextCharFormat:
     fmt = QTextCharFormat()
-    f = QFont()
+    f = QFont(family) if family else QFont()
     f.setBold(True)
-    f.setPointSize(_HEADING_FONT_SIZES.get(level, 12))
+    f.setPointSizeF(body_pt * _HEADING_SCALE.get(level, 1.0))
     fmt.setFont(f)
     return fmt
 
@@ -448,11 +461,12 @@ def _frame_char_format() -> QTextCharFormat:
     return fmt
 
 
-def _title_char_format() -> QTextCharFormat:
+def _title_char_format(body_pt: float = 12,
+                       family: str | None = None) -> QTextCharFormat:
     fmt = QTextCharFormat()
-    f = QFont()
+    f = QFont(family) if family else QFont()
     f.setBold(True)
-    f.setPointSize(_TITLE_FONT_SIZE)
+    f.setPointSizeF(body_pt * _TITLE_SCALE)
     fmt.setFont(f)
     return fmt
 
@@ -1325,7 +1339,7 @@ class DocumentEditor(QWidget):
             cursor.setBlockFormat(_title_block_format())
             cursor.block().setUserState(_STATE_TITLE)
             for inline in block.children:
-                self._insert_inline(cursor, inline, base_format=_title_char_format())
+                self._insert_inline(cursor, inline, base_format=self._title_fmt())
             return
         if isinstance(block, Author):
             cursor.setBlockFormat(_author_block_format())
@@ -1359,7 +1373,7 @@ class DocumentEditor(QWidget):
             else:
                 state = block.level
             cursor.block().setUserState(state)
-            cfmt = _heading_char_format(block.level)
+            cfmt = self._heading_fmt(block.level)
             for inline in block.children:
                 self._insert_inline(cursor, inline, base_format=cfmt)
         elif isinstance(block, Paragraph):
@@ -1935,24 +1949,27 @@ class DocumentEditor(QWidget):
         base = size / zoom if zoom > 0 else size
 
         # Title: large + bold + centered (with state hint relaxes the size threshold).
-        if align_flag == Qt.AlignHCenter and bold and (base >= 24 or state == _STATE_TITLE):
+        body = float(self._body_font_pt)
+        if align_flag == Qt.AlignHCenter and bold and (
+                base >= body * 1.6 or state == _STATE_TITLE):
             return Title(children=self._strip_implicit_marks(children, ["bold"]))
 
         # Author: centered, italic, small-ish.
         if align_flag == Qt.AlignHCenter and italic and (base <= 17 or state == _STATE_AUTHOR):
             return Author(children=self._strip_implicit_marks(children, ["italic"]))
 
-        # Heading: bold + size near one of the canonical heading sizes.
-        if bold and base >= 12:
+        # Heading guessed from size — only for blocks with no stored
+        # style (pasted content), and only when visibly larger than body
+        # text: a paragraph whose first word is bold must stay a
+        # paragraph, not turn into a \subparagraph.
+        if state == -1 and bold and base > body * 1.1:
             best_level: int | None = None
             best_diff = 99.0
-            for level, expected in _HEADING_FONT_SIZES.items():
-                d = abs(base - expected)
+            for level in (0, 1, 2):
+                d = abs(base - body * _HEADING_SCALE[level])
                 if d < best_diff:
                     best_diff = d; best_level = level
-            # 3pt tolerance — generous enough to absorb minor user-typed
-            # changes without misclassifying body text.
-            if best_level is not None and best_diff < 3:
+            if best_level is not None and best_diff < body * 0.25:
                 return Section(level=best_level,
                                children=self._strip_implicit_marks(children, ["bold"]))
 
@@ -2059,7 +2076,7 @@ class DocumentEditor(QWidget):
         if level == -1:
             block.setUserState(_STATE_TITLE)
             QTextCursor(block).setBlockFormat(_title_block_format())
-            block_cursor.mergeCharFormat(_title_char_format())
+            block_cursor.mergeCharFormat(self._title_fmt())
         elif level == -2:
             block.setUserState(_STATE_AUTHOR)
             QTextCursor(block).setBlockFormat(_author_block_format())
@@ -2075,7 +2092,7 @@ class DocumentEditor(QWidget):
         elif level == -5:
             block.setUserState(_STATE_CHAPTER)
             QTextCursor(block).setBlockFormat(QTextBlockFormat())
-            block_cursor.mergeCharFormat(_heading_char_format(0))
+            block_cursor.mergeCharFormat(self._heading_fmt(0))
         elif level == -6:
             block.setUserState(_STATE_FRAME)
             QTextCursor(block).setBlockFormat(QTextBlockFormat())
@@ -2083,7 +2100,7 @@ class DocumentEditor(QWidget):
         elif level >= 1:
             block.setUserState(level)
             QTextCursor(block).setBlockFormat(QTextBlockFormat())
-            block_cursor.mergeCharFormat(_heading_char_format(level))
+            block_cursor.mergeCharFormat(self._heading_fmt(level))
         else:
             block.setUserState(_STATE_PARAGRAPH)
             QTextCursor(block).setBlockFormat(QTextBlockFormat())
@@ -2223,6 +2240,16 @@ class DocumentEditor(QWidget):
         self._apply_page_layout()
         self._on_text_changed()
 
+    def _heading_fmt(self, level: int) -> QTextCharFormat:
+        zoom = self._zoom_percent / 100 if self._zoom_percent else 1.0
+        return _heading_char_format(level, self._body_font_pt * zoom,
+                                    self._visual_font_family)
+
+    def _title_fmt(self) -> QTextCharFormat:
+        zoom = self._zoom_percent / 100 if self._zoom_percent else 1.0
+        return _title_char_format(self._body_font_pt * zoom,
+                                  self._visual_font_family)
+
     def _apply_page_layout(self) -> None:
         """Mirror the PDF's geometry on screen: per-side margins from the
         document settings, plus line spacing and paragraph indentation.
@@ -2249,10 +2276,46 @@ class DocumentEditor(QWidget):
         edit.joinPreviousEditBlock()
         try:
             prev_state = None
+            has_chapters = self._has_chapter_blocks()
+            counters = [0] * 6
             block = doc.firstBlock()
             while block.isValid():
                 state = block.userState()
                 bfmt = block.blockFormat()
+                number = ""
+                level = 0 if state == _STATE_CHAPTER else (
+                    state if 1 <= state <= 5 else None)
+                if level is not None:
+                    counters[level] += 1
+                    for i in range(level + 1, len(counters)):
+                        counters[i] = 0
+                    if level in _NUMBERED_HEADING_LEVELS:
+                        start = 0 if has_chapters else 1
+                        number = ".".join(
+                            str(c) for c in counters[start:level + 1])
+                any_level = level
+                if _STATE_HEADING_STAR_BASE < state <= _STATE_HEADING_STAR_BASE + 5:
+                    any_level = state - _STATE_HEADING_STAR_BASE
+                elif state == _STATE_CHAPTER_STAR:
+                    any_level = 0
+                if any_level is not None:
+                    above, below = _HEADING_SPACING.get(any_level, (1.4, 0.65))
+                    bfmt.setTopMargin(above * em_px)
+                    bfmt.setBottomMargin(below * em_px)
+                old_number = bfmt.property(_P_HEADING_NUMBER) or ""
+                if number:
+                    bfmt.setProperty(_P_HEADING_NUMBER, number)
+                    it = block.begin()
+                    font = (it.fragment().charFormat().font()
+                            if not it.atEnd() else self._heading_fmt(
+                                level).font())
+                    fm = QFontMetricsF(font)
+                    # LaTeX leaves 1em between the number and the title.
+                    bfmt.setTextIndent(fm.horizontalAdvance(number)
+                                       + fm.height() * 0.8)
+                elif old_number:
+                    bfmt.clearProperty(_P_HEADING_NUMBER)
+                    bfmt.setTextIndent(0)
                 if abs(spacing - 1.0) > 0.01:
                     bfmt.setLineHeight(spacing * 100, 1)  # ProportionalHeight
                 else:
@@ -3107,12 +3170,21 @@ class DocumentEditor(QWidget):
         if block.userState() == _STATE_MATH_BLOCK:
             self._math_refresh.start()
 
+    def _has_chapter_blocks(self) -> bool:
+        block = self._edit.document().firstBlock()
+        while block.isValid():
+            if block.userState() == _STATE_CHAPTER:
+                return True
+            block = block.next()
+        return False
+
     def _refresh_reference_labels(self) -> None:
         """Re-resolve citation numbers and \\ref targets after an edit —
         adding a citation or a section renumbers the ones after it."""
         if self._building:
             return
         self._resolver = ReferenceResolver(self.get_document(), self._doc_dir)
+        self._apply_page_layout()   # heading numbers shift as users edit
         doc = self._edit.document()
         updates = []
         block = doc.begin()
