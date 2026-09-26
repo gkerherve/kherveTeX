@@ -66,8 +66,15 @@ def test_no_indent_mode_uses_paragraph_spacing(qapp):
 
 
 def test_line_spacing_applied(qapp):
+    from khervedoc.latex_fonts import baselineskip_pt
     ed = _editor(DocMeta(line_spacing=2.0))
-    assert _blocks(ed)[1].blockFormat().lineHeight() == pytest.approx(200)
+    z = ed.zoom_percent() / 100
+    fmt = _blocks(ed)[1].blockFormat()
+    assert fmt.lineHeightType() == 2      # FixedHeight
+    assert fmt.lineHeight() == pytest.approx(
+        baselineskip_pt(12, 2.0) * 96 / 72 * z)
+    assert baselineskip_pt(12, 1.0) == pytest.approx(14.5)
+    assert baselineskip_pt(12, 2.0) == pytest.approx(14.5 * 1.655)
 
 
 def test_explicit_visual_font_is_respected(qapp):
@@ -157,3 +164,40 @@ def test_document_is_laid_out_on_whole_pages(qapp):
     assert pages > 1
     assert edit.document().pageSize().height() == page_h
     assert ed._page.maximumHeight() == page_h * pages
+
+
+def test_sheets_start_where_the_pdf_pages_start(qapp):
+    ed = DocumentEditor()
+    ed.resize(1000, 800)
+    long = "word " * 60
+    ed.set_document(Document(children=[
+        Section(level=1, children=[Text("Intro")]),
+        Paragraph(children=[Text("Lists are mentioned here. " + long)]),
+        Section(level=1, children=[Text("Lists")]),
+        Paragraph(children=[Text(long)]),
+    ]))
+    edit = ed._edit
+    # The PDF put the "Lists" heading at the top of page 2; the earlier
+    # paragraph that merely mentions the word must not take the break.
+    edit.set_page_anchors([(2, "Lists")])
+    ed.sync_pages_to_pdf()
+    heading = edit.document().findBlockByNumber(2)
+    from PySide6.QtGui import QTextFormat
+    assert heading.blockFormat().pageBreakPolicy() & \
+        QTextFormat.PageBreak_AlwaysBefore
+    assert edit.document().pageCount() == 2
+    assert edit._sheet_labels(2) == ["1", "2"]
+
+
+def test_first_text_snippet_drops_section_numbers():
+    from khervedoc.mainwindow import _first_text_snippet
+
+    class _Page:
+        def get_text(self, kind):
+            return "2.2\nLists\nBulleted and numbered\n3\n"
+    assert _first_text_snippet(_Page()) == "Lists"
+
+    class _Page2:
+        def get_text(self, kind):
+            return "A guided tour of the editor\n"
+    assert _first_text_snippet(_Page2()).startswith("A guided")

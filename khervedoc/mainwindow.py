@@ -440,33 +440,25 @@ class _GitNetworkWorker(QThread):
 
 
 def _first_text_snippet(page, max_chars: int = 24) -> str:
-    """Return the first chunk of meaningful text on a pymupdf page,
-    used as the anchor for the editor's page-break overlay. We skip
-    leading whitespace, the running header / page-number line if it
-    sits on its own at the top, and stop after `max_chars` so the
-    snippet is short enough to survive small LaTeX-vs-Qt rendering
-    differences (hyphenation, whitespace, etc.) while still being
-    unique enough to find unambiguously in the editor."""
+    """The first printed line of a PDF page, as the editor stores it:
+    running page numbers and bare section numbers are skipped, and a
+    leading section number ("2.2 Lists" -> "Lists") is dropped because
+    the editor paints numbers rather than storing them. Used to find
+    where each PDF page starts in the editor."""
+    import re as _re
     try:
-        blocks = page.get_text("blocks") or []
+        text = page.get_text("text") or ""
     except Exception:
         return ""
-    # Sort top-to-bottom in case pymupdf returned them in another order.
-    blocks.sort(key=lambda b: (round(b[1], 1), round(b[0], 1)))
-    for b in blocks:
-        text = (b[4] if len(b) > 4 else "").strip()
-        if not text:
+    number = _re.compile(r"^(\d+(\.\d+)*|[A-Z](\.\d+)+)$")
+    for raw in text.splitlines():
+        line = " ".join(raw.split())
+        if not line or number.match(line):
             continue
-        # Page numbers sit in their own block and are usually just
-        # digits — ignore those so the snippet picks up real text.
-        if text.replace(".", "").isdigit():
+        line = _re.sub(r"^(\d+(\.\d+)*|[A-Z](\.\d+)+)\s+(?=\S)", "", line)
+        if len(line) < 3:
             continue
-        # Collapse internal whitespace so the snippet matches what
-        # the editor stores in its QTextBlocks.
-        flat = " ".join(text.split())
-        if len(flat) < 3:
-            continue
-        return flat[:max_chars]
+        return line[:max_chars]
     return ""
 
 
@@ -4460,6 +4452,7 @@ class MainWindow(QMainWindow):
                             anchors.append((i + 1, snippet))
                 self._editor.text_edit.set_pdf_page_count(pages)
                 self._editor.text_edit.set_page_anchors(anchors)
+                self._editor.sync_pages_to_pdf()
             except Exception:
                 pass
         else:

@@ -21,6 +21,31 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QTextEdit, QWidget
 
 
+def anchor_offset(block_text: str, key_norm: str) -> int:
+    """Where a PDF page's first line (normalised) starts in a block's
+    text, or -1. A match at the block's start always counts; one inside
+    the block (a page starting mid-paragraph) only when the key is long
+    enough to be unambiguous — a short heading like "Lists" would
+    otherwise match any paragraph that merely uses the word."""
+    norm = _normalize_for_match(block_text)
+    if not norm:
+        return -1
+    if len(key_norm) < 16:
+        # A short first line is a whole line — usually a heading — so
+        # the block must BE that line, not merely begin with its word.
+        if norm == key_norm:
+            return 0
+    elif norm.startswith(key_norm) or (len(norm) >= 3
+                                       and key_norm.startswith(norm)):
+        return 0
+    if len(key_norm) >= 12:
+        idx = norm.find(key_norm)
+        if idx > 0:
+            # Map back to a raw-text offset (whitespace may differ).
+            return min(len(block_text), idx)
+    return -1
+
+
 def _normalize_for_match(s: str) -> str:
     """Collapse whitespace, strip accents, and lowercase so PDF-extracted
     text (which may have ligatures, special Unicode, or different whitespace)
@@ -269,6 +294,10 @@ class PagedTextEdit(QTextEdit):
         qdoc = self.document()
         layout = qdoc.documentLayout()
         resolved: list[tuple[int, float]] = []
+        # Anchors are in page order, so each search resumes after the
+        # previous hit: a phrase that also occurs earlier in the text
+        # can't steal a later page's start.
+        start = qdoc.firstBlock()
         for page_no, snippet in self._page_anchors:
             key = (snippet or "").strip()[:24]
             if not key:
@@ -276,13 +305,10 @@ class PagedTextEdit(QTextEdit):
             key_norm = _normalize_for_match(key)
             if len(key_norm) < 3:
                 continue
-            block = qdoc.firstBlock()
+            block = start
             while block.isValid():
-                text = block.text()
-                # Try exact match first, then normalized match.
-                idx = text.find(key)
-                if idx < 0:
-                    idx = _normalize_for_match(text).find(key_norm)
+                text = block.text().replace("\ufffc", "")
+                idx = anchor_offset(text, key_norm)
                 if idx >= 0:
                     block_rect = layout.blockBoundingRect(block)
                     if block_rect.height() > 0 or block_rect.top() > 0:
@@ -299,6 +325,7 @@ class PagedTextEdit(QTextEdit):
                             if line.isValid():
                                 y_doc = block_rect.top() + line.y()
                         resolved.append((int(page_no), float(y_doc)))
+                        start = block
                     break
                 block = block.next()
         return resolved
@@ -340,6 +367,27 @@ class PagedTextEdit(QTextEdit):
         self._paint_sheets()
         self._paint_heading_numbers()
 
+    def _sheet_labels(self, sheets: int) -> list[str]:
+        """Footer label per sheet. After a compile each sheet is named
+        for the PDF page it shows; a sheet that only exists because the
+        editor's page overflowed (equation source, table notes...) reads
+        "N (cont.)" so the numbering still matches the PDF."""
+        H = self._page_height_px
+        anchors = self.page_anchor_positions() if self._page_anchors else []
+        if not anchors:
+            return [str(k + 1) for k in range(sheets)]
+        starts = {0: 1}
+        for page_no, y in anchors:
+            starts.setdefault(int(y // H), page_no)
+        labels, current = [], 1
+        for k in range(sheets):
+            if k in starts:
+                current = starts[k]
+                labels.append(str(current))
+            else:
+                labels.append(f"{current} (cont.)")
+        return labels
+
     def _paint_sheets(self) -> None:
         """Turn the paginated layout into separate sheets: desk-coloured
         gaps with a soft shadow between pages, an edge around each page,
@@ -359,6 +407,7 @@ class PagedTextEdit(QTextEdit):
         font.setPointSizeF(max(6.0, font.pointSizeF() * 0.9))
         p.setFont(font)
         fm = p.fontMetrics()
+        labels = self._sheet_labels(pages)
         for k in range(pages):
             top = k * H + dy + (g / 2 if k else 0)
             bottom = (k + 1) * H + dy - (g / 2 if k < pages - 1 else 1)
@@ -373,8 +422,9 @@ class PagedTextEdit(QTextEdit):
                 p.fillRect(QRectF(0, bottom, w, g * 0.6), shade)
             p.setPen(QPen(_SHEET_EDGE, 1))
             p.drawRect(QRectF(0.5, top + 0.5, w - 1, bottom - top - 1))
-            number = str(k + 1)
-            p.setPen(QColor(90, 90, 90))
+            number = labels[k]
+            p.setPen(QColor(90, 90, 90) if "cont" not in number
+                     else QColor(170, 120, 60))
             y = (k + 1) * H + dy - bottom_margin / 2 + fm.ascent() / 2
             if k < pages - 1:
                 y -= g / 2

@@ -17,7 +17,7 @@ import time
 
 from PySide6.QtCore import QEvent, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import (
-    QAction, QBrush, QColor, QFont, QFontDatabase, QFontMetricsF, QImage, QKeySequence, QTextBlockFormat,
+    QAction, QBrush, QColor, QTextFormat, QFont, QFontDatabase, QFontMetricsF, QImage, QKeySequence, QTextBlockFormat,
     QTextCharFormat, QTextCursor, QTextFrameFormat, QTextImageFormat,
     QTextLength, QTextListFormat, QTextTable, QTextTableFormat,
 )
@@ -434,6 +434,10 @@ def screen_font_for(meta: DocMeta) -> str:
     chosen = meta.visual_font_family
     if chosen and chosen != "Georgia":
         return chosen
+    if meta.body_font_family == "default":
+        from . import latex_fonts
+        if latex_fonts.ensure_loaded(meta.body_font_pt):
+            return latex_fonts.FAMILY
     installed = set(QFontDatabase.families())
     for family in _SCREEN_FONTS_FOR_LATEX.get(meta.body_font_family, []):
         if family in installed:
@@ -1459,8 +1463,11 @@ class DocumentEditor(QWidget):
                     cursor.insertBlock(QTextBlockFormat(), QTextCharFormat())
                     text_list.add(cursor.block())
                 cursor.block().setUserState(_STATE_PARAGRAPH)
+                # List items are body text in LaTeX; without an explicit
+                # format they fell back to the widget's UI sans font.
+                body_fmt = self._body_char_format()
                 for inline in item.children:
-                    self._insert_inline(cursor, inline)
+                    self._insert_inline(cursor, inline, base_format=body_fmt)
         elif isinstance(block, Figure):
             self._insert_figure_widget(cursor, block)
         elif isinstance(block, Table):
@@ -2375,6 +2382,11 @@ class DocumentEditor(QWidget):
 
         em_px = self._body_font_pt * 96 / 72 * zoom
         spacing = max(0.5, float(m.line_spacing or 1.0))
+        from .latex_fonts import baselineskip_pt
+        # Body lines sit exactly LaTeX's \baselineskip apart, so a page
+        # holds as many lines on screen as in the PDF.
+        body_line_px = baselineskip_pt(self._body_font_pt, spacing) \
+            * 96 / 72 * zoom
         was_building = self._building
         self._building = True
         # Fold the layout pass into the previous undo step so Ctrl+Z
@@ -2383,6 +2395,7 @@ class DocumentEditor(QWidget):
         edit.joinPreviousEditBlock()
         try:
             prev_state = None
+            pdf_breaks = self._pdf_page_start_blocks()
             has_chapters = self._has_chapter_blocks()
             counters = [0] * 6
             block = doc.firstBlock()
@@ -2393,6 +2406,11 @@ class DocumentEditor(QWidget):
                     continue
                 state = block.userState()
                 bfmt = block.blockFormat()
+                # Start a new sheet exactly where the compiled PDF does.
+                bfmt.setPageBreakPolicy(
+                    QTextFormat.PageBreak_AlwaysBefore
+                    if block.blockNumber() in pdf_breaks
+                    else QTextFormat.PageBreak_Auto)
                 number = ""
                 level = 0 if state == _STATE_CHAPTER else (
                     state if 1 <= state <= 5 else None)
@@ -2427,11 +2445,13 @@ class DocumentEditor(QWidget):
                 elif old_number:
                     bfmt.clearProperty(_P_HEADING_NUMBER)
                     bfmt.setTextIndent(0)
-                if abs(spacing - 1.0) > 0.01:
+                if state in (_STATE_PARAGRAPH, -1):
+                    bfmt.setLineHeight(body_line_px, 2)   # FixedHeight
+                elif abs(spacing - 1.0) > 0.01:
                     bfmt.setLineHeight(spacing * 100, 1)  # ProportionalHeight
                 else:
                     bfmt.setLineHeight(0, 0)              # SingleHeight
-                if state in (_STATE_PARAGRAPH, -1):
+                if state in (_STATE_PARAGRAPH, -1) and block.textList() is None:
                     # LaTeX never indents the first paragraph after a
                     # heading, title or display block.
                     follows_para = prev_state in (_STATE_PARAGRAPH, -1)
@@ -3280,6 +3300,44 @@ class DocumentEditor(QWidget):
         block = self._edit.textCursor().block()
         if block.userState() == _STATE_MATH_BLOCK:
             self._math_refresh.start()
+
+    def sync_pages_to_pdf(self) -> None:
+        """Re-paginate after a compile so sheets start where the PDF's
+        pages start."""
+        self._apply_page_layout()
+        self._resize_to_document()
+
+    def _pdf_page_start_blocks(self) -> set[int]:
+        """Blocks the last compiled PDF starts a page with.
+
+        Only pages that begin at the start of a block (a heading, a new
+        paragraph) are forced; a page that starts mid-paragraph is left
+        to the layout, which breaks inside that paragraph on its own.
+        Anchors are matched in order, each search starting after the
+        previous hit, so a phrase that also occurs earlier can't steal
+        the break."""
+        from .paged_edit import _normalize_for_match, anchor_offset
+        anchors = getattr(self._edit, "_page_anchors", None) or []
+        out: set[int] = set()
+        block = self._edit.document().firstBlock()
+        for _page, snippet in anchors:
+            key = _normalize_for_match(snippet)[:16]
+            if len(key) < 3:
+                continue
+            probe = block
+            while probe.isValid():
+                if QTextCursor(probe).currentTable() is None:
+                    at = anchor_offset(probe.text().replace("\ufffc", ""),
+                                       key)
+                    if at == 0:
+                        out.add(probe.blockNumber())
+                        block = probe.next()
+                        break
+                    if at > 0:             # page starts mid-paragraph
+                        block = probe
+                        break
+                probe = probe.next()
+        return out
 
     def _has_chapter_blocks(self) -> bool:
         block = self._edit.document().firstBlock()
