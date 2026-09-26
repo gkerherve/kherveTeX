@@ -976,19 +976,26 @@ def serialize_project_master(proj: Project,
     prev_type = None
     running_chapter = 0       # tracks the chapter counter across all entries
     running_page_offset = 0   # pages consumed by preceding disabled chapters
+    # \frontmatter / \mainmatter / \backmatter exist only in book-like
+    # classes and the chapter counter only where \chapter does; emitting
+    # them for an article project stopped it compiling.
+    klass = (m.documentclass or "").lower()
+    has_matter = klass in ("book", "memoir", "scrbook", "amsbook")
+    has_chapter = _class_supports_chapter(m.documentclass or "")
     for ch in proj.chapters:
         cmds: list[str] = []
         ctype = getattr(ch, "chapter_type", "chapter")
         if ctype != prev_type:
-            if ctype == "frontmatter":
+            if ctype == "frontmatter" and has_matter:
                 cmds.append("\\frontmatter")
             elif ctype == "chapter" and prev_type in ("frontmatter", None):
-                cmds.append("\\mainmatter")
+                if has_matter:
+                    cmds.append("\\mainmatter")
                 running_chapter = 0
             elif ctype == "appendix":
                 cmds.append("\\appendix")
                 running_chapter = 0
-            elif ctype == "backmatter":
+            elif ctype == "backmatter" and has_matter:
                 cmds.append("\\backmatter")
             prev_type = ctype
 
@@ -1018,7 +1025,7 @@ def serialize_project_master(proj: Project,
             cmds.append(f"\\addtocounter{{page}}{{{running_page_offset}}}")
             running_page_offset = 0
 
-        if ctype == "chapter":
+        if ctype == "chapter" and has_chapter:
             cmds.append(f"\\setcounter{{chapter}}{{{running_chapter - 1}}}")
 
         if cmds:

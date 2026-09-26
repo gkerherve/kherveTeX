@@ -222,3 +222,15 @@ def test_chapter_image_paths_repointed_to_project(tmp_path):
     doc = Document(children=[Figure(path="img/a.png", caption="x")])
     out = chapter_body_tex(doc, ch_dir, tmp_path)
     assert "{chapters/img/a.png}" in out
+
+
+def test_article_project_has_no_book_only_commands():
+    from khervedoc.model import ChapterEntry, DocMeta, Project
+    from khervedoc.serializer import serialize_project_master
+    proj = Project(meta=DocMeta(documentclass="article"),
+                   chapters=[ChapterEntry(path="a.kdoc.json"),
+                             ChapterEntry(path="b.kdoc.json")])
+    master = serialize_project_master(proj)
+    assert "\\mainmatter" not in master
+    assert "\\setcounter{chapter}" not in master
+    assert "\\include{a}" in master and "\\include{b}" in master

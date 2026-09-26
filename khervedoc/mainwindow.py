@@ -119,7 +119,10 @@ class _ProjectSidebar(QWidget):
         layout.addLayout(move_row)
 
         btn_row = QHBoxLayout()
-        self._add_btn = QPushButton("+ Add Chapter")
+        self._add_btn = QPushButton("+ Add document")
+        self._add_btn.setToolTip(
+            "Add another document (chapter). A single document becomes a "
+            "project the first time you add one.")
         self._add_btn.clicked.connect(self.addChapterRequested)
         btn_row.addWidget(self._add_btn)
         self._compile_btn = QPushButton("\u25b6 Compile")
@@ -131,7 +134,31 @@ class _ProjectSidebar(QWidget):
         self._active_index: int = -1
         self._project: Project | None = None
 
+    def _set_project_controls_visible(self, visible: bool) -> None:
+        for w in (self._auto_page_cb, self._summary_label, self._up_btn,
+                  self._down_btn, self._compile_btn):
+            w.setVisible(visible)
+
+    def set_single(self, name: str) -> None:
+        """Show the one open document, so the list is always there and a
+        second document appears in it as soon as it's added."""
+        self._project = None
+        self._chapters = []
+        self._active_index = 0
+        self._title_label.setText("<b>DOCUMENTS</b>")
+        self._set_project_controls_visible(False)
+        self._list.blockSignals(True)
+        self._list.clear()
+        item = QListWidgetItem(f"\U0001F4C4  {name}")
+        item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+        font = item.font()
+        font.setBold(True)
+        item.setFont(font)
+        self._list.addItem(item)
+        self._list.blockSignals(False)
+
     def set_project(self, proj: Project) -> None:
+        self._set_project_controls_visible(True)
         self._project = proj
         self._chapters = proj.chapters
         title = proj.meta.title or "Untitled Project"
@@ -279,7 +306,7 @@ class _ProjectSidebar(QWidget):
 
     def _on_context_menu(self, pos) -> None:
         item = self._list.itemAt(pos)
-        if item is None:
+        if item is None or self._project is None:
             return
         idx = self._list.row(item)
         ch = self._chapters[idx]
@@ -367,6 +394,14 @@ class _ProjectSidebar(QWidget):
 
 
 # ---------- background compile ----------
+
+def _thread_running(worker) -> bool:
+    """isRunning() that tolerates a worker Qt has already deleted."""
+    try:
+        return worker is not None and worker.isRunning()
+    except RuntimeError:
+        return False
+
 
 class _CompileWorker(QThread):
     finished_with = Signal(object)
@@ -895,15 +930,16 @@ class MainWindow(QMainWindow):
 
         # Project sidebar (hidden until a project is opened).
         self._project_sidebar = _ProjectSidebar(self, theme=self._theme)
-        self._project_dock = QDockWidget("Project", self)
+        self._project_dock = QDockWidget("Documents", self)
         self._project_dock.setWidget(self._project_sidebar)
         self._project_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
         self.addDockWidget(Qt.LeftDockWidgetArea, self._project_dock)
-        self._project_dock.hide()
+        # Always shown: lists the single open document, or the project's
+        # documents once there is more than one.
         self._project_dock.toggleViewAction().setShortcut(QKeySequence("Ctrl+5"))
         self._project_sidebar.chapterDoubleClicked.connect(self._switch_chapter)
         self._project_sidebar.chapterToggled.connect(self._on_chapter_toggled)
-        self._project_sidebar.addChapterRequested.connect(self._add_chapter_to_project)
+        self._project_sidebar.addChapterRequested.connect(self._on_add_document)
         self._project_sidebar.compileRequested.connect(self._compile_project)
 
         self._status = QStatusBar(self)
@@ -1947,6 +1983,9 @@ class MainWindow(QMainWindow):
             self._path_label.setToolTip(str(self._project_path))
             return
         name = self._current_path.name if self._current_path else "Untitled"
+        self._project_sidebar.set_single(
+            self._doc_stem(self._current_path) if self._current_path
+            else "Untitled")
         branch_suffix = ""
         if self._current_path and git_backend.is_available():
             _br = git_backend.current_branch(self._current_path.parent)
@@ -2036,7 +2075,7 @@ class MainWindow(QMainWindow):
             self._mcp_bridge.stop()
         busy = [w for w in (self._compile_worker,
                             getattr(self, "_bundle_worker", None))
-                 if w is not None and w.isRunning()]
+                 if _thread_running(w)]
         if busy:
             # A compile can outlast any sane timeout; kill it so the
             # thread returns instead of being destroyed mid-run (SIGABRT).
@@ -2047,10 +2086,13 @@ class MainWindow(QMainWindow):
             if worker is not None:
                 try:
                     worker.finished_with.disconnect()
-                except RuntimeError:
+                except (RuntimeError, TypeError):
                     pass
-                if worker.isRunning():
-                    worker.wait()
+                try:
+                    if worker.isRunning():
+                        worker.wait()
+                except RuntimeError:
+                    pass            # already finished and deleted
         self._compile_worker = None
         self._git_worker = None
         # Remove ourselves from the live-windows registry so the Window
@@ -2414,7 +2456,6 @@ class MainWindow(QMainWindow):
         self._project_path = None
         self._project_chapter_idx = -1
         self._project_chapter_docs.clear()
-        self._project_dock.hide()
         self._new()
 
     def _flush_current_chapter(self) -> None:
@@ -2461,15 +2502,63 @@ class MainWindow(QMainWindow):
         if self._project is not None:
             self._project.chapters[idx].enabled = enabled
 
+    def _on_add_document(self) -> None:
+        if self._project is not None:
+            self._add_chapter_to_project()
+        else:
+            self._convert_to_project()
+
+    def _convert_to_project(self) -> None:
+        """Turn the open document into a project holding it plus a new
+        document, so both are listed side by side from now on."""
+        if self._current_path is None:
+            QMessageBox.information(
+                self, "Add document",
+                "Save this document first \u2014 the documents of a "
+                "project are kept together in its folder.")
+            self._save_as()
+            if self._current_path is None:
+                return
+        label, ok = QInputDialog.getText(
+            self, "Add document", "Name of the new document:",
+            text="Chapter 2")
+        if not ok or not label.strip():
+            return
+        import copy
+        proj_dir = self._current_path.parent
+        stem = self._doc_stem(self._current_path)
+        doc = self._editor.get_document()
+        # Not "{stem}.kdoc.json": its .tex would be "{stem}.tex", the
+        # same file as the project's master, which would include itself.
+        n = 1
+        first = proj_dir / f"{stem}-{n}.kdoc.json"
+        while first.exists():
+            n += 1
+            first = proj_dir / f"{stem}-{n}.kdoc.json"
+        first.write_text(to_json(doc), encoding="utf-8")
+        proj = Project(meta=copy.deepcopy(doc.meta))
+        proj.meta.title = doc.meta.title or stem
+        proj.chapters.append(ChapterEntry(
+            path=first.name, label=stem, enabled=True,
+            start_page=1, numbering="arabic"))
+        proj_path = proj_dir / f"{stem}.kdocproj.json"
+        proj_path.write_text(project_to_json(proj), encoding="utf-8")
+        self._open_project_from_path(proj_path)
+        self._append_chapter(label.strip())
+        self._save_project()
+
     def _add_chapter_to_project(self) -> None:
         if self._project is None or self._project_path is None:
             return
-        proj_dir = self._project_path.parent
         label, ok = QInputDialog.getText(
-            self, "Add Chapter", "Chapter label:", text="New Chapter")
+            self, "Add document", "Name of the new document:",
+            text="New Chapter")
         if not ok or not label.strip():
             return
-        label = label.strip()
+        self._append_chapter(label.strip())
+
+    def _append_chapter(self, label: str) -> None:
+        proj_dir = self._project_path.parent
         # Generate a filename from the label
         safe_name = "".join(
             c if c.isalnum() or c in " _-" else "_" for c in label
@@ -2562,6 +2651,7 @@ class MainWindow(QMainWindow):
             use_compile_range=False,
             compiler="latex")
         self._compile_worker.finished_with.connect(self._on_project_compile_done)
+        self._adopt_thread(self._compile_worker)
         self._compile_worker.start()
         self._compile_label.setText("Compiling project\u2026")
         self._compile_label.show()
@@ -3464,6 +3554,7 @@ class MainWindow(QMainWindow):
         if op == "pull":
             self._status.showMessage(
                 f"Downloading latest from {remote_name}…", 0)
+        self._adopt_thread(worker)
         worker.start()
 
     def _on_git_done(self, op: str, ok: bool, msg: str) -> None:
@@ -4303,6 +4394,7 @@ class MainWindow(QMainWindow):
         self._bundle_worker.finished_with.connect(
             lambda ok, log: self._on_bundle_done(ok, log, dlg))
         dlg.canceled.connect(self._bundle_worker.terminate)
+        self._adopt_thread(self._bundle_worker)
         self._bundle_worker.start()
 
     def _on_bundle_done(self, ok: bool, log: str, dlg) -> None:
@@ -4337,6 +4429,17 @@ class MainWindow(QMainWindow):
         # Trigger recompile
         if self._auto_compile:
             self._kick_compile()
+
+    def _adopt_thread(self, worker: QThread) -> None:
+        """Keep a background thread alive until Qt says it has finished.
+
+        The done-handlers drop their reference (self._compile_worker =
+        None) from a signal emitted inside run(), i.e. while the thread
+        is still technically running; with no Qt parent, Python then
+        destroyed the QThread mid-exit and Qt aborted the process
+        ("QThread: Destroyed while thread is still running")."""
+        worker.setParent(self)
+        worker.finished.connect(worker.deleteLater)
 
     # ----- MCP (Claude) connection -----
 
@@ -4405,6 +4508,7 @@ class MainWindow(QMainWindow):
             use_compile_range=self._use_compile_range,
             compiler=self._compiler)
         self._compile_worker.finished_with.connect(self._on_compile_done)
+        self._adopt_thread(self._compile_worker)
         self._compile_worker.start()
         self._compile_label.setText("Compiling\u2026")
         self._compile_label.show()
