@@ -43,6 +43,18 @@ Run the test suite:
 python -m pytest tests/
 ```
 
+## Working with Claude (MCP)
+
+KherveTeX can be driven by Claude Desktop or Claude Code through MCP.
+Open **AI ▸ Connect to Claude…**, tick *Let assistants connect*, and
+press *Connect* for your client (it writes the client's config for you),
+then restart the client and mention "KherveTeX" in the chat. Claude
+works on the document open in the window: it can read the outline and
+LaTeX, insert or rewrite sections, fix text, change settings, compile
+and look at rendered PDF pages. Each change is one Ctrl+Z step. The
+access level (read / edit / full) is chosen in the same dialog; the
+connection is local-only and token-protected.
+
 ## Project layout
 
 ```

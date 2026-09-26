@@ -1213,6 +1213,9 @@ class DocumentEditor(QWidget):
                 first = False
                 self._render_block(cursor, block)
             self._apply_page_layout()
+            # A freshly loaded document has nothing unsaved; MCP tools
+            # read this before discarding it.
+            self._edit.document().setModified(False)
         finally:
             self._building = False
         self.documentChanged.emit()

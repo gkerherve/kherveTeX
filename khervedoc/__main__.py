@@ -100,6 +100,7 @@ def main() -> int:
     theme = themes.apply_theme(app, theme_name)
     win = MainWindow(theme_name=theme_name)
     win.show()
+    win.start_mcp_if_enabled()
     # Open a file passed on the command line (e.g. double-click association).
     args = [a for a in sys.argv[1:] if not a.startswith("-")]
     if args:

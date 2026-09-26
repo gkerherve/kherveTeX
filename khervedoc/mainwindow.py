@@ -1677,6 +1677,9 @@ class MainWindow(QMainWindow):
         # MainWindow so the user can flip between documents without
         # alt-tabbing. Refreshed on aboutToShow and whenever a window
         # opens / closes / changes title.
+        m_ai = mb.addMenu("&AI")
+        m_ai.addAction(QAction("&Connect to Claude\u2026", self,
+                               triggered=self._show_mcp_dialog))
         self._window_menu = mb.addMenu("&Window")
         self._window_menu.aboutToShow.connect(self._refresh_window_menu)
         self._refresh_window_menu()
@@ -2037,6 +2040,8 @@ class MainWindow(QMainWindow):
         # Stop background threads before Qt tears down the widget tree.
         # Destroying a running QThread is undefined behaviour in Qt and
         # triggers STATUS_STACK_BUFFER_OVERRUN (0xC0000409) on Windows.
+        if getattr(self, "_mcp_bridge", None) is not None:
+            self._mcp_bridge.stop()
         busy = [w for w in (self._compile_worker,
                             getattr(self, "_bundle_worker", None))
                  if w is not None and w.isRunning()]
@@ -2287,6 +2292,7 @@ class MainWindow(QMainWindow):
             path.write_text(to_json(doc), encoding="utf-8")
         tex_path = path.parent / f"{tex_basename}.tex"
         tex_path.write_text(serialize_document(doc), encoding="utf-8")
+        self._editor.text_edit.document().setModified(False)
         if self._compiler == "typst":
             from .typst_serializer import serialize_document as serialize_typst
             typ_path = path.parent / f"{tex_basename}.typ"
@@ -2570,6 +2576,7 @@ class MainWindow(QMainWindow):
         self._compile_progress.show()
 
     def _on_project_compile_done(self, result) -> None:
+        self._last_compile_result = result
         self._compile_label.hide()
         self._compile_label.setText("")
         self._compile_progress.hide()
@@ -4339,6 +4346,34 @@ class MainWindow(QMainWindow):
         if self._auto_compile:
             self._kick_compile()
 
+    # ----- MCP (Claude) connection -----
+
+    def mcp_bridge(self):
+        """The loopback bridge Claude's MCP server talks to (lazy)."""
+        if getattr(self, "_mcp_bridge", None) is None:
+            from .mcp_bridge import ACCESS_LEVELS, DEFAULT_ACCESS, McpBridge
+            self._mcp_bridge = McpBridge(self)
+            level = self._settings.value("mcp/access", DEFAULT_ACCESS)
+            self._mcp_bridge.set_access(
+                level if level in ACCESS_LEVELS else DEFAULT_ACCESS)
+            self._mcp_bridge.tool_invoked.connect(
+                lambda name, outcome: self._status.showMessage(
+                    f"Claude: {name} \u2014 {outcome}", 4000))
+        return self._mcp_bridge
+
+    def start_mcp_if_enabled(self) -> None:
+        # One bridge per process: the endpoint file names one window.
+        if len(MainWindow._windows) > 1:
+            return
+        if self._settings.value("mcp/enabled", False, type=bool):
+            self.mcp_bridge().start()
+
+    def _show_mcp_dialog(self) -> None:
+        from .mcp_dialog import McpServerDialog
+        dlg = McpServerDialog(self.mcp_bridge(), self)
+        dlg.setAttribute(Qt.WA_DeleteOnClose)
+        dlg.show()
+
     def _kick_compile(self) -> None:
         # When a project is open, always compile the full project
         if self._project is not None:
@@ -4384,6 +4419,7 @@ class MainWindow(QMainWindow):
         self._compile_progress.show()
 
     def _on_compile_done(self, result: CompileResult) -> None:
+        self._last_compile_result = result
         self._compile_label.hide()
         self._compile_label.setText("")
         self._compile_progress.hide()
