@@ -1,4 +1,5 @@
-"""Live-preview template editors: LaTeX equations and mhchem chemistry.
+"""Equation editors: the structured WYSIWYG math editor, plus the
+live-preview template editors for mhchem chemistry and chemfig.
 
 Kept out of ``mainwindow`` so ``editor`` can open these dialogs when the
 user double-clicks a rendered equation without importing the main window
@@ -12,15 +13,17 @@ from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (
-    QColor, QIcon, QImage, QPixmap, QTextCharFormat, QTextCursor,
+    QColor, QFont, QIcon, QImage, QPixmap, QTextCharFormat, QTextCursor,
 )
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QDialog, QDialogButtonBox, QFrame, QGridLayout,
-    QLabel, QPlainTextEdit, QScrollArea, QStackedWidget, QTextEdit,
-    QToolButton, QVBoxLayout, QWidget,
+    QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QScrollArea,
+    QStackedWidget, QTabWidget, QTextEdit, QToolButton, QVBoxLayout, QWidget,
 )
 
-from . import chemfig, chemistry, equations, icons
+from . import (chemfig, chemistry, equations, mathbox, mathlayout,
+               symbols)
+from .math_widget import MathEditWidget
 
 
 _BEGIN_RE = _re.compile(r"\\begin\{(\w+\*?)\}$")
@@ -387,46 +390,504 @@ class _TemplatePaletteDialog(QDialog):
                 "syntax</span>")
 
 
-class EquationEditorDialog(_TemplatePaletteDialog):
-    """Live-preview LaTeX equation editor."""
+_TEMPLATE_NAMES = {
+    r"\frac{\square}{\square}": "Fraction",
+    r"\tfrac{\square}{\square}": "Small fraction",
+    r"\dfrac{\square}{\square}": "Display fraction",
+    r"\sqrt{\square}": "Square root",
+    r"\sqrt[\square]{\square}": "n-th root",
+    r"\binom{\square}{\square}": "Binomial coefficient",
+    r"\sum_{\square}^{\square} \square": "Summation",
+    r"\sum_{i=1}^{n} \square": "Sum from i = 1 to n",
+    r"\prod_{\square}^{\square} \square": "Product",
+    r"\lim_{\square \to \square} \square": "Limit",
+    r"\liminf_{\square \to \square} \square": "Limit inferior",
+    r"\limsup_{\square \to \square} \square": "Limit superior",
+    r"\int_{\square}^{\square} \square \, d\square": "Definite integral",
+    r"\int \square \, d\square": "Indefinite integral",
+    r"\iint_{\square} \square \, dA": "Double integral",
+    r"\iiint_{\square} \square \, dV": "Triple integral",
+    r"\oint_{\square} \square \, d\square": "Contour integral",
+    r"\int_{-\infty}^{\infty} \square \, d\square": "Integral over ℝ",
+    r"\square^{\square}": "Superscript",
+    r"\square_{\square}": "Subscript",
+    r"\square_{\square}^{\square}": "Subscript and superscript",
+    r"e^{\square}": "Exponential",
+    r"10^{\square}": "Power of ten",
+    r"\square^{-1}": "Inverse",
+    r"\frac{d\square}{d\square}": "Derivative",
+    r"\frac{d^{2}\square}{d\square^{2}}": "Second derivative",
+    r"\frac{\partial \square}{\partial \square}": "Partial derivative",
+    r"\frac{\partial^{2} \square}{\partial \square^{2}}":
+        "Second partial derivative",
+    r"\nabla \square": "Gradient",
+    r"\nabla^{2} \square": "Laplacian",
+    r"\vec{\square}": "Vector arrow",
+    r"\hat{\square}": "Hat",
+    r"\bar{\square}": "Bar",
+    r"\left( \square \right)": "Parentheses",
+    r"\left[ \square \right]": "Square brackets",
+    r"\left\{ \square \right\}": "Curly braces",
+    r"\left| \square \right|": "Absolute value",
+    r"\left\| \square \right\|": "Norm",
+    r"\left\langle \square \right\rangle": "Angle brackets",
+    r"\left\lfloor \square \right\rfloor": "Floor",
+    r"\left\lceil \square \right\rceil": "Ceiling",
+    r"\square = \square": "Equals",
+    r"\square \approx \square": "Approximately equal",
+    r"\square \neq \square": "Not equal",
+    r"\square \leq \square": "Less than or equal",
+    r"\square \geq \square": "Greater than or equal",
+    r"\square \propto \square": "Proportional to",
+    r"\square \cdot \square": "Dot product",
+    r"\square \times \square": "Cross product",
+    r"\log_{\square}(\square)": "Logarithm with base",
+    r"\ln(\square)": "Natural logarithm",
+    r"\exp(\square)": "Exponential function",
+}
+_ENV_NAMES = {"pmatrix": "2×2 matrix (parentheses)",
+              "bmatrix": "2×2 matrix (brackets)",
+              "vmatrix": "2×2 determinant", "equation": "Single equation",
+              "align": "Aligned equations", "cases": "Cases (piecewise)"}
+
+# (label under the button, sample drawn on it) per EQUATION_GROUPS entry.
+_CATEGORY_FACES = [
+    ("Fraction", r"\frac{x}{y}"), ("Large op", r"\sum"),
+    ("Integral", r"\int"), ("Script", r"x^{2}"),
+    ("Derivative", r"\frac{dy}{dx}"), ("Greek", r"\alpha\beta"),
+    ("Matrix", r"\begin{pmatrix}a&b\\c&d\end{pmatrix}"),
+    ("Bracket", r"\{x\}"), ("Relation", r"\leq"),
+    ("Function", r"\sin\theta"),
+    ("Multi-line", r"\begin{cases}a\\b\end{cases}"),
+]
+
+_SYMBOL_TABS = [
+    ("Greek", "α"), ("Capitals", "Ω"), ("Operators", "±"),
+    ("Relations", "≤"), ("Arrows", "→"), ("Calculus", "∫"),
+    ("Sets & logic", "∀"), ("Misc", "∞"), ("Accents", "â"),
+]
+
+_NICE = {
+    "pm": "Plus-minus", "mp": "Minus-plus", "times": "Times",
+    "div": "Divide", "cdot": "Centre dot", "leq": "Less or equal",
+    "geq": "Greater or equal", "neq": "Not equal", "approx": "Approximately",
+    "equiv": "Identical to", "propto": "Proportional to",
+    "infty": "Infinity", "partial": "Partial", "nabla": "Nabla",
+    "to": "Tends to", "Rightarrow": "Implies", "Leftrightarrow": "If and only if",
+    "in": "Element of", "notin": "Not an element of",
+    "forall": "For all", "exists": "There exists", "hbar": "h-bar",
+    "sum": "Summation", "prod": "Product", "int": "Integral",
+    "iint": "Double integral", "iiint": "Triple integral",
+    "oint": "Contour integral", "sqrt": "Square root", "frac": "Fraction",
+    "ll": "Much less than", "gg": "Much greater than", "sim": "Similar to",
+    "cong": "Congruent", "perp": "Perpendicular", "parallel": "Parallel",
+    "degree": "Degree", "emptyset": "Empty set", "cap": "Intersection",
+    "cup": "Union", "subset": "Subset", "subseteq": "Subset or equal",
+}
+
+
+def _nice_name(latex: str) -> str:
+    m = _re.match(r"\\([A-Za-z]+)", latex)
+    if not m:
+        return latex
+    name = m.group(1)
+    if name in _NICE:
+        return _NICE[name]
+    if name.lower() in mathbox._GREEK_LOWER or name in mathbox._GREEK_UPPER:
+        return ("Capital " if name[0].isupper() else "") + name.lower()
+    return name[0].upper() + name[1:]
+
+
+def _template_name(latex: str, fallback: str) -> str:
+    if latex in _TEMPLATE_NAMES:
+        return _TEMPLATE_NAMES[latex]
+    m = _re.match(r"\\begin\{(\w+)\}", latex)
+    if m and m.group(1) in _ENV_NAMES:
+        return _ENV_NAMES[m.group(1)]
+    m = _re.match(r"\\([a-z]+)\(", latex)
+    if m:
+        return {"sin": "Sine", "cos": "Cosine", "tan": "Tangent",
+                "arctan": "Inverse tangent"}.get(m.group(1), m.group(1))
+    if latex.startswith("\\") and "{" not in latex:
+        return _nice_name(latex)
+    return fallback
+
+
+def _symbol_insert_latex(latex: str) -> str:
+    """Palette entries like ``\\hat{a}`` insert an empty slot, not 'a'."""
+    if latex.startswith(r"\mathbb"):
+        return latex
+    return _re.sub(r"\{[a-z]\}", r"{\\square}", latex)
+
+
+_DIALOG_QSS = """
+QDialog#EquationEditor { background: #f4f6f9; }
+QFrame#Ribbon { background: #ffffff; border-bottom: 1px solid #dde2e8; }
+QFrame#Ribbon QStackedWidget, QFrame#Ribbon QScrollArea,
+QWidget#PaletteHost { background: #ffffff; }
+QTabBar::tab { padding: 6px 16px; margin-right: 2px; border: none;
+    color: #5b6573; font-weight: 600; background: transparent; }
+QTabBar::tab:selected { color: #1f5fd1; border-bottom: 2px solid #2f6fde; }
+QTabBar::tab:hover { color: #1f2937; }
+QTabWidget::pane { border: none; }
+QToolButton#Cat { border: 1px solid transparent; border-radius: 6px;
+    padding: 3px 2px; color: #374151; font-size: 11px; }
+QToolButton#Cat:hover { background: #eef3fb; border-color: #d4e1f7; }
+QToolButton#Cat:checked { background: #e3edfd; border-color: #9dbcf2;
+    color: #1f5fd1; }
+QToolButton#Tpl, QToolButton#Sym { background: #ffffff;
+    border: 1px solid #e3e7ed; border-radius: 6px; }
+QToolButton#Tpl:hover, QToolButton#Sym:hover { background: #eef4ff;
+    border-color: #8fb2ef; }
+QToolButton#Tpl:pressed, QToolButton#Sym:pressed { background: #dce8fd; }
+QFrame#Canvas { background: #ffffff; border: 1px solid #d6dce4;
+    border-radius: 10px; }
+QLabel#Hint { color: #8a94a3; font-size: 11px; }
+QLabel#SlotHint { color: #1f5fd1; font-size: 11px; }
+QPlainTextEdit#Source { background: #fbfcfd; border: 1px solid #d6dce4;
+    border-radius: 6px; padding: 4px; }
+QPushButton { padding: 6px 16px; border-radius: 6px;
+    border: 1px solid #cfd6df; background: #ffffff; }
+QPushButton:hover { background: #f1f4f8; }
+QPushButton#Primary { background: #2f6fde; color: white;
+    border-color: #2f6fde; font-weight: 600; }
+QPushButton#Primary:hover { background: #245fcb; }
+QToolButton#Toggle { border: 1px solid #cfd6df; border-radius: 6px;
+    padding: 5px 10px; background: #ffffff; color: #374151; }
+QToolButton#Toggle:checked { background: #e3edfd; border-color: #9dbcf2;
+    color: #1f5fd1; }
+"""
+
+
+class EquationEditorDialog(QDialog):
+    """Structured WYSIWYG equation editor.
+
+    The equation is edited as typeset math (fractions, scripts, roots,
+    matrices ...) in :class:`math_widget.MathEditWidget`; the LaTeX is
+    generated from the tree and only shown on request.
+    """
 
     _TITLE = "Equation editor"
-    _EMPTY_HINT = "Click a template to start building your equation"
-    _EDIT_HINT = r"e.g.  \frac{x+1}{2} + \sqrt{y}"
-    _CATEGORY_ICONS = [
-        icons.eq_fractions, icons.eq_sums, icons.eq_integrals,
-        icons.eq_scripts, icons.eq_derivatives, icons.eq_greek,
-        icons.eq_vectors, icons.eq_brackets, icons.eq_relations,
-        icons.eq_functions, icons.eq_environments,
-    ]
-
-    def _groups(self):
-        return equations.EQUATION_GROUPS
-
-    def _render_template(self, latex: str):
-        return equations.render_template_preview(latex)
-
-    def _render_live(self, latex: str):
-        return equations.render_live_preview(latex)
 
     def __init__(self, parent=None, initial_latex: str = ""):
-        super().__init__(parent, initial_latex)
-        if initial_latex:
+        super().__init__(parent)
+        self.setObjectName("EquationEditor")
+        self.setWindowTitle(self._TITLE)
+        self.setStyleSheet(_DIALOG_QSS)
+        self.resize(860, 640)
+        self._initial = (initial_latex or "").strip()
+        self._dirty = False
+        self._syncing = False
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        root.addWidget(self._build_ribbon())
+
+        body = QVBoxLayout()
+        body.setContentsMargins(16, 14, 16, 12)
+        body.setSpacing(8)
+        root.addLayout(body, 1)
+
+        # ---- the equation canvas ----
+        canvas = QFrame()
+        canvas.setObjectName("Canvas")
+        cl = QVBoxLayout(canvas)
+        cl.setContentsMargins(1, 1, 1, 6)
+        cl.setSpacing(0)
+        self._math = MathEditWidget()
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.NoFrame)
+        self._scroll.setStyleSheet("background: white;")
+        self._scroll.setWidget(self._math)
+        cl.addWidget(self._scroll, 1)
+        hint = QLabel(
+            "Type to build the equation  ·  /  fraction  ·  ^  superscript"
+            "  ·  _  subscript  ·  \\  commands (e.g. \\alpha)  ·  "
+            "Tab  next slot  ·  Ctrl + / −  zoom")
+        hint.setObjectName("Hint")
+        hint.setAlignment(Qt.AlignCenter)
+        cl.addWidget(hint)
+        body.addWidget(canvas, 1)
+
+        # ---- LaTeX source (hidden until asked for) ----
+        self._source_panel = QWidget()
+        sp = QVBoxLayout(self._source_panel)
+        sp.setContentsMargins(0, 0, 0, 0)
+        sp.setSpacing(4)
+        lab = QLabel("LaTeX — edit here to change the equation")
+        lab.setObjectName("Hint")
+        sp.addWidget(lab)
+        self._edit = _EquationLatexEdit(r"\square")
+        self._edit.setObjectName("Source")
+        mf = QFont("Menlo")
+        mf.setStyleHint(QFont.Monospace)
+        mf.setPointSize(11)
+        self._edit.setFont(mf)
+        self._edit.setFixedHeight(84)
+        sp.addWidget(self._edit)
+        self._source_panel.setVisible(False)
+        body.addWidget(self._source_panel)
+
+        # ---- bottom bar ----
+        bar = QHBoxLayout()
+        bar.setSpacing(10)
+        self._latex_toggle = QToolButton()
+        self._latex_toggle.setObjectName("Toggle")
+        self._latex_toggle.setText("Show LaTeX")
+        self._latex_toggle.setCheckable(True)
+        self._latex_toggle.toggled.connect(self._toggle_source)
+        bar.addWidget(self._latex_toggle)
+        self._display_cb = QCheckBox("Display on its own line (numbered)")
+        self._display_cb.setChecked(True)
+        self._display_cb.setToolTip(
+            "Checked: a numbered display equation on its own line.\n"
+            "Unchecked: inline math inside the current paragraph.")
+        self._display_cb.toggled.connect(self._math.set_display)
+        bar.addWidget(self._display_cb)
+        self._ph_hint = QLabel()
+        self._ph_hint.setObjectName("SlotHint")
+        bar.addWidget(self._ph_hint)
+        bar.addStretch(1)
+        cancel = QPushButton("Cancel")
+        cancel.clicked.connect(self.reject)
+        self._insert_btn = QPushButton("Insert")
+        self._insert_btn.setObjectName("Primary")
+        self._insert_btn.setDefault(True)
+        self._insert_btn.clicked.connect(self.accept)
+        bar.addWidget(cancel)
+        bar.addWidget(self._insert_btn)
+        body.addLayout(bar)
+
+        self._math.changed.connect(self._on_math_changed)
+        self._edit.textChanged.connect(self._on_source_changed)
+
+        if self._initial:
             # Double-click re-edit replaces the equation in place, so
             # whether it is inline or display is already decided.
             self._display_cb.hide()
+            self._syncing = True
+            self._math.set_latex(self._initial)
+            self._edit.setPlainText(
+                self._math.latex(mathbox.PLACEHOLDER))
+            self._syncing = False
+            ed = self._math.editor
+            if mathbox.count_empty(ed.root):
+                ed.set_cursor(ed.root, 0)
+                ed.next_slot()
+            self._edit._jump_placeholder(forward=True)
+        self._update_slot_hint()
+        self._math.setFocus()
 
-    def _extra_widgets(self, root: QVBoxLayout) -> None:
-        # Checked by default: the builder is for real display equations
-        # (\begin{equation} in the LaTeX); quick inline math already has
-        # its own Ctrl+M path.
-        self._display_cb = QCheckBox(
-            "Display on its own line (numbered \\begin{equation})")
-        self._display_cb.setChecked(True)
-        root.addWidget(self._display_cb)
+    # ---------------------------------------------------------- ribbon
+    def _build_ribbon(self) -> QWidget:
+        ribbon = QFrame()
+        ribbon.setObjectName("Ribbon")
+        lay = QVBoxLayout(ribbon)
+        lay.setContentsMargins(10, 4, 10, 8)
+        lay.setSpacing(4)
+        tabs = QTabWidget()
+        tabs.setDocumentMode(True)
+        tabs.addTab(self._build_structures(), "Structures")
+        tabs.addTab(self._build_symbols(), "Symbols")
+        lay.addWidget(tabs)
+        self._tabs = tabs
+        return ribbon
+
+    def _build_structures(self) -> QWidget:
+        page = QWidget()
+        v = QVBoxLayout(page)
+        v.setContentsMargins(0, 6, 0, 0)
+        v.setSpacing(6)
+        strip = QHBoxLayout()
+        strip.setSpacing(2)
+        self._btn_group = QButtonGroup(self)
+        self._btn_group.setExclusive(True)
+        groups = equations.EQUATION_GROUPS
+        for idx, (group_name, _items) in enumerate(groups):
+            label, sample = _CATEGORY_FACES[idx] \
+                if idx < len(_CATEGORY_FACES) else (group_name, "")
+            btn = QToolButton()
+            btn.setObjectName("Cat")
+            btn.setCheckable(True)
+            btn.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+            btn.setText(label)
+            btn.setToolTip(group_name)
+            if sample:
+                btn.setIcon(QIcon(mathlayout.render_pixmap(sample, 15)))
+                btn.setIconSize(QSize(34, 26))
+            btn.setFixedSize(68, 54)
+            self._btn_group.addButton(btn, idx)
+            strip.addWidget(btn)
+        strip.addStretch(1)
+        v.addLayout(strip)
+        self._stack = QStackedWidget()
+        self._populated: set[int] = set()
+        for _ in groups:
+            self._stack.addWidget(QWidget())
+        self._stack.setFixedHeight(112)
+        v.addWidget(self._stack)
+        self._btn_group.idClicked.connect(self._show_category)
+        self._btn_group.button(0).setChecked(True)
+        self._show_category(0)
+        return page
+
+    def _show_category(self, index: int) -> None:
+        groups = equations.EQUATION_GROUPS
+        if not 0 <= index < len(groups):
+            return
+        self._stack.setCurrentIndex(index)
+        if index in self._populated:
+            return
+        self._populated.add(index)
+        page = self._stack.widget(index)
+        grid_host = _flow_grid(page)
+        for latex, preview_text in groups[index][1]:
+            btn = QToolButton()
+            btn.setObjectName("Tpl")
+            name = _template_name(latex, preview_text)
+            btn.setToolTip(name)
+            px = mathlayout.render_pixmap(
+                mathbox.normalize_template(latex), 17, display=True)
+            dpr = px.devicePixelRatio() or 1.0
+            w, h = px.width() / dpr, px.height() / dpr
+            if w > 150 or h > 84:
+                s = min(150 / w, 84 / h)
+                w, h = w * s, h * s
+            btn.setIcon(QIcon(px))
+            btn.setIconSize(QSize(int(w), int(h)))
+            btn.setFixedSize(max(int(w) + 18, 52), max(int(h) + 12, 44))
+            btn.clicked.connect(
+                lambda _c=False, tex=latex: self._insert_template(tex))
+            grid_host.addWidget(btn)
+        grid_host.addStretch(1)
+
+    def _build_symbols(self) -> QWidget:
+        page = QWidget()
+        v = QVBoxLayout(page)
+        v.setContentsMargins(0, 6, 0, 0)
+        v.setSpacing(6)
+        strip = QHBoxLayout()
+        strip.setSpacing(2)
+        self._sym_group = QButtonGroup(self)
+        self._sym_stack = QStackedWidget()
+        self._sym_stack.setFixedHeight(142)
+        fam = mathlayout.font_info()["family"]
+        groups = [g for g in symbols.SYMBOL_GROUPS if g[0] != "KherveTeX"]
+        for idx, (gname, items) in enumerate(groups):
+            label, glyph = _SYMBOL_TABS[idx] if idx < len(_SYMBOL_TABS) \
+                else (gname, "")
+            tb = QToolButton()
+            tb.setObjectName("Cat")
+            tb.setCheckable(True)
+            tb.setText(f"{glyph}  {label}".replace("&", "&&"))
+            tb.setToolTip(gname)
+            tb.setFixedHeight(28)
+            self._sym_group.addButton(tb, idx)
+            strip.addWidget(tb)
+            host = QWidget()
+            host.setObjectName("PaletteHost")
+            grid = QGridLayout(host)
+            grid.setSpacing(3)
+            grid.setContentsMargins(0, 0, 0, 0)
+            cols = 18
+            for i, (latex, glyph_txt) in enumerate(items):
+                if symbols.is_text_mode_symbol(latex):
+                    continue
+                b = QToolButton()
+                b.setObjectName("Sym")
+                f = QFont(fam)
+                f.setPixelSize(19)
+                b.setFont(f)
+                ins = _symbol_insert_latex(latex)
+                if len(glyph_txt) <= 2 and "{" not in latex:
+                    b.setText(glyph_txt)
+                else:
+                    b.setIcon(QIcon(mathlayout.render_pixmap(ins, 15)))
+                    b.setIconSize(QSize(28, 24))
+                b.setToolTip(_nice_name(latex))
+                b.setFixedSize(36, 34)
+                b.clicked.connect(
+                    lambda _c=False, tex=ins: self._insert_template(tex))
+                grid.addWidget(b, i // cols, i % cols)
+            grid.setColumnStretch(cols, 1)
+            grid.setRowStretch(grid.rowCount(), 1)
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.NoFrame)
+            scroll.setWidget(host)
+            self._sym_stack.addWidget(scroll)
+        strip.addStretch(1)
+        v.addLayout(strip)
+        v.addWidget(self._sym_stack)
+        self._sym_group.idClicked.connect(self._sym_stack.setCurrentIndex)
+        self._sym_group.button(0).setChecked(True)
+        return page
+
+    # --------------------------------------------------------- editing
+    def _insert_template(self, latex: str) -> None:
+        self._math.insert_latex(mathbox.normalize_template(latex))
+        self._math.setFocus()
+
+    def _toggle_source(self, on: bool) -> None:
+        self._source_panel.setVisible(on)
+        self._latex_toggle.setText("Hide LaTeX" if on else "Show LaTeX")
+
+    def _on_math_changed(self) -> None:
+        self._dirty = True
+        if not self._syncing:
+            self._syncing = True
+            self._edit.setPlainText(self._math.latex(mathbox.PLACEHOLDER))
+            self._syncing = False
+        self._update_slot_hint()
+
+    def _on_source_changed(self) -> None:
+        if self._syncing:
+            return
+        self._dirty = True
+        self._syncing = True
+        self._math.set_latex(self._edit.toPlainText())
+        self._syncing = False
+        self._update_slot_hint()
+
+    def _update_slot_hint(self) -> None:
+        n = mathbox.count_empty(self._math.editor.root)
+        if n:
+            plural = "s" if n != 1 else ""
+            self._ph_hint.setText(
+                f"{n} empty slot{plural} — press Tab to jump between them")
+        else:
+            self._ph_hint.setText("")
+
+    # ------------------------------------------------------------- API
+    def latex(self) -> str:
+        if not self._dirty:
+            return self._initial
+        return self._math.latex().strip()
 
     def is_display(self) -> bool:
         return self._display_cb.isChecked()
+
+
+def _flow_grid(page: QWidget) -> QHBoxLayout:
+    """A horizontally scrolling row of template buttons inside *page*."""
+    outer = QVBoxLayout(page)
+    outer.setContentsMargins(0, 0, 0, 0)
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QFrame.NoFrame)
+    scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    inner = QWidget()
+    inner.setObjectName("PaletteHost")
+    row = QHBoxLayout(inner)
+    row.setContentsMargins(2, 2, 2, 2)
+    row.setSpacing(6)
+    row.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+    scroll.setWidget(inner)
+    outer.addWidget(scroll)
+    return row
 
 
 class ChemistryEditorDialog(_TemplatePaletteDialog):
