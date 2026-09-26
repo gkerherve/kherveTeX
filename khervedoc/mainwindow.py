@@ -3006,7 +3006,8 @@ class MainWindow(QMainWindow):
             return
         meta.column_count = n
         self._editor.set_meta(meta)
-        self._kick_compile()
+        if self._auto_compile:
+            self._kick_compile()
 
     def _sync_column_toolbar(self) -> None:
         """Tick the toolbar button that matches meta.column_count. Called

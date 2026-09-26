@@ -1144,6 +1144,7 @@ class DocumentEditor(QWidget):
     def set_page_size(self, code: str) -> None:
         self._meta.page_size = code
         self._apply_page_size(page_sizes.by_code(code))
+        self._apply_page_layout()
         self._on_text_changed()
 
     def _apply_visual_font(self, family: str) -> None:
@@ -1193,7 +1194,7 @@ class DocumentEditor(QWidget):
         self._edit._apply_pagination()
         page_h = self._edit.page_height_px()
         if page_h > 0:
-            total_h = page_h * max(1, self._edit.document().pageCount())
+            total_h = page_h * self._edit.sheet_count()
         else:
             total_h = max(int(self._edit.document().size().height()), 240)
         self._edit.setMinimumHeight(total_h)
@@ -1676,7 +1677,7 @@ class DocumentEditor(QWidget):
         body font and zoom, capped to 90% of the editor viewport."""
         zoom = self._zoom_percent / 100 if self._zoom_percent else 1.0
         scale = (96 / _MATH_DPI) * zoom * self._body_font_pt / _MATH_RENDER_PT
-        max_w = int(self._edit.viewport().width() * 0.9)
+        max_w = int(self._edit.text_width_px() * 0.98)
         w, h = round(img.width() * scale), round(img.height() * scale)
         if w > max_w and max_w > 0:
             h = int(h * max_w / w)
@@ -2373,8 +2374,15 @@ class DocumentEditor(QWidget):
         ff = root.frameFormat()
         ff.setTopMargin(m.margin_top_cm * _PX_PER_CM * zoom)
         ff.setBottomMargin(m.margin_bottom_cm * _PX_PER_CM * zoom)
-        ff.setLeftMargin(m.margin_left_cm * _PX_PER_CM * zoom)
-        ff.setRightMargin(m.margin_right_cm * _PX_PER_CM * zoom)
+        cols = max(1, int(getattr(m, "column_count", 1) or 1))
+        left_px = m.margin_left_cm * _PX_PER_CM * zoom
+        right_px = m.margin_right_cm * _PX_PER_CM * zoom
+        # In columns each layout page IS one column, so the side margins
+        # move out of the layout and into the column placement.
+        ff.setLeftMargin(0 if cols > 1 else left_px)
+        ff.setRightMargin(0 if cols > 1 else right_px)
+        # LaTeX's \columnsep is 10pt.
+        self._edit.set_columns(cols, 10 * 96 / 72 * zoom, left_px, right_px)
         # Only write what changed: every format write counts as a document
         # edit, and this runs after each edit, so an unconditional write
         # re-triggered the compile forever.
@@ -2396,7 +2404,10 @@ class DocumentEditor(QWidget):
         edit.joinPreviousEditBlock()
         try:
             prev_state = None
-            pdf_breaks = self._pdf_page_start_blocks()
+            # PDF page starts mean a new sheet; with columns a forced break
+            # would only start a new column, so leave paging to the layout.
+            pdf_breaks = (self._pdf_page_start_blocks()
+                          if self._edit.columns() <= 1 else set())
             offset = self._heading_offset
             has_chapters = self._has_chapter_blocks() or offset[0] > 0
             counters = list(offset)

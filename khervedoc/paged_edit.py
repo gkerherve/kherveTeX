@@ -16,8 +16,10 @@ from pathlib import Path
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, QSizeF, Qt, Signal
 from PySide6.QtGui import (
-    QColor, QImage, QLinearGradient, QPainter, QPen, QTextFormat,
+    QAbstractTextDocumentLayout, QColor, QImage, QLinearGradient,
+    QMouseEvent, QPainter, QPen, QTextCharFormat, QTextFormat,
 )
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QTextEdit, QWidget
 
 
@@ -236,6 +238,14 @@ class PagedTextEdit(QTextEdit):
         self._page_height_px = 0
         self._page_width_px = 0
         self._desk_color = QColor(DESK_COLOR)
+        # Multi-column layout (1 = normal flow).
+        self._columns = 1
+        self._col_gap = 0.0
+        self._col_left = 0.0
+        self._col_width = 0.0
+        self._caret_on = True
+        self._caret_timer = QTimer(self)
+        self._caret_timer.timeout.connect(self._blink)
         # Number of pages in the most recent compiled PDF. The
         # overlay uses this (when >= 2) to position break lines
         # proportionally to the editor's actual content height —
@@ -354,8 +364,9 @@ class PagedTextEdit(QTextEdit):
         # relays out (resize, wrap-mode change), which silently turns
         # pagination off; re-assert it afterwards.
         if self._page_height_px > 0:
-            size = QSizeF(self.viewport().width() or self._page_width_px,
-                          self._page_height_px)
+            width = (self._col_width if self._columns > 1
+                     else self.viewport().width() or self._page_width_px)
+            size = QSizeF(width, self._page_height_px)
             if self.document().pageSize() != size:
                 self.document().setPageSize(size)
 
@@ -364,12 +375,161 @@ class PagedTextEdit(QTextEdit):
         self._desk_color = QColor(color)
         self.viewport().update()
 
+    # ----- multi-column layout -----
+    #
+    # QTextDocument has no columns, so the document is laid out on
+    # "pages" one column wide and one sheet tall; page p is then drawn
+    # as column p % n of sheet p // n. Mouse positions are mapped back
+    # through the same arrangement, so editing works unchanged.
+
+    def set_columns(self, n: int, gap_px: float, left_px: float,
+                    right_px: float) -> None:
+        n = max(1, int(n))
+        width = self._page_width_px or self.viewport().width()
+        col_w = (width - left_px - right_px - gap_px * (n - 1)) / n \
+            if n > 1 else 0.0
+        changed = (n, gap_px, left_px, col_w) != (
+            self._columns, self._col_gap, self._col_left, self._col_width)
+        self._columns, self._col_gap = n, gap_px
+        self._col_left, self._col_width = left_px, col_w
+        if n > 1:
+            self._caret_timer.start(530)
+        else:
+            self._caret_timer.stop()
+        if changed:
+            self._apply_pagination()
+            self.viewport().update()
+
+    def columns(self) -> int:
+        return self._columns
+
+    def text_width_px(self) -> float:
+        """Width available to a line of text (a column, when split)."""
+        if self._columns > 1:
+            return self._col_width
+        fmt = self.document().rootFrame().frameFormat()
+        return self.viewport().width() - fmt.leftMargin() - fmt.rightMargin()
+
+    def sheet_count(self) -> int:
+        pages = max(1, self.document().pageCount())
+        return -(-pages // self._columns)
+
+    def doc_to_view(self, x: float, y: float) -> QPointF:
+        """Document-layout point -> viewport point."""
+        dy = -self.verticalScrollBar().value()
+        dx = -self.horizontalScrollBar().value()
+        H = self._page_height_px
+        if self._columns <= 1 or H <= 0:
+            return QPointF(x + dx, y + dy)
+        page = int(y // H)
+        sheet, col = divmod(page, self._columns)
+        vx = self._col_left + col * (self._col_width + self._col_gap) + x
+        return QPointF(vx + dx, sheet * H + (y - page * H) + dy)
+
+    def view_to_doc(self, pos) -> QPointF:
+        """Viewport point -> document-layout point."""
+        dy = self.verticalScrollBar().value()
+        dx = self.horizontalScrollBar().value()
+        H = self._page_height_px
+        x, y = pos.x() + dx, pos.y() + dy
+        if self._columns <= 1 or H <= 0:
+            return QPointF(x, y)
+        sheet = max(0, int(y // H))
+        local = y - sheet * H
+        step = self._col_width + self._col_gap
+        col = int((x - self._col_left + self._col_gap / 2) // step) \
+            if step > 0 else 0
+        col = max(0, min(self._columns - 1, col))
+        cx = x - self._col_left - col * step
+        cx = max(0.0, min(self._col_width - 1, cx))
+        page = sheet * self._columns + col
+        return QPointF(cx, page * H + local)
+
+    def _mapped(self, ev):
+        if self._columns <= 1:
+            return ev
+        d = self.view_to_doc(ev.position())
+        local = QPointF(d.x() - self.horizontalScrollBar().value(),
+                        d.y() - self.verticalScrollBar().value())
+        return QMouseEvent(ev.type(), local, ev.globalPosition(),
+                           ev.button(), ev.buttons(), ev.modifiers())
+
+    def mousePressEvent(self, ev):
+        super().mousePressEvent(self._mapped(ev))
+
+    def mouseMoveEvent(self, ev):
+        super().mouseMoveEvent(self._mapped(ev))
+
+    def mouseReleaseEvent(self, ev):
+        super().mouseReleaseEvent(self._mapped(ev))
+
+    def mouseDoubleClickEvent(self, ev):
+        super().mouseDoubleClickEvent(self._mapped(ev))
+
+    def cursorForPosition(self, pos):
+        if self._columns <= 1:
+            return super().cursorForPosition(pos)
+        d = self.view_to_doc(pos)
+        return super().cursorForPosition(QPointF(
+            d.x() - self.horizontalScrollBar().value(),
+            d.y() - self.verticalScrollBar().value()).toPoint())
+
+    def _blink(self) -> None:
+        self._caret_on = not self._caret_on
+        self.viewport().update()
+
+    def _paint_columns(self) -> None:
+        """Draw each layout page as a column of its sheet (see above);
+        QTextEdit's own painter only knows the single flow."""
+        H = self._page_height_px
+        doc = self.document()
+        layout = doc.documentLayout()
+        p = QPainter(self.viewport())
+        p.fillRect(self.viewport().rect(), self.palette().base())
+        ctx = QAbstractTextDocumentLayout.PaintContext()
+        pal = self.palette()
+        ctx.palette = pal
+        cur = self.textCursor()
+        if self.hasFocus() and self._caret_on and not self.isReadOnly():
+            ctx.cursorPosition = cur.position()
+        sels = []
+        if cur.hasSelection():
+            sel = QAbstractTextDocumentLayout.Selection()
+            sel.cursor = cur
+            fmt = QTextCharFormat()
+            fmt.setBackground(pal.highlight())
+            fmt.setForeground(pal.highlightedText())
+            sel.format = fmt
+            sels.append(sel)
+        for extra in self.extraSelections():
+            sel = QAbstractTextDocumentLayout.Selection()
+            sel.cursor = extra.cursor
+            sel.format = extra.format
+            sels.append(sel)
+        ctx.selections = sels
+        vh = self.viewport().height()
+        for page in range(max(1, doc.pageCount())):
+            origin = self.doc_to_view(0, page * H)
+            if origin.y() > vh or origin.y() + H < 0:
+                continue
+            p.save()
+            p.setClipRect(QRectF(origin.x(), origin.y(),
+                                 self._col_width, H))
+            p.translate(origin.x(), origin.y() - page * H)
+            ctx.clip = QRectF(0, page * H, self._col_width, H)
+            layout.draw(p, ctx)
+            p.restore()
+        p.end()
+
     def page_gap_px(self) -> int:
         """Grey gap drawn between sheets, scaled with the page."""
         return max(6, round(self._page_height_px * 0.011))
 
     def paintEvent(self, ev):
-        super().paintEvent(ev)
+        if self._columns > 1 and self._page_height_px > 0:
+            self._paint_columns()
+        else:
+            super().paintEvent(ev)
         self._paint_sheets()
         self._paint_heading_numbers()
 
@@ -379,7 +539,8 @@ class PagedTextEdit(QTextEdit):
         editor's page overflowed (equation source, table notes...) reads
         "N (cont.)" so the numbering still matches the PDF."""
         H = self._page_height_px
-        anchors = self.page_anchor_positions() if self._page_anchors else []
+        anchors = (self.page_anchor_positions()
+                   if self._page_anchors and self._columns <= 1 else [])
         if not anchors:
             return [str(k + 1) for k in range(sheets)]
         starts = {0: 1}
@@ -403,7 +564,7 @@ class PagedTextEdit(QTextEdit):
         doc = self.document()
         if H <= 0 or doc.pageSize().height() <= 0:
             return
-        pages = max(1, doc.pageCount())
+        pages = self.sheet_count()
         dy = -self.verticalScrollBar().value()
         w = self.viewport().width()
         g = self.page_gap_px()
@@ -449,11 +610,14 @@ class PagedTextEdit(QTextEdit):
         while block.isValid():
             number = block.blockFormat().property(HEADING_NUMBER_PROPERTY)
             if number:
-                rect = layout.blockBoundingRect(block).translated(dx, dy)
+                raw = layout.blockBoundingRect(block)
                 line = block.layout().lineAt(0) if block.layout() else None
+                at = self.doc_to_view(
+                    raw.left(), raw.top() + (line.y() if line is not None
+                                             and line.isValid() else 0))
                 if line is not None and line.isValid() \
-                        and rect.bottom() >= visible.top() \
-                        and rect.top() <= visible.bottom():
+                        and at.y() + raw.height() >= visible.top() \
+                        and at.y() <= visible.bottom():
                     if painter is None:
                         painter = QPainter(self.viewport())
                     it = block.begin()
@@ -463,10 +627,8 @@ class PagedTextEdit(QTextEdit):
                         painter.setPen(cf.foreground().color()
                                        if cf.hasProperty(QTextFormat.ForegroundBrush)
                                        else self.palette().text().color())
-                    painter.drawText(
-                        QPointF(rect.left(),
-                                rect.top() + line.y() + line.ascent()),
-                        str(number))
+                    painter.drawText(QPointF(at.x(), at.y() + line.ascent()),
+                                     str(number))
             block = block.next()
         if painter is not None:
             painter.end()

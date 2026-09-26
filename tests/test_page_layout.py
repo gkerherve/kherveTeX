@@ -201,3 +201,35 @@ def test_first_text_snippet_drops_section_numbers():
         def get_text(self, kind):
             return "A guided tour of the editor\n"
     assert _first_text_snippet(_Page2()).startswith("A guided")
+
+
+def test_columns_split_the_visual_page(qapp):
+    ed = DocumentEditor()
+    ed.resize(1000, 800)
+    ed.set_fit_to_width(False)
+    paras = [Paragraph(children=[Text(f"para{i} " + "word " * 80)])
+             for i in range(12)]
+    ed.set_document(Document(meta=DocMeta(column_count=2), children=paras))
+    edit = ed._edit
+    assert edit.columns() == 2
+    pages = edit.document().pageCount()
+    assert edit.sheet_count() == -(-pages // 2)
+    assert ed._page.maximumHeight() == edit.page_height_px() * edit.sheet_count()
+    # Layout page 1 is drawn as the RIGHT column of sheet 1: a click
+    # there must land in text from that page, not the left column's.
+    H = edit.page_height_px()
+    top_right = edit.doc_to_view(5, H + 120)
+    assert top_right.x() > edit.viewport().width() / 2
+    assert top_right.y() < H
+    cur = edit.cursorForPosition(top_right.toPoint())
+    y = edit.document().documentLayout().blockBoundingRect(
+        cur.block()).bottom()
+    assert y > H              # the block sits on layout page 1 or later
+    back = edit.view_to_doc(top_right)
+    assert abs(back.x() - 5) < 1 and abs(back.y() - (H + 120)) < 1
+    # Back to one column restores the normal flow.
+    meta = ed.meta()
+    meta.column_count = 1
+    ed.set_meta(meta)
+    assert edit.columns() == 1
+    assert edit.document().pageSize().width() == edit.viewport().width()
