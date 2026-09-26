@@ -67,3 +67,59 @@ def test_kdocz_does_not_bundle_siblings_of_plain_figures(tmp_path):
                out)
     names = zipfile.ZipFile(out).namelist()
     assert "images/figure_001.pdf" not in names
+
+
+def test_figure_is_shown_at_its_latex_width_and_resizes_with_mouse(tmp_path):
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtGui import QColor, QImage, QMouseEvent
+    from PySide6.QtCore import QEvent
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication([])
+    from khervedoc.editor import DocumentEditor
+    from khervedoc.model import Document, Figure
+
+    img = QImage(400, 200, QImage.Format_RGB32)
+    img.fill(QColor("steelblue"))
+    path = tmp_path / "pic.png"
+    img.save(str(path))
+    ed = DocumentEditor()
+    ed.resize(1000, 800)
+    ed.set_document(Document(children=[
+        Figure(path=str(path), caption="c", width="0.5\\textwidth")]))
+    ed.show()
+    QApplication.processEvents()
+    edit = ed._edit
+    text_w = edit.text_width_px()
+    table = next(f for f in edit.document().rootFrame().childFrames())
+    pos = table.cellAt(0, 0).firstCursorPosition().position()
+    rect = edit._image_view_rect(pos, _image_fmt(edit, pos))
+    assert abs(rect.width() - 0.5 * text_w) < 2        # 0.5\textwidth
+    assert abs(rect.height() - rect.width() / 2) < 2   # aspect kept
+
+    def send(kind, at, buttons):
+        ev = QMouseEvent(kind, at, at, Qt.LeftButton if kind != QEvent.MouseMove
+                         else Qt.NoButton, buttons, Qt.NoModifier)
+        {QEvent.MouseMove: edit.mouseMoveEvent,
+         QEvent.MouseButtonPress: edit.mousePressEvent,
+         QEvent.MouseButtonRelease: edit.mouseReleaseEvent}[kind](ev)
+
+    corner = QPointF(rect.right(), rect.bottom())
+    send(QEvent.MouseMove, corner, Qt.NoButton)            # hover
+    assert edit._hover_img is not None
+    send(QEvent.MouseButtonPress, corner, Qt.LeftButton)
+    target = QPointF(corner.x() + 0.2 * text_w, corner.y())
+    send(QEvent.MouseMove, target, Qt.LeftButton)
+    send(QEvent.MouseButtonRelease, target, Qt.NoButton)
+    fig = next(b for b in ed.get_document().children
+               if isinstance(b, Figure))
+    assert fig.width == "0.70\\textwidth"
+
+
+def _image_fmt(edit, pos):
+    from PySide6.QtGui import QTextCursor
+    c = QTextCursor(edit.document())
+    c.setPosition(pos)
+    c.setPosition(pos + 1, QTextCursor.KeepAnchor)
+    return c.charFormat().toImageFormat()

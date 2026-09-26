@@ -993,6 +993,10 @@ class DocumentEditor(QWidget):
         self._visual_font_family = "Georgia"
         self._edit = PagedTextEdit()
         self._edit.setAcceptRichText(False)
+        self._edit.image_resizable = (
+            lambda fmt: not fmt.property(_P_MATH)
+            and self._figure_table_at_image(fmt) is not None)
+        self._edit.imageResized.connect(self._on_image_resized)
         self._edit.setFrameShape(QFrame.NoFrame)
         f = QFont(self._visual_font_family); f.setPointSize(12)
         self._edit.setFont(f)
@@ -1215,6 +1219,7 @@ class DocumentEditor(QWidget):
         self._meta.page_size = code
         self._apply_page_size(page_sizes.by_code(code))
         self._apply_page_layout()
+        self._resize_figure_images()
         self._on_text_changed()
 
     def _apply_visual_font(self, family: str) -> None:
@@ -1296,6 +1301,9 @@ class DocumentEditor(QWidget):
                 first = False
                 self._render_block(cursor, block)
             self._apply_page_layout()
+            # Clearing the editor reset the page margins, so figures were
+            # sized against the wrong text width while being inserted.
+            self._resize_figure_images()
             # A freshly loaded document has nothing unsaved; MCP tools
             # read this before discarding it.
             self._edit.document().setModified(False)
@@ -1808,16 +1816,14 @@ class DocumentEditor(QWidget):
         if resolved is not None:
             img = QImage(str(resolved))
             if not img.isNull():
-                max_w, max_h = 400, 300
-                if img.width() > max_w or img.height() > max_h:
-                    img = img.scaled(max_w, max_h, Qt.KeepAspectRatio,
-                                     Qt.SmoothTransformation)
                 url = QUrl.fromLocalFile(str(resolved))
                 self._edit.document().addResource(2, url, img)
+                w, h = self._figure_display_size(
+                    figure.width or "0.8\\textwidth", img)
                 img_fmt = QTextImageFormat()
                 img_fmt.setName(url.toString())
-                img_fmt.setWidth(img.width())
-                img_fmt.setHeight(img.height())
+                img_fmt.setWidth(w)
+                img_fmt.setHeight(h)
                 img_cursor.insertImage(img_fmt)
             else:
                 img_cursor.insertText(
@@ -1851,6 +1857,91 @@ class DocumentEditor(QWidget):
             lbl_cursor.insertText(f"Label: {figure.label}", lbl_fmt)
         cursor.movePosition(QTextCursor.End)
         cursor.endEditBlock()
+
+    def _figure_display_size(self, width_spec: str,
+                             img: QImage) -> tuple[float, float]:
+        """On-screen size of a figure image from its LaTeX width
+        (0.6\\textwidth, 8cm, 3in...), so the page shows it as wide as the
+        PDF will. The old fixed 400x300 box ignored the width entirely."""
+        text_w = self._edit.text_width_px()
+        zoom = self._zoom_percent / 100 if self._zoom_percent else 1.0
+        spec = (width_spec or "").strip()
+        m = _re.match(r"([\d.]*)\s*\\(textwidth|linewidth|columnwidth|hsize)",
+                      spec)
+        u = _re.match(r"([\d.]+)\s*(cm|mm|in|pt|bp|px)$", spec)
+        if m:
+            w = float(m.group(1) or 1) * text_w
+        elif u:
+            per = {"cm": 96 / 2.54, "mm": 96 / 25.4, "in": 96.0,
+                   "pt": 96 / 72.27, "bp": 96 / 72, "px": 1.0}[u.group(2)]
+            w = float(u.group(1)) * per * zoom
+        else:
+            w = 0.8 * text_w
+        w = max(16.0, min(w, text_w))
+        aspect = img.height() / img.width() if img.width() else 0.75
+        return w, w * aspect
+
+    def _resize_figure_images(self) -> None:
+        """Re-fit figure images to their LaTeX width after zoom, page
+        size or column changes."""
+        doc = self._edit.document()
+        was_building = self._building
+        self._building = True
+        edit = QTextCursor(doc)
+        edit.joinPreviousEditBlock()
+        try:
+            for frame in doc.rootFrame().childFrames():
+                if not isinstance(frame, QTextTable):
+                    continue
+                spec = frame.format().property(_P_FIGURE_WIDTH)
+                if spec is None:
+                    continue
+                c = frame.cellAt(0, 0).firstCursorPosition()
+                c.movePosition(QTextCursor.NextCharacter,
+                               QTextCursor.KeepAnchor)
+                fmt = c.charFormat()
+                if not fmt.isImageFormat():
+                    continue
+                img_fmt = fmt.toImageFormat()
+                img = doc.resource(2, QUrl(img_fmt.name()))
+                if not isinstance(img, QImage) or img.isNull():
+                    continue
+                w, h = self._figure_display_size(spec, img)
+                if abs(img_fmt.width() - w) > 0.5:
+                    img_fmt.setWidth(w)
+                    img_fmt.setHeight(h)
+                    c.setCharFormat(img_fmt)
+        finally:
+            edit.endEditBlock()
+            self._building = was_building
+
+    def _figure_table_at_image(self, fmt) -> "QTextTable | None":
+        name = fmt.toImageFormat().name()
+        for frame in self._edit.document().rootFrame().childFrames():
+            if isinstance(frame, QTextTable) and frame.format().property(
+                    _P_FIGURE_PATH) is not None:
+                c = frame.cellAt(0, 0).firstCursorPosition()
+                c.movePosition(QTextCursor.NextCharacter,
+                               QTextCursor.KeepAnchor)
+                if c.charFormat().isImageFormat() and \
+                        c.charFormat().toImageFormat().name() == name:
+                    return frame
+        return None
+
+    def _on_image_resized(self, pos: int, w: float, h: float) -> None:
+        """Mouse resize finished: record the new width on the figure as a
+        fraction of the text width, which the LaTeX output then uses."""
+        cur = QTextCursor(self._edit.document())
+        cur.setPosition(pos)
+        table = cur.currentTable()
+        if table is None or table.format().property(_P_FIGURE_PATH) is None:
+            return
+        text_w = self._edit.text_width_px()
+        frac = max(0.05, min(1.0, w / text_w)) if text_w > 0 else 0.8
+        tfmt = table.format()
+        tfmt.setProperty(_P_FIGURE_WIDTH, f"{frac:.2f}\\textwidth")
+        table.setFormat(tfmt)
+        self._on_text_changed()
 
     def _figure_from_qtexttable(self, qtable: QTextTable) -> Figure:
         """Read a Figure model back from its QTextTable representation."""
@@ -2628,6 +2719,7 @@ class DocumentEditor(QWidget):
         self._edit.set_page_size_px(scaled_w, scaled_h)
         self._apply_page_layout()
         self._resize_math_images()
+        self._resize_figure_images()
         self._resize_to_document()
 
     def set_fit_to_width(self, enabled: bool) -> None:

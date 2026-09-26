@@ -17,7 +17,7 @@ from pathlib import Path
 from PySide6.QtCore import QEvent, QPointF, QRectF, QSizeF, Qt, Signal
 from PySide6.QtGui import (
     QAbstractTextDocumentLayout, QColor, QImage, QLinearGradient,
-    QMouseEvent, QPainter, QPen, QTextCharFormat, QTextFormat,
+    QMouseEvent, QPainter, QPen, QTextCharFormat, QTextCursor, QTextFormat,
 )
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QTextEdit, QWidget
@@ -231,6 +231,8 @@ class PagedTextEdit(QTextEdit):
     """
 
     imageReceived = Signal(str)
+    # A figure image was resized with the mouse: (doc position, w, h).
+    imageResized = Signal(int, float, float)
     documentDropped = Signal(str)
 
     def __init__(self, parent: QWidget | None = None):
@@ -244,6 +246,12 @@ class PagedTextEdit(QTextEdit):
         self._col_left = 0.0
         self._col_width = 0.0
         self._caret_on = True
+        # Mouse resizing of figure images. The editor decides which
+        # images qualify (figures yes, typeset equations no).
+        self.image_resizable = lambda fmt: False
+        self._hover_img = None      # (doc pos, QRectF in view coords)
+        self._img_drag = None       # (doc pos, start QPointF, w, h)
+        self.viewport().setMouseTracking(True)
         self._caret_timer = QTimer(self)
         self._caret_timer.timeout.connect(self._blink)
         # Number of pages in the most recent compiled PDF. The
@@ -458,14 +466,129 @@ class PagedTextEdit(QTextEdit):
         return QMouseEvent(ev.type(), local, ev.globalPosition(),
                            ev.button(), ev.buttons(), ev.modifiers())
 
+    _HANDLE = 9.0
+
+    def _image_under(self, view_pos):
+        """(doc position, view rect) of a resizable image at view_pos."""
+        doc = self.document()
+        c = self.cursorForPosition(view_pos.toPoint())
+        for pos in (c.position(), c.position() - 1):
+            if pos < 0:
+                continue
+            cc = QTextCursor(doc)
+            cc.setPosition(pos)
+            cc.setPosition(pos + 1, QTextCursor.KeepAnchor)
+            fmt = cc.charFormat()
+            if cc.selectedText() != "\ufffc" or not fmt.isImageFormat():
+                continue
+            if not self.image_resizable(fmt):
+                return None
+            rect = self._image_view_rect(pos, fmt.toImageFormat())
+            if rect is not None and rect.adjusted(
+                    -self._HANDLE, -self._HANDLE,
+                    self._HANDLE, self._HANDLE).contains(view_pos):
+                return pos, rect
+        return None
+
+    def _image_view_rect(self, pos: int, fmt):
+        block = self.document().findBlock(pos)
+        lay = block.layout()
+        if lay is None:
+            return None
+        rel = pos - block.position()
+        line = lay.lineForTextPosition(rel)
+        if not line.isValid():
+            return None
+        x = line.cursorToX(rel)
+        x = x[0] if isinstance(x, tuple) else x
+        w, h = fmt.width(), fmt.height()
+        origin = lay.position()
+        top = origin.y() + line.y() + line.ascent() - h
+        tl = self.doc_to_view(origin.x() + x, top)
+        return QRectF(tl.x(), tl.y(), w, h)
+
+    def _handle_rect(self, rect: QRectF) -> QRectF:
+        s = self._HANDLE
+        return QRectF(rect.right() - s / 2, rect.bottom() - s / 2, s, s)
+
     def mousePressEvent(self, ev):
+        hit = self._hover_img
+        if (hit is not None and ev.button() == Qt.LeftButton
+                and self._handle_rect(hit[1]).adjusted(-4, -4, 4, 4)
+                .contains(ev.position())):
+            pos, rect = hit
+            self._img_drag = (pos, ev.position(), rect.width(), rect.height())
+            ev.accept()
+            return
         super().mousePressEvent(self._mapped(ev))
 
     def mouseMoveEvent(self, ev):
+        if self._img_drag is not None:
+            pos, start, w0, h0 = self._img_drag
+            limit = max(40.0, self.text_width_px())
+            w = max(24.0, min(limit, w0 + ev.position().x() - start.x()))
+            self._set_image_size(pos, w, w * h0 / w0 if w0 else h0)
+            ev.accept()
+            return
+        if not ev.buttons():
+            hit = self._image_under(ev.position())
+            if (hit is None) != (self._hover_img is None) or hit != self._hover_img:
+                self._hover_img = hit
+                self.viewport().update()
+            on_handle = hit is not None and self._handle_rect(hit[1]) \
+                .adjusted(-4, -4, 4, 4).contains(ev.position())
+            if on_handle:
+                self.viewport().setCursor(Qt.SizeFDiagCursor)
+            else:
+                self.viewport().unsetCursor()
         super().mouseMoveEvent(self._mapped(ev))
 
     def mouseReleaseEvent(self, ev):
+        if self._img_drag is not None:
+            pos = self._img_drag[0]
+            self._img_drag = None
+            cc = QTextCursor(self.document())
+            cc.setPosition(pos)
+            cc.setPosition(pos + 1, QTextCursor.KeepAnchor)
+            f = cc.charFormat().toImageFormat()
+            self.imageResized.emit(pos, f.width(), f.height())
+            ev.accept()
+            return
         super().mouseReleaseEvent(self._mapped(ev))
+
+    def leaveEvent(self, ev):
+        if self._hover_img is not None and self._img_drag is None:
+            self._hover_img = None
+            self.viewport().update()
+        super().leaveEvent(ev)
+
+    def _set_image_size(self, pos: int, w: float, h: float) -> None:
+        cc = QTextCursor(self.document())
+        cc.setPosition(pos)
+        cc.setPosition(pos + 1, QTextCursor.KeepAnchor)
+        f = cc.charFormat().toImageFormat()
+        f.setWidth(w)
+        f.setHeight(h)
+        cc.setCharFormat(f)
+        rect = self._image_view_rect(pos, f)
+        if rect is not None:
+            self._hover_img = (pos, rect)
+        self.viewport().update()
+
+    def _paint_image_handles(self) -> None:
+        if self._hover_img is None:
+            return
+        rect = self._hover_img[1]
+        p = QPainter(self.viewport())
+        p.setRenderHint(QPainter.Antialiasing)
+        accent = self.palette().highlight().color()
+        p.setPen(QPen(accent, 1, Qt.DashLine))
+        p.setBrush(Qt.NoBrush)
+        p.drawRect(rect.adjusted(-1, -1, 1, 1))
+        p.setPen(QPen(QColor("white"), 1))
+        p.setBrush(accent)
+        p.drawRect(self._handle_rect(rect))
+        p.end()
 
     def mouseDoubleClickEvent(self, ev):
         super().mouseDoubleClickEvent(self._mapped(ev))
@@ -536,6 +659,7 @@ class PagedTextEdit(QTextEdit):
             super().paintEvent(ev)
         self._paint_sheets()
         self._paint_heading_numbers()
+        self._paint_image_handles()
 
     def _sheet_labels(self, sheets: int) -> list[str]:
         """Footer label per sheet. After a compile each sheet is named
