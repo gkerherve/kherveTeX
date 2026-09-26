@@ -825,23 +825,59 @@ def serialize_chapter_body(doc: Document) -> str:
     return "".join(parts)
 
 
+_GRAPHICS_PATH_RE = re.compile(r"(\\includegraphics\*?(?:\[[^\]]*\])?\{)([^}]+)(\})")
+
+
+def chapter_body_tex(doc: Document, chapter_dir, project_dir) -> str:
+    """A chapter's body LaTeX, as written into the project folder next
+    to the master. Image paths written relative to the chapter's own
+    folder are re-pointed relative to the project folder, where the
+    master (and so LaTeX) resolves them."""
+    import os
+    from pathlib import Path
+    chapter_dir, project_dir = Path(chapter_dir), Path(project_dir)
+    body = serialize_chapter_body(doc)
+    if chapter_dir.resolve() == project_dir.resolve():
+        return body
+
+    def fix(m: re.Match) -> str:
+        path = m.group(2)
+        if Path(path).is_absolute() or (project_dir / path).exists():
+            return m.group(0)
+        candidate = chapter_dir / path
+        if not candidate.exists():
+            return m.group(0)
+        rel = os.path.relpath(candidate.resolve(), project_dir.resolve())
+        return m.group(1) + rel.replace(os.sep, "/") + m.group(3)
+
+    return _GRAPHICS_PATH_RE.sub(fix, body)
+
+
 def _chapter_stem(ch: ChapterEntry) -> str:
-    """Return the file stem used in \\include{stem} for a chapter."""
+    """Return the file stem used in \\include{stem} for a chapter.
+
+    The chapter's folder is folded in ("partA/intro" -> "partA-intro") so
+    two chapters named intro in different folders don't overwrite each
+    other, and characters \\include rejects (spaces, dots, #, %...) are
+    replaced."""
     from pathlib import PurePosixPath
-    p = ch.path.replace("\\", "/")
-    name = PurePosixPath(p).stem
-    for ext in (".kdoc", ".ktex"):
+    p = PurePosixPath(ch.path.replace("\\", "/"))
+    name = p.name
+    for ext in (".json", ".kdoc", ".ktex", ".kdocz"):
         if name.endswith(ext):
             name = name[:-len(ext)]
-    return name
+    parts = [q for q in p.parent.parts if q not in (".", "..", "/")]
+    stem = "-".join(parts + [name])
+    return re.sub(r"[^A-Za-z0-9_-]+", "_", stem).strip("_") or "chapter"
 
 
-def serialize_project_master(proj: Project) -> str:
+def serialize_project_master(proj: Project,
+                             chapter_docs: list[Document] | None = None) -> str:
     """Generate the master .tex for a multi-chapter project.
 
-    All chapters appear in \\include{} calls (so LaTeX keeps numbering
-    consistent), but only enabled chapters are listed in \\includeonly{}
-    so disabled ones compile as no-ops.
+    Enabled chapters get an \\include{}; disabled ones are left out, with
+    counters advanced so later chapters keep their numbers. Packages and
+    preamble lines from *chapter_docs* are hoisted into the master.
     """
     from . import page_sizes
     m = proj.meta
@@ -887,6 +923,18 @@ def serialize_project_master(proj: Project) -> str:
         packages += "\n" + preamble_extras
     if m.preamble_extras and m.preamble_extras.strip():
         packages += "\n" + m.preamble_extras.strip()
+    # Chapters are body-only, so packages and macros a chapter added to
+    # its own settings must be hoisted into the master or it won't build.
+    for cdoc in chapter_docs or []:
+        for pkg in cdoc.meta.packages:
+            if pkg not in pkg_list:
+                pkg_list.append(pkg)
+                packages += f"\n\\usepackage{{{pkg}}}"
+        for line in (cdoc.meta.preamble_extras or "").strip().splitlines():
+            # The master owns page geometry; a chapter's copy would clash.
+            if line.strip() and line.strip() not in packages \
+                    and "{geometry}" not in line:
+                packages += "\n" + line
     packages += "\n" + _KSTROKE_PROVIDE
 
     # Title / author in the preamble

@@ -182,3 +182,43 @@ def test_auto_page_numbers_round_trip():
     s = project_to_json(proj)
     proj2 = project_from_json(s)
     assert proj2.auto_page_numbers is True
+
+
+def test_chapter_stems_are_unique_and_include_safe():
+    from khervedoc.model import ChapterEntry
+    from khervedoc.serializer import _chapter_stem
+    a = _chapter_stem(ChapterEntry(path="partA/intro.kdoc.json"))
+    b = _chapter_stem(ChapterEntry(path="partB/intro.kdoc.json"))
+    assert a != b
+    assert _chapter_stem(ChapterEntry(path="My Chapter 1.kdoc.json")) == \
+        "My_Chapter_1"
+    assert _chapter_stem(ChapterEntry(path="intro.kdoc.json")) == "intro"
+
+
+def test_master_hoists_chapter_packages_but_not_geometry():
+    from khervedoc.model import (
+        ChapterEntry, DocMeta, Document, Project,
+    )
+    from khervedoc.serializer import serialize_project_master
+    proj = Project(meta=DocMeta(documentclass="report"),
+                   chapters=[ChapterEntry(path="c1.kdoc.json")])
+    ch = Document(meta=DocMeta(
+        packages=["siunitx"],
+        preamble_extras="\\newcommand{\\foo}{bar}\n"
+                        "\\usepackage[margin=1cm]{geometry}"))
+    master = serialize_project_master(proj, [ch])
+    assert "\\usepackage{siunitx}" in master
+    assert "\\newcommand{\\foo}{bar}" in master
+    assert "margin=1cm" not in master
+    assert master.index("siunitx") < master.index("\\begin{document}")
+
+
+def test_chapter_image_paths_repointed_to_project(tmp_path):
+    from khervedoc.model import Document, Figure
+    from khervedoc.serializer import chapter_body_tex
+    ch_dir = tmp_path / "chapters"
+    (ch_dir / "img").mkdir(parents=True)
+    (ch_dir / "img" / "a.png").write_bytes(b"")
+    doc = Document(children=[Figure(path="img/a.png", caption="x")])
+    out = chapter_body_tex(doc, ch_dir, tmp_path)
+    assert "{chapters/img/a.png}" in out

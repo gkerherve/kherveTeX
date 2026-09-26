@@ -2397,22 +2397,9 @@ class MainWindow(QMainWindow):
             project_to_json(self._project), encoding="utf-8")
         # Write each chapter's .tex alongside its .kdoc.json
         proj_dir = self._project_path.parent
-        for ch in self._project.chapters:
-            ch_path = proj_dir / ch.path
-            if ch_path.exists():
-                try:
-                    doc = from_json(ch_path.read_text(encoding="utf-8"))
-                    stem = ch_path.stem
-                    for ext in (".kdoc", ".ktex"):
-                        if stem.endswith(ext):
-                            stem = stem[:-len(ext)]
-                    tex_path = ch_path.parent / f"{stem}.tex"
-                    tex_path.write_text(
-                        serialize_chapter_body(doc), encoding="utf-8")
-                except Exception:
-                    pass
+        chapter_docs = self._write_chapter_tex_files(proj_dir)
         # Write the master .tex
-        master_tex = serialize_project_master(self._project)
+        master_tex = serialize_project_master(self._project, chapter_docs)
         master_stem = self._project_path.stem
         if master_stem.endswith(".kdocproj"):
             master_stem = master_stem[:-len(".kdocproj")]
@@ -2507,6 +2494,32 @@ class MainWindow(QMainWindow):
         self._project_sidebar.set_project(self._project)
         self._switch_chapter(len(self._project.chapters) - 1)
 
+    def _write_chapter_tex_files(self, proj_dir: Path) -> list:
+        """Write every chapter's body .tex into the project folder under
+        the stem the master \\includes, and return the chapter documents
+        (the master hoists their packages). Failures are reported, not
+        swallowed — a silent failure left a stale chapter in the PDF."""
+        from .serializer import chapter_body_tex
+        from .serializer import _chapter_stem
+        docs: list = []
+        failed: list[str] = []
+        for ch in self._project.chapters:
+            ch_path = proj_dir / ch.path
+            try:
+                doc = from_json(ch_path.read_text(encoding="utf-8"))
+                (proj_dir / f"{_chapter_stem(ch)}.tex").write_text(
+                    chapter_body_tex(doc, ch_path.parent, proj_dir),
+                    encoding="utf-8")
+                docs.append(doc)
+            except Exception as exc:
+                failed.append(f"{ch.label or ch.path}: {exc}")
+        if failed:
+            msg = "Could not write chapter(s): " + "; ".join(failed)
+            self._status.showMessage("\u26a0 " + msg, 15000)
+            for console in (self._console, self._console_side):
+                console.appendPlainText(msg)
+        return docs
+
     def _compile_project(self) -> None:
         """Compile the entire project via the master .tex."""
         import shutil as _shutil
@@ -2514,21 +2527,10 @@ class MainWindow(QMainWindow):
             return
         self._flush_current_chapter()
         proj_dir = self._project_path.parent
-        # Write chapter .tex files from their .kdoc.json sources
         from .serializer import _chapter_stem
-        for ch in self._project.chapters:
-            ch_json_path = proj_dir / ch.path
-            if ch_json_path.exists():
-                try:
-                    doc = from_json(ch_json_path.read_text(encoding="utf-8"))
-                    stem = _chapter_stem(ch)
-                    tex_path = proj_dir / f"{stem}.tex"
-                    tex_path.write_text(
-                        serialize_chapter_body(doc), encoding="utf-8")
-                except Exception:
-                    pass
+        chapter_docs = self._write_chapter_tex_files(proj_dir)
         # Write the master .tex
-        master_tex = serialize_project_master(self._project)
+        master_tex = serialize_project_master(self._project, chapter_docs)
         master_stem = self._project_path.stem
         if master_stem.endswith(".kdocproj"):
             master_stem = master_stem[:-len(".kdocproj")]
