@@ -72,6 +72,11 @@ import hashlib as _hashlib
 from io import BytesIO as _BytesIO
 
 _MATH_IMAGE_CACHE: dict[str, Path | None] = {}
+# Equations are rasterised at 12pt / _MATH_DPI and shown scaled to the
+# body size and zoom. 300 dpi leaves enough pixels for Retina screens,
+# where the old 150 dpi, shown 1:1, was both blurry and ~1.8x too big.
+_MATH_DPI = 300
+_MATH_RENDER_PT = 12
 _math_tmp_dir: Path | None = None
 
 
@@ -88,7 +93,7 @@ _ENV_STRIP_RE = _re.compile(
     _re.DOTALL)
 
 
-def _render_math_image(latex: str, font_size: int = 14,
+def _render_math_image(latex: str, font_size: int = _MATH_RENDER_PT,
                        cache_dir: Path | None = None) -> Path | None:
     """Render a LaTeX math expression to a PNG file using matplotlib.
 
@@ -97,14 +102,15 @@ def _render_math_image(latex: str, font_size: int = 14,
     Returns the path to the PNG file, or None on failure. Results are
     cached on disk.  When *cache_dir* is given the PNG is written there
     instead of the global temp directory."""
-    if latex in _MATH_IMAGE_CACHE:
-        cached = _MATH_IMAGE_CACHE[latex]
+    key = latex
+    if key in _MATH_IMAGE_CACHE:
+        cached = _MATH_IMAGE_CACHE[key]
         if cached is not None and cached.exists():
             return cached
     try:
         from matplotlib.figure import Figure as MplFigure
     except ImportError:
-        _MATH_IMAGE_CACHE[latex] = None
+        _MATH_IMAGE_CACHE[key] = None
         return None
     # Strip environment wrappers to get bare math.
     raw = latex.strip()
@@ -113,7 +119,7 @@ def _render_math_image(latex: str, font_size: int = 14,
         raw = m.group(2).strip()
     raw = raw.strip("$").strip()
     if not raw:
-        _MATH_IMAGE_CACHE[latex] = None
+        _MATH_IMAGE_CACHE[key] = None
         return None
     # Translate LaTeX commands that mathtext doesn't know about.
     # \square (the palette placeholder) renders as a bullet, matching the
@@ -177,13 +183,13 @@ def _render_math_image(latex: str, font_size: int = 14,
             lines[idx] = ln.strip()
     lines = [ln for ln in lines if ln]
     if not lines:
-        _MATH_IMAGE_CACHE[latex] = None
+        _MATH_IMAGE_CACHE[key] = None
         return None
     try:
         n = len(lines)
         line_height = 0.35
         fig_h = max(0.4, n * line_height)
-        fig = MplFigure(figsize=(6, fig_h), dpi=150)
+        fig = MplFigure(figsize=(6, fig_h), dpi=_MATH_DPI)
         fig.patch.set_alpha(0)
         for i, line in enumerate(lines):
             y = 1.0 - (i + 0.5) / n
@@ -194,7 +200,7 @@ def _render_math_image(latex: str, font_size: int = 14,
         png_path = dest / f"math_{h}.png"
         fig.savefig(str(png_path), format="png", bbox_inches="tight",
                     pad_inches=0.04, transparent=True)
-        _MATH_IMAGE_CACHE[latex] = png_path
+        _MATH_IMAGE_CACHE[key] = png_path
         return png_path
     except Exception as exc:
         import traceback, sys as _sys
@@ -205,7 +211,7 @@ def _render_math_image(latex: str, font_size: int = 14,
                 traceback.print_exc(file=fh)
         except Exception:
             pass
-        _MATH_IMAGE_CACHE[latex] = None
+        _MATH_IMAGE_CACHE[key] = None
         return None
 
 
@@ -948,6 +954,9 @@ class DocumentEditor(QWidget):
         # save_kdocz will bundle them into the archive on Save As .kdocz.
         self._images_dir = Path(tempfile.mkdtemp(prefix="khervedoc-imgs-"))
         self._equations_dir: Path | None = None
+        # Full-resolution equation renders by resource URL, kept so zoom
+        # changes can re-scale from the original rather than a copy.
+        self._math_sources: dict[str, QImage] = {}
         self._edit.set_images_dir(self._images_dir)
         self._edit.imageReceived.connect(self._on_image_received)
         self._edit.documentDropped.connect(self.documentDropped)
@@ -1520,10 +1529,30 @@ class DocumentEditor(QWidget):
         cursor.movePosition(QTextCursor.End)
         cursor.endEditBlock()
 
+    def _math_png(self, latex: str) -> Path | None:
+        return _render_math_image(latex, cache_dir=self._equations_dir)
+
+    def _add_math_resource(self, url: QUrl, img: QImage) -> tuple[int, int]:
+        """Register *img* for *url* pre-scaled to its display size (at the
+        screen's pixel ratio) and return that logical size. Qt's own
+        scaling of document images is unsmoothed, which made thin strokes
+        such as '=' and fraction bars vanish."""
+        self._math_sources[url.toString()] = img
+        w, h = self._capped_math_size(img)
+        dpr = self._edit.devicePixelRatioF() or 1.0
+        shown = img.scaled(max(1, round(w * dpr)), max(1, round(h * dpr)),
+                           Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        shown.setDevicePixelRatio(dpr)
+        self._edit.document().addResource(2, url, shown)
+        return w, h
+
     def _capped_math_size(self, img: QImage) -> tuple[int, int]:
-        """Return (width, height) capped to 90% of the editor viewport."""
+        """Logical size for a math image: its 12pt render scaled to the
+        body font and zoom, capped to 90% of the editor viewport."""
+        zoom = self._zoom_percent / 100 if self._zoom_percent else 1.0
+        scale = (96 / _MATH_DPI) * zoom * self._body_font_pt / _MATH_RENDER_PT
         max_w = int(self._edit.viewport().width() * 0.9)
-        w, h = img.width(), img.height()
+        w, h = round(img.width() * scale), round(img.height() * scale)
         if w > max_w and max_w > 0:
             h = int(h * max_w / w)
             w = max_w
@@ -1531,15 +1560,14 @@ class DocumentEditor(QWidget):
 
     def _insert_math_image(self, cursor: QTextCursor, latex: str) -> None:
         """Render math to a PNG and insert it into the document."""
-        png_path = _render_math_image(latex, cache_dir=self._equations_dir)
+        png_path = self._math_png(latex)
         if png_path is None or not png_path.exists():
             return
         img = QImage(str(png_path))
         if img.isNull():
             return
         url = QUrl.fromLocalFile(str(png_path))
-        self._edit.document().addResource(2, url, img)
-        w, h = self._capped_math_size(img)
+        w, h = self._add_math_resource(url, img)
         img_fmt = QTextImageFormat()
         img_fmt.setName(url.toString())
         img_fmt.setWidth(w)
@@ -1549,6 +1577,7 @@ class DocumentEditor(QWidget):
         # equation can't find it — and get_document() can't tell a math
         # preview apart from an image the user pasted.
         img_fmt.setProperty(_P_MATH, latex)
+        img_fmt.setVerticalAlignment(QTextCharFormat.AlignMiddle)
         cursor.insertImage(img_fmt)
         cursor.insertText(_LINE_SEP)
 
@@ -2181,6 +2210,7 @@ class DocumentEditor(QWidget):
                 block = block.next()
         finally:
             self._building = False
+        self._resize_math_images()
         self._apply_page_layout()
         self._on_text_changed()
 
@@ -2294,6 +2324,7 @@ class DocumentEditor(QWidget):
         self._page.setFixedWidth(scaled_w)
         self._edit.set_page_size_px(scaled_w, scaled_h)
         self._apply_page_layout()
+        self._resize_math_images()
         self._resize_to_document()
 
     def set_fit_to_width(self, enabled: bool) -> None:
@@ -3067,6 +3098,40 @@ class DocumentEditor(QWidget):
         if block.userState() == _STATE_MATH_BLOCK:
             self._math_refresh.start()
 
+    def _resize_math_images(self) -> None:
+        """Re-fit every equation image after a zoom or body-size change."""
+        doc = self._edit.document()
+        was_building = self._building
+        self._building = True
+        edit = QTextCursor(doc)
+        edit.joinPreviousEditBlock()
+        try:
+            block = doc.begin()
+            while block.isValid():
+                it = block.begin()
+                while not it.atEnd():
+                    frag = it.fragment()
+                    fmt = frag.charFormat() if frag.isValid() else None
+                    if fmt is not None and fmt.isImageFormat() \
+                            and fmt.property(_P_MATH):
+                        img_fmt = fmt.toImageFormat()
+                        img = self._math_sources.get(img_fmt.name())
+                        if img is not None:
+                            w, h = self._add_math_resource(
+                                QUrl(img_fmt.name()), img)
+                            img_fmt.setWidth(w)
+                            img_fmt.setHeight(h)
+                            c = QTextCursor(doc)
+                            c.setPosition(frag.position())
+                            c.setPosition(frag.position() + frag.length(),
+                                          QTextCursor.KeepAnchor)
+                            c.setCharFormat(img_fmt)
+                    it += 1
+                block = block.next()
+        finally:
+            edit.endEditBlock()
+            self._building = was_building
+
     def _refresh_math_images(self) -> None:
         """Re-render math preview images for any math block whose LaTeX
         source has changed since the image was last generated."""
@@ -3088,14 +3153,13 @@ class DocumentEditor(QWidget):
     def _update_math_image_in_block(self, block, latex: str) -> None:
         """Replace the existing math preview image in *block* with a
         freshly rendered one for *latex*."""
-        png_path = _render_math_image(latex, cache_dir=self._equations_dir)
+        png_path = self._math_png(latex)
         if png_path is None or not png_path.exists():
             return
         img = QImage(str(png_path))
         if img.isNull():
             return
         url = QUrl.fromLocalFile(str(png_path))
-        self._edit.document().addResource(2, url, img)
         # Walk fragments to find the existing image char (\ufffc) and
         # update its QTextImageFormat to point at the new PNG.
         it = block.begin()
@@ -3107,7 +3171,7 @@ class DocumentEditor(QWidget):
                     img_fmt = fmt.toImageFormat()
                     if img_fmt.name() == url.toString():
                         return  # already up to date
-                    w, h = self._capped_math_size(img)
+                    w, h = self._add_math_resource(url, img)
                     img_fmt.setName(url.toString())
                     img_fmt.setWidth(w)
                     img_fmt.setHeight(h)
