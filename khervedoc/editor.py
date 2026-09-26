@@ -740,6 +740,7 @@ _P_CAPTION_ROW = QTextCharFormat.UserProperty + 25    # on caption cell
 _P_FIGURE_PATH = QTextCharFormat.UserProperty + 30
 _P_FIGURE_LABEL = QTextCharFormat.UserProperty + 31
 _P_FIGURE_WIDTH = QTextCharFormat.UserProperty + 32
+_P_FIGURE_SOURCE = QTextCharFormat.UserProperty + 38
 _P_IS_FIGURE = QTextCharFormat.UserProperty + 33
 
 
@@ -1719,6 +1720,7 @@ class DocumentEditor(QWidget):
         tfmt.setProperty(_P_FIGURE_PATH, figure.path or "")
         tfmt.setProperty(_P_FIGURE_LABEL, figure.label or "")
         tfmt.setProperty(_P_FIGURE_WIDTH, figure.width or "0.8\\textwidth")
+        tfmt.setProperty(_P_FIGURE_SOURCE, figure.source or "")
         qtable = cursor.insertTable(total_rows, 1, tfmt)
         # Row 0: centered image.
         img_cursor = qtable.cellAt(0, 0).firstCursorPosition()
@@ -1779,6 +1781,7 @@ class DocumentEditor(QWidget):
         path = tfmt.property(_P_FIGURE_PATH) or ""
         label = tfmt.property(_P_FIGURE_LABEL) or None
         width = tfmt.property(_P_FIGURE_WIDTH) or "0.8\\textwidth"
+        source = tfmt.property(_P_FIGURE_SOURCE) or ""
         caption = ""
         # Caption is in a row after the image row; look for "Figure: " prefix.
         for r in range(1, qtable.rows()):
@@ -1786,7 +1789,8 @@ class DocumentEditor(QWidget):
             if cell_text.startswith("Figure: "):
                 caption = cell_text[len("Figure: "):]
                 break
-        return Figure(path=path, caption=caption, label=label or None, width=width)
+        return Figure(path=path, caption=caption, label=label or None,
+                      width=width, source=source)
 
     def _resolve_image_path(self, img_path: str) -> Path | None:
         """Resolve a figure path to an absolute file, checking common bases."""
@@ -2875,7 +2879,8 @@ class DocumentEditor(QWidget):
         from .serializer import escape_text
         c = self._edit.textCursor()
         fig = Figure(path=str(path), caption=escape_text(cdlg.caption()),
-                     label=cdlg.label() or None, width="0.7\\textwidth")
+                     label=cdlg.label() or None, width="0.7\\textwidth",
+                     source="drawing")
         self._insert_figure_widget(c, fig)
         self._on_text_changed()
 
@@ -3019,8 +3024,9 @@ class DocumentEditor(QWidget):
         self._on_text_changed()
 
     def _edit_existing_figure(self, qtable: QTextTable) -> None:
-        """Re-open the drawing dialog for a figure that has a JSON sidecar."""
-        from .drawing_dialog import DrawingDialog
+        """Re-open the drawing dialog for a figure made with it (an SVG
+        source beside the PNG, or a legacy JSON sidecar)."""
+        from .drawing_dialog import DrawingDialog, drawing_source_for
 
         tfmt = qtable.format()
         img_path_str = tfmt.property(_P_FIGURE_PATH) or ""
@@ -3028,8 +3034,7 @@ class DocumentEditor(QWidget):
         if resolved is None:
             return
 
-        sidecar = resolved.with_suffix(".json")
-        if not sidecar.exists():
+        if drawing_source_for(resolved) is None:
             QMessageBox.information(
                 self, "Cannot re-edit",
                 "This figure was not created with the drawing tool, "
@@ -3039,6 +3044,9 @@ class DocumentEditor(QWidget):
         dlg = DrawingDialog(self._images_dir, self, existing_path=resolved)
         if dlg.exec() != QDialog.Accepted:
             return
+        # A legacy drawing now has its SVG/PDF too, so LaTeX gets vectors.
+        tfmt.setProperty(_P_FIGURE_SOURCE, "drawing")
+        qtable.setFormat(tfmt)
         self._refresh_figure_image(qtable, resolved)
 
     def _refresh_figure_image(self, qtable: QTextTable,

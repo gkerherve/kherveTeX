@@ -152,6 +152,9 @@ class Figure:
     caption: str = ""
     label: str | None = None
     width: str = "0.8\\textwidth"
+    # "drawing" = made in the drawing dialog: `path` is the PNG preview and
+    # sibling .svg (editable source) and .pdf (vector, for LaTeX) exist.
+    source: str = ""
     type: str = "Figure"
 
 
@@ -407,6 +410,7 @@ def _build_block(d: dict) -> Block:
             caption=d.get("caption", ""),
             label=d.get("label"),
             width=d.get("width", "0.8\\textwidth"),
+            source=d.get("source", ""),
         )
     if t == "Table":
         return Table(

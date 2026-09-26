@@ -50,6 +50,11 @@ a = Analysis(
     ],
     hiddenimports=[
         # Lazy imports that Analysis can't see statically.
+        # Drawing symbol libraries load by name (drawing_dialog.py).
+        "khervedoc.paint.chemistry", "khervedoc.paint.flowchart",
+        "khervedoc.paint.electrical", "khervedoc.paint.optics",
+        "khervedoc.paint.maths", "khervedoc.paint.labware",
+        "khervedoc.paint.arrows",
         "pygit2",
         "pymupdf",
         "docx",

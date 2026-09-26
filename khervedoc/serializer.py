@@ -179,6 +179,16 @@ _SECTION_COMMANDS = {
 }
 
 
+def figure_output_path(node: Figure, vector_ext: str) -> str:
+    """Path to emit for a figure, forward-slashed. Drawings keep a PNG
+    preview in `path` but the engines get the vector sibling instead
+    (tectonic cannot include SVG, Typst prefers it)."""
+    path = node.path.replace("\\", "/")
+    if node.source == "drawing" and path.lower().endswith(".png"):
+        path = path[:-4] + vector_ext
+    return path
+
+
 def _maybe_label(label: str | None) -> str:
     return f"\\label{{{label}}}\n" if label else ""
 
@@ -236,7 +246,7 @@ def serialize_block(node: Block, *, has_chapters: bool = False,
 
     if isinstance(node, Figure):
         # Use forward slashes in the path — LaTeX dislikes backslashes.
-        path = node.path.replace("\\", "/")
+        path = figure_output_path(node, ".pdf")
         # Caption is stored as raw LaTeX (may contain \textit, $...$,
         # etc.) — emit verbatim, do not re-escape.
         cap = node.caption

@@ -72,6 +72,14 @@ def save_kdocz(doc: Document, out_path: Path) -> None:
                     arc_name = f"{IMAGES_DIR}/figure_{counter:03d}{ext}"
                     counter += 1
                     images_to_bundle.append((src_path, arc_name))
+                    if block.source == "drawing":
+                        # The editable SVG and the PDF LaTeX includes live
+                        # beside the PNG preview; keep them paired by stem.
+                        for sib_ext in (".svg", ".pdf"):
+                            sib = src_path.with_suffix(sib_ext)
+                            if sib.exists():
+                                images_to_bundle.append(
+                                    (sib, arc_name[:-len(ext)] + sib_ext))
                     by_source[src] = arc_name
                 else:
                     arc_name = src

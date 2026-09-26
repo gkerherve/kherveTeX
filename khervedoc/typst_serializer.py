@@ -117,7 +117,8 @@ def serialize_block(node: Block) -> str:
         return items
 
     if isinstance(node, Figure):
-        path = node.path.replace("\\", "/")
+        from .serializer import figure_output_path
+        path = figure_output_path(node, ".svg")
         width_pct = _latex_width_to_typst(node.width)
         cap = escape_text(node.caption)
         lab = _maybe_label(node.label)
