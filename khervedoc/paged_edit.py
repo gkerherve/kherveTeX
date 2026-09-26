@@ -408,7 +408,11 @@ class PagedTextEdit(QTextEdit):
         if self._columns > 1:
             return self._col_width
         fmt = self.document().rootFrame().frameFormat()
-        return self.viewport().width() - fmt.leftMargin() - fmt.rightMargin()
+        # The page width, not the viewport's: before the widget is first
+        # laid out the viewport is a stub ~100 px wide, and equations
+        # capped to it at load time came out a fraction of their size.
+        width = self._page_width_px or self.viewport().width()
+        return width - fmt.leftMargin() - fmt.rightMargin()
 
     def sheet_count(self) -> int:
         pages = max(1, self.document().pageCount())

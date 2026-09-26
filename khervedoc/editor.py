@@ -93,8 +93,53 @@ _ENV_STRIP_RE = _re.compile(
     _re.DOTALL)
 
 
+def _contains_raw(node, _seen=None) -> bool:
+    """True if a parsed equation has parts the typesetter can't draw."""
+    from . import mathbox as mb
+    seen = set() if _seen is None else _seen
+    if id(node) in seen:
+        return False
+    seen.add(id(node))
+    if isinstance(node, mb.Raw):
+        return True
+    if isinstance(node, (list, tuple)):
+        return any(_contains_raw(n, seen) for n in node)
+    attrs = dict(getattr(node, "__dict__", {}))
+    for slot in getattr(type(node), "__slots__", ()):
+        attrs[slot] = getattr(node, slot, None)
+    for name, val in attrs.items():
+        # Rows point back at their owner; following that loops forever.
+        if name in ("owner", "parent") or val is None \
+                or isinstance(val, (str, int, float, bool)):
+            continue
+        if _contains_raw(val, seen):
+            return True
+    return False
+
+
+def _render_math_typeset(latex: str, png_path: Path, display: bool) -> bool:
+    """Typeset *latex* with the equation editor's own engine (Latin
+    Modern Math), so an inserted equation looks exactly as it did in the
+    editor. False when it has constructs only LaTeX knows (\\ce, custom
+    macros...) — the caller then falls back to matplotlib rather than
+    showing grey placeholder chips on the page."""
+    try:
+        from . import mathbox as mb, mathlayout as ml
+        src = _re.sub(r"\\(label\{[^}]*\}|nonumber|notag)", "", latex.strip())
+        row = mb.parse_latex(src)
+        if _contains_raw(row):
+            return False
+        px = _MATH_RENDER_PT * _MATH_DPI / 72
+        img = ml.render_image(row, px=px, display=display, dpr=1.0,
+                              pad=px * 0.12)
+        return not img.isNull() and img.save(str(png_path), "PNG")
+    except Exception:
+        return False
+
+
 def _render_math_image(latex: str, font_size: int = _MATH_RENDER_PT,
-                       cache_dir: Path | None = None) -> Path | None:
+                       cache_dir: Path | None = None,
+                       display: bool = True) -> Path | None:
     """Render a LaTeX math expression to a PNG file using matplotlib.
 
     Handles multi-line equations (align, gather, etc.) by splitting on
@@ -102,11 +147,17 @@ def _render_math_image(latex: str, font_size: int = _MATH_RENDER_PT,
     Returns the path to the PNG file, or None on failure. Results are
     cached on disk.  When *cache_dir* is given the PNG is written there
     instead of the global temp directory."""
-    key = latex
+    key = latex if display else "\x00inline" + latex
     if key in _MATH_IMAGE_CACHE:
         cached = _MATH_IMAGE_CACHE[key]
         if cached is not None and cached.exists():
             return cached
+    h = _hashlib.md5(latex.encode()).hexdigest()[:12]
+    dest = cache_dir if cache_dir is not None else _math_cache_dir()
+    typeset_png = dest / f"math_{h}{'' if display else '-i'}.png"
+    if _render_math_typeset(latex, typeset_png, display):
+        _MATH_IMAGE_CACHE[key] = typeset_png
+        return typeset_png
     try:
         from matplotlib.figure import Figure as MplFigure
     except ImportError:
@@ -372,6 +423,10 @@ def _split_stub_meta(text: str) -> tuple[list[str], dict[str, str]]:
 # Separator"), which Qt renders as a soft line break inside one block
 # and which round-trips losslessly on read-back.
 _LINE_SEP = chr(0x2028)
+# Separates a typeset equation image from its (hidden) LaTeX source.
+# Zero-width, so the equation sits inline instead of forcing the line
+# break the old U+2028 separator did.
+_MATH_SEP = "\u200b"
 
 
 # Heading sizes: 0 is reserved for \chapter (the largest), then the
@@ -541,6 +596,20 @@ def _math_block_char_format() -> QTextCharFormat:
     f = QFont("Consolas"); f.setStyleHint(QFont.Monospace); f.setPointSize(11)
     fmt.setFont(f)
     fmt.setBackground(QColor("#eef3ff")); fmt.setForeground(QColor("#1a3a8c"))
+    return fmt
+
+
+def _math_hidden_format(latex: str | None = None) -> QTextCharFormat:
+    """Invisible run holding an equation's LaTeX next to its typeset
+    image: the model reads the source back from the text, but on the
+    page only the equation shows, as it will in the PDF."""
+    fmt = QTextCharFormat()
+    f = QFont()
+    f.setPointSizeF(1)
+    fmt.setFont(f)
+    fmt.setForeground(QColor(0, 0, 0, 0))
+    if latex is not None:
+        fmt.setProperty(_P_MATH, latex)
     return fmt
 
 
@@ -1338,7 +1407,7 @@ class DocumentEditor(QWidget):
                 state = block.userState()
                 text = block.text()
                 if state == _STATE_MATH_BLOCK:
-                    raw = text.replace("\ufffc", "").strip(_LINE_SEP).strip()
+                    raw = text.replace("\ufffc", "").replace(_MATH_SEP, "").strip(_LINE_SEP).strip()
                     bf = block.blockFormat()
                     blocks.append(MathBlock(
                         latex=raw.replace(_LINE_SEP, "\n"),
@@ -1447,10 +1516,12 @@ class DocumentEditor(QWidget):
             bfmt.setProperty(_P_MATH_NUMBERED, bool(block.numbered))
             if block.label:
                 bfmt.setProperty(_P_MATH_LABEL, block.label)
+            bfmt.setAlignment(Qt.AlignHCenter)
             cursor.setBlockFormat(bfmt)
-            self._insert_math_image(cursor, block.latex)
+            shown = self._insert_math_image(cursor, block.latex)
             visible = block.latex.replace("\n", _LINE_SEP)
-            cursor.insertText(visible, _math_block_char_format())
+            cursor.insertText(visible, _math_hidden_format() if shown
+                              else _math_block_char_format())
         elif isinstance(block, ListNode):
             lfmt = QTextListFormat()
             lfmt.setStyle(QTextListFormat.ListDecimal if block.ordered
@@ -1656,8 +1727,9 @@ class DocumentEditor(QWidget):
                     bf.setAlignment(_CELL_ALIGN[aligns[c]])
                     bc.setBlockFormat(bf)
 
-    def _math_png(self, latex: str) -> Path | None:
-        return _render_math_image(latex, cache_dir=self._equations_dir)
+    def _math_png(self, latex: str, display: bool = True) -> Path | None:
+        return _render_math_image(latex, cache_dir=self._equations_dir,
+                                  display=display)
 
     def _add_math_resource(self, url: QUrl, img: QImage) -> tuple[int, int]:
         """Register *img* for *url* pre-scaled to its display size (at the
@@ -1685,14 +1757,18 @@ class DocumentEditor(QWidget):
             w = max_w
         return w, h
 
-    def _insert_math_image(self, cursor: QTextCursor, latex: str) -> None:
-        """Render math to a PNG and insert it into the document."""
-        png_path = self._math_png(latex)
+    def _insert_math_image(self, cursor: QTextCursor, latex: str,
+                           inline: bool = False) -> bool:
+        """Typeset math into the document as a picture, followed by an
+        invisible separator; the caller then adds the (hidden) source.
+        Returns False if nothing could be rendered, so the caller shows
+        the source visibly instead."""
+        png_path = self._math_png(latex, display=not inline)
         if png_path is None or not png_path.exists():
-            return
+            return False
         img = QImage(str(png_path))
         if img.isNull():
-            return
+            return False
         url = QUrl.fromLocalFile(str(png_path))
         w, h = self._add_math_resource(url, img)
         img_fmt = QTextImageFormat()
@@ -1706,7 +1782,8 @@ class DocumentEditor(QWidget):
         img_fmt.setProperty(_P_MATH, latex)
         img_fmt.setVerticalAlignment(QTextCharFormat.AlignMiddle)
         cursor.insertImage(img_fmt)
-        cursor.insertText(_LINE_SEP)
+        cursor.insertText(_MATH_SEP, _math_hidden_format())
+        return True
 
     def _insert_figure_widget(self, cursor: QTextCursor, figure: Figure) -> None:
         """Insert a Figure model node as a centered QTextTable with image,
@@ -1834,9 +1911,10 @@ class DocumentEditor(QWidget):
             # Complex inline math (fractions, multi-line, etc.) gets a
             # rendered image like MathBlock; simple expressions stay as
             # styled text so they flow naturally with the paragraph.
-            if _is_complex_math(node.latex):
-                self._insert_math_image(cursor, node.latex)
-            cursor.insertText(node.latex, _math_inline_format(node.latex))
+            shown = self._insert_math_image(cursor, node.latex, inline=True)
+            cursor.insertText(node.latex,
+                              _math_hidden_format(node.latex) if shown
+                              else _math_inline_format(node.latex))
         elif isinstance(node, Link):
             text = "".join(c.text for c in node.children if isinstance(c, Text)) or node.url
             cursor.insertText(text, _link_format(node.url))
@@ -1909,7 +1987,7 @@ class DocumentEditor(QWidget):
                     after_math_image = True
                     it += 1
                     continue
-                if after_math_image and text == _LINE_SEP:
+                if after_math_image and text in (_LINE_SEP, _MATH_SEP):
                     after_math_image = False
                     it += 1
                     continue
@@ -2444,6 +2522,10 @@ class DocumentEditor(QWidget):
                     any_level = state - _STATE_HEADING_STAR_BASE
                 elif state == _STATE_CHAPTER_STAR:
                     any_level = 0
+                if state == _STATE_MATH_BLOCK:
+                    # \abovedisplayskip / \belowdisplayskip: 12pt at 12pt.
+                    bfmt.setTopMargin(0.8 * em_px)
+                    bfmt.setBottomMargin(0.8 * em_px)
                 if any_level is not None:
                     above, below = _HEADING_SPACING.get(any_level, (1.4, 0.65))
                     bfmt.setTopMargin(above * em_px)
@@ -2628,7 +2710,7 @@ class DocumentEditor(QWidget):
         immediately."""
         if not latex:
             return
-        self._edit.textCursor().insertText(latex, _math_inline_format(latex))
+        self._insert_inline(self._edit.textCursor(), MathInline(latex=latex))
 
     def insert_raw_inline_with(self, latex: str) -> None:
         """Insert the given LaTeX verbatim at the cursor (no $...$ wrap).
@@ -2658,9 +2740,12 @@ class DocumentEditor(QWidget):
         c.block().setUserState(_STATE_MATH_BLOCK)
         bfmt = QTextBlockFormat()
         bfmt.setProperty(_P_MATH_NUMBERED, numbered)
+        bfmt.setAlignment(Qt.AlignHCenter)
         c.setBlockFormat(bfmt)
-        self._insert_math_image(c, latex)
-        c.insertText(latex.replace("\n", _LINE_SEP), _math_block_char_format())
+        shown = self._insert_math_image(c, latex)
+        c.insertText(latex.replace("\n", _LINE_SEP),
+                     _math_hidden_format() if shown
+                     else _math_block_char_format())
         c.insertBlock(); c.block().setUserState(_STATE_PARAGRAPH)
         c.endEditBlock()
 
@@ -2931,7 +3016,7 @@ class DocumentEditor(QWidget):
         so the caller can swallow the double-click."""
         block = cursor.block()
         if block.userState() == _STATE_MATH_BLOCK:
-            raw = block.text().replace("\ufffc", "").strip(_LINE_SEP).strip()
+            raw = block.text().replace("\ufffc", "").replace(_MATH_SEP, "").strip(_LINE_SEP).strip()
             latex = raw.replace(_LINE_SEP, "\n")
             if not latex:
                 return False
@@ -2983,7 +3068,7 @@ class DocumentEditor(QWidget):
         # text one, then widen back over the preview image if there is one.
         if frags[hit].charFormat().isImageFormat():
             text_i = hit + 2
-        elif frags[hit].text() == _LINE_SEP:
+        elif frags[hit].text() in (_LINE_SEP, _MATH_SEP):
             text_i = hit + 1
         else:
             text_i = hit
@@ -2994,7 +3079,7 @@ class DocumentEditor(QWidget):
         has_image = (img_i >= 0
                      and math_of(img_i) == latex
                      and frags[img_i].charFormat().isImageFormat()
-                     and frags[text_i - 1].text() == _LINE_SEP)
+                     and frags[text_i - 1].text() in (_LINE_SEP, _MATH_SEP))
         lo = img_i if has_image else text_i
         return (frags[lo].position(),
                 frags[text_i].position() + frags[text_i].length(),
@@ -3008,8 +3093,10 @@ class DocumentEditor(QWidget):
                       QTextCursor.KeepAnchor)
         c.removeSelectedText()
         c.block().setUserState(_STATE_MATH_BLOCK)
-        self._insert_math_image(c, latex)
-        c.insertText(latex.replace("\n", _LINE_SEP), _math_block_char_format())
+        shown = self._insert_math_image(c, latex)
+        c.insertText(latex.replace("\n", _LINE_SEP),
+                     _math_hidden_format() if shown
+                     else _math_block_char_format())
         c.endEditBlock()
         self._on_text_changed()
 
@@ -3470,7 +3557,7 @@ class DocumentEditor(QWidget):
         while block.isValid():
             if block.userState() == _STATE_MATH_BLOCK:
                 text = block.text()
-                raw = text.replace("\ufffc", "").strip(_LINE_SEP).strip()
+                raw = text.replace("\ufffc", "").replace(_MATH_SEP, "").strip(_LINE_SEP).strip()
                 latex = raw.replace(_LINE_SEP, "\n")
                 if latex:
                     self._update_math_image_in_block(block, latex)

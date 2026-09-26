@@ -128,7 +128,8 @@ def test_math_preview_image_carries_its_source(ed):
         if f.isValid() and f.charFormat().isImageFormat():
             found.append(f.charFormat().property(editor_mod._P_MATH))
         it += 1
-    assert found == [r"\frac{x}{y}"]
+    # Every inline equation is typeset now, not only "complex" ones.
+    assert found == [r"\frac{x}{y}", "a+b"]
 
 
 # ---------------------------------------------------------- click to edit
@@ -340,3 +341,28 @@ def test_placeholder_square_still_renders_a_preview_image(qapp):
     from khervedoc.editor import _render_math_image
     png = _render_math_image(r"\left( X^{\square} \right)")
     assert png is not None and png.exists()
+
+
+def test_inserted_equations_are_typeset_not_shown_as_latex(qapp):
+    """The document shows the typeset equation at body size; its LaTeX
+    stays in the text (for the model) but invisible."""
+    from khervedoc.model import MathBlock
+    ed = DocumentEditor()
+    ed.resize(1000, 700)
+    ed.set_document(Document(children=[MathBlock(latex=r"\frac{a + b}{c^2}")]))
+    block = ed._edit.document().firstBlock()
+    it = block.begin()
+    image = source = None
+    while not it.atEnd():
+        f = it.fragment()
+        if f.charFormat().isImageFormat():
+            image = f.charFormat().toImageFormat()
+        elif "frac" in f.text():
+            source = f.charFormat()
+        it += 1
+    assert image is not None and source is not None
+    body_px = ed._body_font_pt * 96 / 72 * ed.zoom_percent() / 100
+    # A display fraction is roughly two lines of body text tall.
+    assert image.height() > 1.6 * body_px
+    assert source.foreground().color().alpha() == 0
+    assert ed.get_document().children[0].latex == r"\frac{a + b}{c^2}"
