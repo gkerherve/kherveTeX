@@ -12,7 +12,8 @@ from pathlib import Path
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
-    QButtonGroup, QCheckBox, QDialog, QFrame, QHBoxLayout, QLabel,
+    QButtonGroup, QCheckBox, QDialog, QFrame, QGridLayout, QHBoxLayout,
+    QLabel,
     QListWidget, QListWidgetItem, QPushButton, QRadioButton, QVBoxLayout,
     QWidget,
 )
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import (
 LAYOUT_SIDE = "side"
 LAYOUT_VISUAL = "visual"
 LAYOUT_PAGE = "page"
+LAYOUT_WINDOW = "window"
 
 
 class WelcomeDialog(QDialog):
@@ -124,12 +126,17 @@ class WelcomeDialog(QDialog):
         line.setFrameShape(QFrame.HLine)
         root.addWidget(line)
         root.addWidget(self._heading("How do you want to work?"))
-        modes = QHBoxLayout()
+        modes = QGridLayout()
+        modes.setHorizontalSpacing(24)
+        modes.setVerticalSpacing(10)
         self._group = QButtonGroup(self)
         for mode, title, text in (
                 (LAYOUT_SIDE, "Visual + PDF side by side",
                  "Edit on the left and watch the compiled LaTeX PDF on "
                  "the right, updated as you type."),
+                (LAYOUT_WINDOW, "Visual + PDF in its own window",
+                 "The PDF and console in a separate window you can put "
+                 "on a second screen; close it to dock it back."),
                 (LAYOUT_VISUAL, "Visual only",
                  "The page with the Documents list beside it. The PDF "
                  "and console are hidden and nothing compiles while you "
@@ -153,7 +160,8 @@ class WelcomeDialog(QDialog):
             box.addWidget(desc)
             holder = QWidget()
             holder.setLayout(box)
-            modes.addWidget(holder, 1)
+            n = modes.count()
+            modes.addWidget(holder, n // 2, n % 2)
         root.addLayout(modes)
 
         bottom = QHBoxLayout()

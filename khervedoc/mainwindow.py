@@ -401,6 +401,29 @@ class _ProjectSidebar(QWidget):
 
 # ---------- background compile ----------
 
+class _PdfWindow(QWidget):
+    """Top-level window holding the PDF / console panel when detached."""
+
+    def __init__(self, on_close, parent=None):
+        super().__init__(parent, Qt.Window)
+        self._on_close = on_close
+        self._quiet = False
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+
+    def close_quietly(self) -> None:
+        self._quiet = True
+        self.close()
+        self.deleteLater()
+
+    def closeEvent(self, ev) -> None:
+        if not self._quiet:
+            ev.ignore()          # dock the panel back instead of losing it
+            self._on_close()
+            return
+        super().closeEvent(ev)
+
+
 def _thread_running(worker) -> bool:
     """isRunning() that tolerates a worker Qt has already deleted."""
     try:
@@ -907,6 +930,7 @@ class MainWindow(QMainWindow):
         self._side_tabs.addTab(self._console_side, "Console")
         self._side_tabs.hide()
         self._splitter.addWidget(self._side_tabs)
+        self._pdf_window: _PdfWindow | None = None
         # Give the PDF side panel ~2× the width of the Formatted tab.
         # The PDF page renders at its native typeset size (small
         # text), so it benefits from the extra width far more than
@@ -1646,8 +1670,14 @@ class MainWindow(QMainWindow):
                       "while you write",
             triggered=lambda on: self.apply_layout_mode(
                 "visual" if on else "side"))
+        self.act_pdf_window = QAction(
+            "PDF in its own &window", self, checkable=True,
+            statusTip="Show the PDF and console in a separate window, "
+                      "e.g. on a second screen",
+            triggered=self.set_pdf_detached)
         m_view.addAction(self.act_visual_only)
         m_view.addAction(self.act_side_by_side)
+        m_view.addAction(self.act_pdf_window)
         m_view.addAction(self._project_dock.toggleViewAction())
         m_view.addSeparator()
         m_view.addAction(self.act_fit_page_width)
@@ -2090,6 +2120,10 @@ class MainWindow(QMainWindow):
         # triggers STATUS_STACK_BUFFER_OVERRUN (0xC0000409) on Windows.
         if getattr(self, "_mcp_bridge", None) is not None:
             self._mcp_bridge.stop()
+        if self._pdf_window is not None:
+            self._settings.setValue("pdf_window_geometry",
+                                    self._pdf_window.saveGeometry())
+            self._pdf_window.close_quietly()
         busy = [w for w in (self._compile_worker,
                             getattr(self, "_bundle_worker", None))
                  if _thread_running(w)]
@@ -3274,12 +3308,48 @@ class MainWindow(QMainWindow):
 
     def _toggle_side_by_side(self, checked: bool) -> None:
         self._side_by_side = checked
+        target = self._pdf_window if self._pdf_window is not None \
+            else self._side_tabs
         if checked:
             self._side_tabs.show()
+            target.show()
             self._kick_compile()
         else:
-            self._side_tabs.hide()
+            target.hide()
         self._update_zoom_visibility()
+
+    def set_pdf_detached(self, detached: bool) -> None:
+        """Move the PDF / console panel into its own window (e.g. for a
+        second screen) or dock it back beside the editor."""
+        if detached == (self._pdf_window is not None):
+            return
+        if detached:
+            win = _PdfWindow(self._reattach_pdf_from_window, self)
+            win.setWindowTitle(f"{self.windowTitle()} \u2014 PDF")
+            win.layout().addWidget(self._side_tabs)
+            self._side_tabs.show()
+            geo = self._settings.value("pdf_window_geometry")
+            if geo is not None:
+                win.restoreGeometry(geo)
+            else:
+                win.resize(760, max(600, self.height()))
+            self._pdf_window = win
+            win.show()
+            self._side_by_side = True
+            self.act_side_by_side.setChecked(True)
+        else:
+            win = self._pdf_window
+            self._pdf_window = None
+            self._settings.setValue("pdf_window_geometry", win.saveGeometry())
+            self._splitter.addWidget(self._side_tabs)
+            self._side_tabs.setVisible(self._side_by_side)
+            win.close_quietly()
+        self.act_pdf_window.setChecked(detached)
+        self._update_zoom_visibility()
+
+    def _reattach_pdf_from_window(self) -> None:
+        """The PDF window's own close button docks the panel back."""
+        self.set_pdf_detached(False)
 
     def _toggle_fit_page_width(self, checked: bool) -> None:
         self._editor.set_fit_to_width(checked)
@@ -4492,10 +4562,12 @@ class MainWindow(QMainWindow):
 
     def apply_layout_mode(self, mode: str) -> None:
         """"side": visual editor with the live PDF beside it.
+        "window": the same, with the PDF in its own window.
         "visual": no PDF / console panel and no background compiles.
         "page": as "visual", with the Documents list hidden as well —
         just the page, like Word."""
         visual = mode in ("visual", "page")
+        self.set_pdf_detached(mode == "window")
         self._project_dock.setVisible(mode != "page")
         self.act_visual_only.setChecked(visual)
         self.act_side_by_side.setChecked(not visual)

@@ -88,4 +88,21 @@ def test_welcome_offers_three_ways_to_work(qapp):
     from khervedoc.welcome import WelcomeDialog
     d = WelcomeDialog([], [])
     labels = [b.text() for b in d._group.buttons()]
-    assert len(labels) == 3 and any("Page only" in t for t in labels)
+    assert len(labels) == 4 and any("Page only" in t for t in labels)
+    assert any("own window" in t for t in labels)
+
+
+def test_pdf_can_live_in_its_own_window(window):
+    window.show()
+    window.apply_layout_mode("window")
+    win = window._pdf_window
+    assert win is not None and win.isVisible()
+    assert window._side_tabs.window() is win        # panel moved over
+    assert window._auto_compile is True
+    win.close()                                      # its X docks it back
+    assert window._pdf_window is None
+    assert window._side_tabs.window() is window
+    assert not window._side_tabs.isHidden()
+    window.apply_layout_mode("window")
+    window.apply_layout_mode("visual")               # other modes re-dock
+    assert window._pdf_window is None and window._side_tabs.isHidden()
