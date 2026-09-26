@@ -991,3 +991,37 @@ Hello.
     doc = _round_trip(src)
     fm = doc.meta.frontmatter_extras
     assert "William" in fm
+
+
+def test_input_and_include_are_inlined(tmp_path):
+    from khervedoc.importers import import_tex
+    from khervedoc.model import Section
+    (tmp_path / "chapters").mkdir()
+    (tmp_path / "chapters" / "intro.tex").write_text(
+        "\\section{Intro}\nHello from intro.\n\\input{chapters/deep}\n",
+        encoding="utf-8")
+    (tmp_path / "chapters" / "deep.tex").write_text(
+        "Deep text.\n", encoding="utf-8")
+    (tmp_path / "methods.tex").write_text(
+        "\\documentclass{subfiles}\n\\begin{document}\n"
+        "\\section{Methods}\nM text.\n\\end{document}\n", encoding="utf-8")
+    main = ("\\documentclass{article}\n\\begin{document}\n"
+            "\\input{chapters/intro}\n"
+            "% \\input{commented_out}\n"
+            "\\include{methods.tex}\n"
+            "\\input{missing}\n\\end{document}\n")
+    doc = import_tex(main, base_dir=tmp_path)
+    titles = [c.children[0].text for c in doc.children
+              if isinstance(c, Section)]
+    assert titles == ["Intro", "Methods"]
+    flat = repr(doc)
+    assert "Hello from intro." in flat and "Deep text." in flat
+    assert "M text." in flat and "documentclass{subfiles}" not in flat
+    assert "missing" in flat   # unresolved command kept, not dropped
+
+
+def test_self_including_file_does_not_loop(tmp_path):
+    from khervedoc.importers import expand_includes
+    (tmp_path / "a.tex").write_text("A \\input{a}", encoding="utf-8")
+    out = expand_includes("\\input{a}", tmp_path)
+    assert out.count("A ") == 1

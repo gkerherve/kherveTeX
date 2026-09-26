@@ -2116,7 +2116,8 @@ class MainWindow(QMainWindow):
                 doc, extract_dir = kdocz.load_kdocz(path)
                 self._kdocz_extract_dir = extract_dir
             elif path.suffix.lower() == ".tex":
-                doc = importers.import_tex(path.read_text(encoding="utf-8"))
+                doc = importers.import_tex(path.read_text(encoding="utf-8"),
+                                          base_dir=path.parent)
                 self._kdocz_extract_dir = None
                 is_import = True
             elif path.suffix.lower() in (".md", ".markdown"):
@@ -2675,7 +2676,8 @@ class MainWindow(QMainWindow):
         path = Path(path_s)
         self._io_start("Importing\u2026")
         try:
-            doc = importers.import_tex(path.read_text(encoding="utf-8"))
+            doc = importers.import_tex(path.read_text(encoding="utf-8"),
+                                          base_dir=path.parent)
         except Exception as exc:
             self._io_stop()
             QMessageBox.critical(self, "Import failed", str(exc))

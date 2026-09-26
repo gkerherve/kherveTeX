@@ -954,14 +954,64 @@ def _parse_tabular(align_spec: str, body: str) -> Table:
     return Table(rows=rows, alignment=alignment or "")
 
 
-def import_tex(tex_source: str) -> Document:
+_INCLUDE_RE = re.compile(
+    r"\\(input|include|subfile)\s*\{([^}]+)\}"
+    r"|\\(?:sub)?import\*?\s*\{([^}]*)\}\s*\{([^}]+)\}")
+_DOC_BODY_RE = re.compile(
+    r"\\begin\{document\}(.*?)\\end\{document\}", re.DOTALL)
+
+
+def expand_includes(tex_source: str, base_dir: Path,
+                    _seen: frozenset = frozenset(), _depth: int = 0) -> str:
+    r"""Inline `\input`, `\include`, `\subfile` and `\import` targets
+    found under *base_dir*, recursively, so a multi-file project imports
+    as one document instead of a stray `\input{ch1}` line. A standalone
+    subfile contributes only its document body. Missing files are left
+    as the original command (still preserved as raw LaTeX)."""
+    tex_source = _strip_tex_comments(tex_source)
+    if _depth > 20:
+        return tex_source
+
+    def _sub(m: re.Match) -> str:
+        if m.group(1):
+            kind, rel_dir, name = m.group(1), "", m.group(2).strip()
+        else:
+            kind, rel_dir, name = "import", m.group(3).strip(), m.group(4).strip()
+        path = (base_dir / rel_dir / name)
+        if not path.is_file() and path.suffix != ".tex":
+            path = path.with_name(path.name + ".tex")
+        try:
+            path = path.resolve()
+        except OSError:
+            return m.group(0)
+        if not path.is_file() or path in _seen:
+            return m.group(0)
+        try:
+            child = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return m.group(0)
+        body_m = _DOC_BODY_RE.search(child)
+        if body_m:
+            child = body_m.group(1)
+        # \import changes the base for the file's own relative paths.
+        child_base = path.parent if kind == "import" else base_dir
+        return "\n" + expand_includes(child, child_base, _seen | {path},
+                                      _depth + 1) + "\n"
+
+    return _INCLUDE_RE.sub(_sub, tex_source)
+
+
+def import_tex(tex_source: str, base_dir: Path | None = None) -> Document:
     """Parse a LaTeX source string into a Document. Unknown commands and
     environments are preserved as RawLatex blocks so nothing is silently
-    lost from the source."""
+    lost from the source. With *base_dir*, files pulled in by `\input`
+    and friends are inlined first (see `expand_includes`)."""
     # Strip line comments first — Elsevier templates use `%%` ruled
     # banners between sections, and without this every banner would
     # appear as a stray paragraph in the imported document.
     tex_source = _strip_tex_comments(tex_source)
+    if base_dir is not None:
+        tex_source = expand_includes(tex_source, Path(base_dir))
 
     docclass_m = _DOCCLASS_RE.search(tex_source)
     # Use balanced-brace extraction for title/author so Elsevier-style
