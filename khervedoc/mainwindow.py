@@ -1137,7 +1137,8 @@ class MainWindow(QMainWindow):
         self._update_title()
         # Defer the first compile to after the event loop is running so
         # QPdfView has time to create its OpenGL context properly.
-        QTimer.singleShot(0, self._kick_compile)
+        QTimer.singleShot(0, lambda: self._auto_compile
+                          and self._kick_compile())
 
     # ----- actions -----
 
@@ -1639,6 +1640,13 @@ class MainWindow(QMainWindow):
         m_view.addAction(self.act_view_pdf)
         m_view.addAction(self.act_view_console)
         m_view.addSeparator()
+        self.act_visual_only = QAction(
+            "&Visual only (like Word)", self, checkable=True,
+            statusTip="Hide the PDF and console and stop compiling "
+                      "while you write",
+            triggered=lambda on: self.apply_layout_mode(
+                "visual" if on else "side"))
+        m_view.addAction(self.act_visual_only)
         m_view.addAction(self.act_side_by_side)
         m_view.addAction(self._project_dock.toggleViewAction())
         m_view.addSeparator()
@@ -1719,6 +1727,8 @@ class MainWindow(QMainWindow):
         self._refresh_window_menu()
 
         m_help = mb.addMenu("&Help")
+        m_help.addAction(QAction("&Welcome page\u2026", self,
+                                 triggered=self.show_welcome))
         m_help.addAction(self.act_help_guide)
         m_help.addAction(self.act_shortcuts)
         m_help.addSeparator()
@@ -4476,6 +4486,54 @@ class MainWindow(QMainWindow):
         ("QThread: Destroyed while thread is still running")."""
         worker.setParent(self)
         worker.finished.connect(worker.deleteLater)
+
+    # ----- start-up: layout mode and welcome page -----
+
+    def apply_layout_mode(self, mode: str) -> None:
+        """"side": visual editor with the live PDF beside it.
+        "visual": the page alone, like Word — the PDF / console panel is
+        hidden and nothing compiles in the background."""
+        visual = mode == "visual"
+        self.act_visual_only.setChecked(visual)
+        self.act_side_by_side.setChecked(not visual)
+        self.act_auto_compile.setChecked(not visual)
+        self._auto_compile = not visual
+        self._toggle_side_by_side(not visual)   # kicks a compile if shown
+        if visual:
+            self._toggle_auto_compile(False)
+        self._settings.setValue("layout_mode", mode)
+
+    def show_welcome(self) -> None:
+        from .welcome import WelcomeDialog
+        dlg = WelcomeDialog(
+            recent=list(self._recent),
+            examples=list(examples.EXAMPLES),
+            layout=self._settings.value("layout_mode", "side"),
+            show_at_start=self._settings.value("show_welcome", True,
+                                               type=bool),
+            parent=self)
+        if dlg.exec() != QDialog.Accepted:
+            dlg.choice = ("continue",)
+        self._settings.setValue("show_welcome", dlg.show_at_start())
+        self.apply_layout_mode(dlg.layout_mode)
+        kind = dlg.choice[0]
+        if kind == "new":
+            self._new()
+        elif kind == "open":
+            self._open()
+        elif kind == "project":
+            self._new_project()
+        elif kind == "recent":
+            self._open_path(dlg.choice[1])
+        elif kind == "example":
+            _label, factory = examples.EXAMPLES[dlg.choice[1]]
+            doc = factory()
+            doc.meta = _apply_user_defaults(doc.meta)
+            self._current_path = None
+            self._editor.set_document(doc)
+            self._update_title()
+            if self._auto_compile:
+                self._kick_compile()
 
     # ----- MCP (Claude) connection -----
 

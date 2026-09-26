@@ -104,15 +104,29 @@ def main() -> int:
         settings.setValue("theme_name", theme_name)
     settings.setValue("theme_v2", True)
     theme = themes.apply_theme(app, theme_name)
+    from .splash import Splash
+    splash = Splash()
+    splash.show()
+    splash.step("Building the window")
     win = MainWindow(theme_name=theme_name)
+    # Before the event loop runs, so "Visual only" never starts a compile.
+    win.apply_layout_mode(settings.value("layout_mode", "side"))
+    splash.step("Opening the document")
     win.show()
+    splash.step("Ready")
+    splash.finish(win)
     win.start_mcp_if_enabled()
     # Open a file passed on the command line (e.g. double-click association).
     args = [a for a in sys.argv[1:] if not a.startswith("-")]
+    opened = False
     if args:
         path = Path(args[0])
         if path.exists():
             win._open_path(path)
+            opened = True
+    if not opened and settings.value("show_welcome", True, type=bool):
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(0, win.show_welcome)
     return app.exec()
 
 
