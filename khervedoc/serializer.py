@@ -255,6 +255,9 @@ def serialize_block(node: Block, *, has_chapters: bool = False,
         if not node.rows:
             return ""
         cols = max(len(r) for r in node.rows)
+        booktabs = node.style == "booktabs"
+        top_rule = "\\toprule" if booktabs else "\\hline"
+        bottom_rule = "\\bottomrule" if booktabs else "\\hline"
         align = node.alignment.strip()
         if not align:
             align = _auto_table_alignment(node.rows, cols)
@@ -264,9 +267,9 @@ def serialize_block(node: Block, *, has_chapters: bool = False,
             # Table cells are stored as raw LaTeX — emit verbatim.
             cells = list(r) + [""] * (cols - len(r))
             row_str = " & ".join(cells) + r" \\"
-            # Add \hline after the first row (header separator).
+            # Rule after the first row (header separator).
             if i == 0 and len(node.rows) > 1:
-                row_str += " \\hline"
+                row_str += " \\midrule" if booktabs else " \\hline"
             body_rows.append(row_str)
         body = "\n    ".join(body_rows)
         cap = node.caption
@@ -276,9 +279,9 @@ def serialize_block(node: Block, *, has_chapters: bool = False,
             f"\\begin{{table}}[{placement}]\n"
             "  \\centering\n"
             f"  \\begin{{tabular}}{{{align}}}\n"
-            f"    \\hline\n"
+            f"    {top_rule}\n"
             f"    {body}\n"
-            f"    \\hline\n"
+            f"    {bottom_rule}\n"
             "  \\end{tabular}\n"
             f"  \\caption{{{cap}}}\n"
             f"  {lab}"
@@ -466,6 +469,19 @@ def _split_keyword_inlines(blocks: list) -> list[str]:
     return out
 
 
+def _uses_booktabs(doc: Document) -> bool:
+    def walk(blocks):
+        for b in blocks:
+            if isinstance(b, Table) and b.style == "booktabs":
+                return True
+            kids = getattr(b, "children", None)
+            if isinstance(kids, list) and walk(
+                    [k for k in kids if hasattr(k, "type")]):
+                return True
+        return False
+    return walk(doc.children)
+
+
 def serialize_document(doc: Document) -> str:
     from . import page_sizes
     page = page_sizes.by_code(doc.meta.page_size)
@@ -508,6 +524,9 @@ def serialize_document(doc: Document) -> str:
     pkg_list = list(m.packages)
     if "float" not in pkg_list and not is_journal:
         pkg_list.append("float")
+    if (_uses_booktabs(doc) and "booktabs" not in pkg_list
+            and "{booktabs}" not in m.preamble_extras):
+        pkg_list.append("booktabs")
     pkg_lines = "\n".join(f"\\usepackage{{{p}}}" for p in pkg_list)
     packages = (geometry + "\n" + pkg_lines).strip() if geometry else pkg_lines
     if preamble_extras:
@@ -858,6 +877,10 @@ def serialize_project_master(proj: Project) -> str:
     pkg_list = list(m.packages)
     if "float" not in pkg_list and not is_journal:
         pkg_list.append("float")
+    # Chapters are serialized separately, so their tables can't be
+    # inspected here; booktabs is cheap and always available.
+    if "booktabs" not in pkg_list and not is_journal:
+        pkg_list.append("booktabs")
     pkg_lines = "\n".join(f"\\usepackage{{{p}}}" for p in pkg_list)
     packages = (geometry + "\n" + pkg_lines).strip() if geometry else pkg_lines
     if preamble_extras:

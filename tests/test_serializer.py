@@ -580,3 +580,21 @@ def test_kstroke_uses_providecommand_not_newcommand():
                    children=[Paragraph(children=[Text(text="hi")])])
     out = serialize_document(doc)
     assert r"\newcommand{\Kstroke}" not in out
+
+
+def test_booktabs_table_serializes_rules_and_package():
+    from khervedoc.model import Document, Table
+    from khervedoc.serializer import serialize_document
+    doc = Document(children=[Table(rows=[["A", "B"], ["1", "2"]],
+                                   caption="c", style="booktabs")])
+    out = serialize_document(doc)
+    assert "\\toprule" in out and "\\midrule" in out and "\\bottomrule" in out
+    assert "\\hline" not in out
+    assert "\\usepackage{booktabs}" in out
+
+
+def test_plain_table_keeps_hline_and_no_booktabs():
+    from khervedoc.model import Document, Table
+    from khervedoc.serializer import serialize_document
+    out = serialize_document(Document(children=[Table(rows=[["A"], ["1"]])]))
+    assert "\\hline" in out and "booktabs" not in out

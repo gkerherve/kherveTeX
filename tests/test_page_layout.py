@@ -126,3 +126,17 @@ def test_bold_first_word_stays_a_paragraph(qapp):
     ed.set_document(Document(children=[Paragraph(children=[
         Text("Note:", marks=["bold"]), Text(" plain")])]))
     assert isinstance(ed.get_document().children[0], Paragraph)
+
+
+def test_table_cells_keep_their_latex_through_the_editor(qapp):
+    from khervedoc.model import Table
+    ed = DocumentEditor()
+    t = Table(rows=[["\\textbf{Area}", "$x^2$"], ["1", "2"]],
+              caption="Peaks", alignment="l|c", style="booktabs")
+    ed.set_document(Document(children=[t]))
+    back = next(b for b in ed.get_document().children
+                if isinstance(b, Table))
+    assert back.rows == t.rows
+    assert back.style == "booktabs" and back.alignment == "l|c"
+    assert back.caption == "Peaks"
+    assert "Table 1: Peaks" in ed._edit.toPlainText()

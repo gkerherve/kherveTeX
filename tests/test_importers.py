@@ -1025,3 +1025,16 @@ def test_self_including_file_does_not_loop(tmp_path):
     (tmp_path / "a.tex").write_text("A \\input{a}", encoding="utf-8")
     out = expand_includes("\\input{a}", tmp_path)
     assert out.count("A ") == 1
+
+
+def test_booktabs_table_style_and_pipes_are_kept():
+    from khervedoc.importers import import_tex
+    from khervedoc.model import Table
+    src = ("\\documentclass{article}\\begin{document}\n"
+           "\\begin{table}\\begin{tabular}{l|c}\\toprule A & B \\\\ \\midrule"
+           " 1 & 2 \\\\ \\bottomrule\\end{tabular}\\end{table}\n"
+           "\\end{document}")
+    t = next(b for b in import_tex(src).children if isinstance(b, Table))
+    assert t.style == "booktabs"
+    assert t.alignment == "l|c"
+    assert t.rows == [["A", "B"], ["1", "2"]]

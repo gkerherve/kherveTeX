@@ -17,7 +17,7 @@ import time
 
 from PySide6.QtCore import QEvent, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import (
-    QAction, QColor, QFont, QFontDatabase, QFontMetricsF, QImage, QKeySequence, QTextBlockFormat,
+    QAction, QBrush, QColor, QFont, QFontDatabase, QFontMetricsF, QImage, QKeySequence, QTextBlockFormat,
     QTextCharFormat, QTextCursor, QTextFrameFormat, QTextImageFormat,
     QTextLength, QTextListFormat, QTextTable, QTextTableFormat,
 )
@@ -678,20 +678,49 @@ def _table_block_format(dark: bool = False) -> QTextBlockFormat:
 
 
 def _make_table_format(ncols: int, dark: bool = False) -> QTextTableFormat:
-    """Build a QTextTableFormat for a table with *ncols* columns."""
-    p = _palette(dark)
+    """A borderless, centred, natural-width table like LaTeX's tabular;
+    the rules themselves are drawn per cell by `_apply_table_rules`."""
     tfmt = QTextTableFormat()
-    tfmt.setBorderBrush(QColor(p["table_border"]))
-    tfmt.setBorderStyle(QTextFrameFormat.BorderStyle_Solid)
-    tfmt.setBorder(1)
-    tfmt.setCellPadding(6)
+    tfmt.setBorder(0)
+    tfmt.setBorderCollapse(True)
+    tfmt.setCellPadding(0)
     tfmt.setCellSpacing(0)
-    tfmt.setBackground(QColor(p["table_bg"]))
     tfmt.setMargin(8)
-    constraints = [QTextLength(QTextLength.PercentageLength, 100 / ncols)
-                   for _ in range(ncols)]
-    tfmt.setColumnWidthConstraints(constraints)
+    tfmt.setAlignment(Qt.AlignHCenter)
     return tfmt
+
+
+_COL_SPEC_RE = _re.compile(
+    r"\|"                                   # vertical rule
+    r"|[@!<>]\{(?:[^{}]|\{[^{}]*\})*\}"     # @{..} >{..} <{..}: no column
+    r"|[pmbw]\{(?:[^{}]|\{[^{}]*\})*\}"     # fixed-width column
+    r"|[lcrXSs]")
+
+
+def _parse_column_spec(spec: str, ncols: int) -> tuple[list[str], list[bool]]:
+    """Per-column alignment ('l'/'c'/'r') and, for each of the ncols+1
+    column boundaries, whether a vertical rule ('|') sits there."""
+    aligns: list[str] = []
+    vrules = [False]
+    for tok in _COL_SPEC_RE.findall(spec or ""):
+        if tok == "|":
+            vrules[-1] = True
+        elif tok[0] in "@!<>":
+            continue
+        else:
+            aligns.append({"c": "c", "r": "r"}.get(tok[0], "l"))
+            vrules.append(False)
+    aligns = (aligns + ["l"] * ncols)[:ncols]
+    vrules = (vrules + [False] * (ncols + 1))[:ncols + 1]
+    return aligns, vrules
+
+
+_CELL_ALIGN = {"l": Qt.AlignLeft, "c": Qt.AlignHCenter, "r": Qt.AlignRight}
+
+
+def _cell_display_text(raw: str) -> str:
+    display = _re.sub(r"\\(?:textbf|textit|emph|texttt)\{([^}]*)\}", r"\1", raw)
+    return display.strip()
 
 
 # Custom property to store table metadata (caption, label, alignment)
@@ -699,6 +728,9 @@ def _make_table_format(ncols: int, dark: bool = False) -> QTextTableFormat:
 _P_TABLE_CAPTION = QTextCharFormat.UserProperty + 20
 _P_TABLE_LABEL = QTextCharFormat.UserProperty + 21
 _P_TABLE_ALIGNMENT = QTextCharFormat.UserProperty + 22
+_P_TABLE_STYLE = QTextCharFormat.UserProperty + 23
+_P_CELL_RAW = QTextCharFormat.UserProperty + 24       # cell's LaTeX source
+_P_CAPTION_ROW = QTextCharFormat.UserProperty + 25    # on caption cell
 
 # Figure-table properties (figures rendered as 1-column QTextTable).
 _P_FIGURE_PATH = QTextCharFormat.UserProperty + 30
@@ -1496,61 +1528,113 @@ class DocumentEditor(QWidget):
         cursor.insertImage(img_fmt)
 
     def _insert_table_widget(self, cursor: QTextCursor, table: Table) -> None:
-        """Insert a Table model node as a real QTextTable in the editor."""
+        """Insert a Table model node as a real QTextTable in the editor,
+        drawn the way LaTeX typesets it: horizontal rules only (plus any
+        '|' rules from the column spec), natural column widths, caption
+        underneath as "Table N: ..."."""
         cursor.beginEditBlock()
         nrows = len(table.rows) if table.rows else 1
         ncols = max((len(r) for r in table.rows), default=1) if table.rows else 1
-        p = _palette(self._dark)
+        number = 1 + self._count_tables_before(cursor.position())
         tfmt = _make_table_format(ncols, dark=self._dark)
         tfmt.setProperty(_P_TABLE_CAPTION, table.caption or "")
         tfmt.setProperty(_P_TABLE_LABEL, table.label or "")
         tfmt.setProperty(_P_TABLE_ALIGNMENT, table.alignment or "")
-        # Add an extra row for caption if present.
+        tfmt.setProperty(_P_TABLE_STYLE, table.style or "")
         has_caption = bool(table.caption)
         total_rows = nrows + (1 if has_caption else 0)
         qtable = cursor.insertTable(total_rows, ncols, tfmt)
-        # Header row: bold accent colour on darker amber background.
-        header_char = QTextCharFormat()
-        header_char.setFontWeight(QFont.Bold)
-        header_char.setForeground(QColor(p["table_header_fg"]))
-        cell_char = QTextCharFormat()
-        cell_char.setForeground(QColor(p["table_cell_fg"]))
+        body = self._body_char_format()
         for r, row in enumerate(table.rows):
             for c in range(ncols):
                 cell = qtable.cellAt(r, c)
-                if r == 0:
-                    cf = cell.format()
-                    cf.setBackground(QColor(p["table_header_bg"]))
-                    cell.setFormat(cf)
-                cell_cursor = cell.firstCursorPosition()
-                text = row[c] if c < len(row) else ""
-                # Strip LaTeX formatting commands for display; the
-                # raw text is preserved in the model for serialization.
-                display = _re.sub(r"\\textbf\{([^}]*)\}", r"\1", text)
-                display = _re.sub(r"\\textit\{([^}]*)\}", r"\1", display)
-                display = _re.sub(r"\\emph\{([^}]*)\}", r"\1", display)
-                display = _re.sub(r"\\texttt\{([^}]*)\}", r"\1", display)
-                # Detect if the cell was bold/italic for visual styling.
-                is_bold = "\\textbf{" in text
-                is_italic = "\\textit{" in text or "\\emph{" in text
-                fmt = QTextCharFormat(header_char if r == 0 else cell_char)
-                if is_bold:
+                raw = row[c] if c < len(row) else ""
+                cf = cell.format()
+                cf.setProperty(_P_CELL_RAW, raw)
+                cell.setFormat(cf)
+                fmt = QTextCharFormat(body)
+                if "\\textbf{" in raw:
                     fmt.setFontWeight(QFont.Bold)
-                if is_italic:
+                if "\\textit{" in raw or "\\emph{" in raw:
                     fmt.setFontItalic(True)
-                cell_cursor.insertText(display.strip(), fmt)
+                cell.firstCursorPosition().insertText(
+                    _cell_display_text(raw), fmt)
         if has_caption:
-            # Merge all cells in the last row for the caption.
             qtable.mergeCells(nrows, 0, 1, ncols)
             cap_cell = qtable.cellAt(nrows, 0)
+            cf = cap_cell.format()
+            cf.setProperty(_P_CAPTION_ROW, True)
+            cap_cell.setFormat(cf)
             cap_cursor = cap_cell.firstCursorPosition()
-            cap_fmt = QTextCharFormat()
-            cap_fmt.setFontItalic(True)
-            cap_fmt.setForeground(QColor(p["table_caption_fg"]))
-            cap_cursor.insertText(f"Caption: {table.caption}", cap_fmt)
+            bf = cap_cursor.blockFormat()
+            bf.setAlignment(Qt.AlignHCenter)
+            # A short caption shouldn't wrap inside a narrow table; LaTeX
+            # sets it across the text width.
+            bf.setNonBreakableLines(len(table.caption) <= 60)
+            cap_cursor.setBlockFormat(bf)
+            cap_cursor.insertText(
+                f"Table {number}: {_cell_display_text(table.caption)}",
+                QTextCharFormat(body))
+        self._apply_table_rules(qtable)
         # Move the cursor past the table so subsequent content goes after it.
         cursor.movePosition(QTextCursor.End)
         cursor.endEditBlock()
+
+    def _count_tables_before(self, pos: int) -> int:
+        n = 0
+        for frame in self._edit.document().rootFrame().childFrames():
+            if isinstance(frame, QTextTable) and frame.firstPosition() < pos \
+                    and not frame.format().property(_P_IS_FIGURE):
+                n += 1
+        return n
+
+    def _apply_table_rules(self, qtable: QTextTable) -> None:
+        """Draw LaTeX's rules on the cells: top / header / bottom
+        horizontal rules (heavier outer rules for booktabs) and vertical
+        rules where the column spec has '|'. Re-run after row/column
+        edits, since the rules depend on which row is first/last."""
+        tfmt = qtable.format()
+        booktabs = tfmt.property(_P_TABLE_STYLE) == "booktabs"
+        ncols = qtable.columns()
+        nrows = qtable.rows()
+        caption_row = nrows > 1 and bool(
+            qtable.cellAt(nrows - 1, 0).format().property(_P_CAPTION_ROW)
+            or qtable.cellAt(nrows - 1, 0).firstCursorPosition()
+                .block().text().startswith("Caption: "))
+        last = nrows - (2 if caption_row else 1)
+        aligns, vrules = _parse_column_spec(
+            tfmt.property(_P_TABLE_ALIGNMENT) or "", ncols)
+        heavy, thin = (1.4, 0.8) if booktabs else (0.8, 0.8)
+        black = QBrush(QColor("#000000"))
+        none = QTextFrameFormat.BorderStyle_None
+        solid = QTextFrameFormat.BorderStyle_Solid
+        for r in range(nrows):
+            for c in range(ncols):
+                cell = qtable.cellAt(r, c)
+                cf = cell.format().toTableCellFormat()
+                cf.setLeftPadding(8); cf.setRightPadding(8)
+                cf.setTopPadding(2); cf.setBottomPadding(2)
+                top = heavy if r == 0 else 0
+                bottom = (heavy if r == last else
+                          thin if r == 0 and last > 0 else 0)
+                if r > last:            # caption row: no rules, gap above
+                    top = bottom = 0
+                    cf.setTopPadding(8)
+                left = vrules[c] and r <= last
+                right = vrules[c + 1] and r <= last
+                for side, width in (("Top", top), ("Bottom", bottom),
+                                    ("Left", 0.8 if left else 0),
+                                    ("Right", 0.8 if right else 0)):
+                    getattr(cf, f"set{side}Border")(width)
+                    getattr(cf, f"set{side}BorderBrush")(black)
+                    getattr(cf, f"set{side}BorderStyle")(
+                        solid if width else none)
+                cell.setFormat(cf)
+                if r <= last:
+                    bc = cell.firstCursorPosition()
+                    bf = bc.blockFormat()
+                    bf.setAlignment(_CELL_ALIGN[aligns[c]])
+                    bc.setBlockFormat(bf)
 
     def _math_png(self, latex: str) -> Path | None:
         return _render_math_image(latex, cache_dir=self._equations_dir)
@@ -2040,6 +2124,7 @@ class DocumentEditor(QWidget):
         caption = tfmt.property(_P_TABLE_CAPTION) or ""
         label = tfmt.property(_P_TABLE_LABEL) or None
         alignment = tfmt.property(_P_TABLE_ALIGNMENT) or ""
+        style = tfmt.property(_P_TABLE_STYLE) or ""
         nrows = qtable.rows()
         ncols = qtable.columns()
         # If last row is a merged caption row, exclude it from data rows.
@@ -2047,7 +2132,8 @@ class DocumentEditor(QWidget):
         if caption and nrows > 1:
             cell = qtable.cellAt(nrows - 1, 0)
             text = cell.firstCursorPosition().block().text()
-            if text.startswith("Caption: "):
+            if cell.format().property(_P_CAPTION_ROW) \
+                    or text.startswith("Caption: "):
                 has_caption_row = True
         data_rows = nrows - (1 if has_caption_row else 0)
         rows: list[list[str]] = []
@@ -2055,10 +2141,17 @@ class DocumentEditor(QWidget):
             row: list[str] = []
             for c in range(ncols):
                 cell = qtable.cellAt(r, c)
-                row.append(cell.firstCursorPosition().block().text())
+                shown = cell.firstCursorPosition().block().text()
+                raw = cell.format().property(_P_CELL_RAW)
+                # Unchanged cell: return its original LaTeX, so \\textbf,
+                # math and macros survive; an edited cell takes the new text.
+                if raw is not None and _cell_display_text(raw) == shown.strip():
+                    row.append(raw)
+                else:
+                    row.append(shown)
             rows.append(row)
         return Table(rows=rows, caption=caption, label=label,
-                     alignment=alignment)
+                     alignment=alignment, style=style)
 
     # ---------- formatting actions (called by mainwindow) ----------
 
@@ -2280,6 +2373,10 @@ class DocumentEditor(QWidget):
             counters = [0] * 6
             block = doc.firstBlock()
             while block.isValid():
+                if QTextCursor(block).currentTable() is not None:
+                    # Table / figure cells keep their own layout.
+                    block = block.next()
+                    continue
                 state = block.userState()
                 bfmt = block.blockFormat()
                 number = ""
@@ -3025,28 +3122,27 @@ class DocumentEditor(QWidget):
 
     def _table_insert_row(self, qtable: QTextTable, at: int) -> None:
         qtable.insertRows(at, 1)
+        self._apply_table_rules(qtable)
+
+    def _table_columns_changed(self, qtable: QTextTable) -> None:
+        # The stored column spec no longer matches the column count;
+        # drop it so the serializer derives a fresh one.
+        tfmt = qtable.format()
+        tfmt.setProperty(_P_TABLE_ALIGNMENT, "")
+        qtable.setFormat(tfmt)
+        self._apply_table_rules(qtable)
 
     def _table_insert_col(self, qtable: QTextTable, at: int) -> None:
         qtable.insertColumns(at, 1)
-        # Update column width constraints so they stay even.
-        ncols = qtable.columns()
-        tfmt = qtable.format()
-        constraints = [QTextLength(QTextLength.PercentageLength, 100 / ncols)
-                       for _ in range(ncols)]
-        tfmt.setColumnWidthConstraints(constraints)
-        qtable.setFormat(tfmt)
+        self._table_columns_changed(qtable)
 
     def _table_delete_row(self, qtable: QTextTable, at: int) -> None:
         qtable.removeRows(at, 1)
+        self._apply_table_rules(qtable)
 
     def _table_delete_col(self, qtable: QTextTable, at: int) -> None:
         qtable.removeColumns(at, 1)
-        ncols = qtable.columns()
-        tfmt = qtable.format()
-        constraints = [QTextLength(QTextLength.PercentageLength, 100 / ncols)
-                       for _ in range(ncols)]
-        tfmt.setColumnWidthConstraints(constraints)
-        qtable.setFormat(tfmt)
+        self._table_columns_changed(qtable)
 
     def insert_raw_latex(self) -> None:
         text, ok = QInputDialog.getMultiLineText(self, "Insert raw LaTeX",

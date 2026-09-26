@@ -161,6 +161,9 @@ class Table:
     caption: str = ""
     label: str | None = None
     alignment: str = ""           # e.g. "lcr"; empty = auto (all left)
+    # Rule style: "" = \hline rules, "booktabs" = \toprule / \midrule /
+    # \bottomrule. Kept so an imported booktabs table round-trips.
+    style: str = ""
     type: str = "Table"
 
 
@@ -411,6 +414,7 @@ def _build_block(d: dict) -> Block:
             caption=d.get("caption", ""),
             label=d.get("label"),
             alignment=d.get("alignment", ""),
+            style=d.get("style", ""),
         )
     if t == "RawLatex":
         return RawLatex(text=d["text"])

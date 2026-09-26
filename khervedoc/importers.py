@@ -936,6 +936,8 @@ def _parse_tabular(align_spec: str, body: str) -> Table:
     plain text strings (matching the model); embedded LaTeX inside a cell
     is preserved verbatim because the existing serializer escapes only
     plain-text cell content."""
+    style = "booktabs" if re.search(
+        r"\\(toprule|midrule|bottomrule)\b", body) else ""
     # Drop common line-rule commands so they don't survive into cell text.
     body = re.sub(r"\\hline\b", "", body)
     body = re.sub(r"\\toprule|\\midrule|\\bottomrule|\\cline\{[^}]*\}", "", body)
@@ -948,10 +950,10 @@ def _parse_tabular(align_spec: str, body: str) -> Table:
             continue
         cells = [c.strip() for c in line.split("&")]
         rows.append(cells)
-    # Preserve the raw alignment spec so p{0.55\columnwidth} etc.
-    # survive the round-trip. Strip only vertical-rule pipes.
-    alignment = align_spec.replace("|", "").strip()
-    return Table(rows=rows, alignment=alignment or "")
+    # Preserve the raw alignment spec — p{0.55\columnwidth} and the
+    # vertical-rule pipes both round-trip, and the editor draws the rules.
+    alignment = align_spec.strip()
+    return Table(rows=rows, alignment=alignment or "", style=style)
 
 
 _INCLUDE_RE = re.compile(

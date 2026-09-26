@@ -61,3 +61,10 @@ def test_unknown_block_type_raises():
     bad = '{"type":"Document","meta":{},"children":[{"type":"Sparkle"}]}'
     with pytest.raises(ValueError, match="Sparkle"):
         from_json(bad)
+
+
+def test_table_style_round_trips_through_json():
+    from khervedoc.model import Document, Table, from_json, to_json
+    doc = Document(children=[Table(rows=[["a"]], style="booktabs")])
+    back = from_json(to_json(doc))
+    assert back.children[0].style == "booktabs"
