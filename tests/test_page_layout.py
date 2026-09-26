@@ -140,3 +140,20 @@ def test_table_cells_keep_their_latex_through_the_editor(qapp):
     assert back.style == "booktabs" and back.alignment == "l|c"
     assert back.caption == "Peaks"
     assert "Table 1: Peaks" in ed._edit.toPlainText()
+
+
+def test_document_is_laid_out_on_whole_pages(qapp):
+    ed = DocumentEditor()
+    ed.resize(1000, 800)
+    ed.set_document(Document(children=[Paragraph(children=[Text("x")])]))
+    edit = ed._edit
+    page_h = edit.page_height_px()
+    assert edit.document().pageCount() == 1
+    assert ed._page.maximumHeight() == page_h    # a full, empty sheet
+    long = [Paragraph(children=[Text("word " * 120)]) for _ in range(40)]
+    ed.set_document(Document(children=long))
+    edit.resize(edit.width(), edit.height() + 1)  # a relayout must not
+    pages = edit.document().pageCount()           # switch paging off
+    assert pages > 1
+    assert edit.document().pageSize().height() == page_h
+    assert ed._page.maximumHeight() == page_h * pages

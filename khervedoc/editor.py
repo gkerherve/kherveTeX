@@ -936,7 +936,15 @@ class DocumentEditor(QWidget):
         self._page = QFrame()
         self._page.setObjectName("page")
         self._page.setStyleSheet(
-            "#page { background: white; border: 1px solid #b8bcc1; }")
+            "#page { background: white; border: none; }")
+        # Sheets draw their own edges and gaps (PagedTextEdit); the card
+        # just casts a soft shadow onto the desk.
+        from PySide6.QtWidgets import QGraphicsDropShadowEffect
+        shadow = QGraphicsDropShadowEffect(self._page)
+        shadow.setBlurRadius(16)
+        shadow.setOffset(0, 2)
+        shadow.setColor(QColor(0, 0, 0, 70))
+        self._page.setGraphicsEffect(shadow)
         page_layout = QVBoxLayout(self._page)
         page_layout.setContentsMargins(0, 0, 0, 0)
         page_layout.setSpacing(0)
@@ -1173,17 +1181,16 @@ class DocumentEditor(QWidget):
         self._resize_to_document()
 
     def _resize_to_document(self, size=None) -> None:
-        """Size the QTextEdit to its actual content so the cursor lands at
-        the top of the page card. Now that PagedTextEdit no longer calls
-        QTextDocument.setPageSize, document().size().height() reports the
-        real content height rather than a minimum-one-page reading, so a
-        new document gets a short card with the title at the top and the
-        card grows downward as the user types.
-        """
-        doc_h = max(1, int(self._edit.document().size().height()))
-        # A small minimum so the card always has a visible outline; small
-        # enough that content stays anchored to the top.
-        total_h = max(doc_h + 24, 240)
+        """Size the editor to its whole pages. The document is laid out
+        paginated (PagedTextEdit), so its height is a whole number of
+        sheets: a new document shows one full, empty A4 page, and a new
+        sheet appears as soon as text flows onto it."""
+        self._edit._apply_pagination()
+        page_h = self._edit.page_height_px()
+        if page_h > 0:
+            total_h = page_h * max(1, self._edit.document().pageCount())
+        else:
+            total_h = max(int(self._edit.document().size().height()), 240)
         self._edit.setMinimumHeight(total_h)
         self._edit.setMaximumHeight(total_h)
         # The page frame also needs explicit height clamps; without these

@@ -14,8 +14,10 @@ import shutil
 import unicodedata
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QPointF, Qt, Signal
-from PySide6.QtGui import QColor, QImage, QPainter, QPen, QTextFormat
+from PySide6.QtCore import QEvent, QPointF, QRectF, QSizeF, Qt, Signal
+from PySide6.QtGui import (
+    QColor, QImage, QLinearGradient, QPainter, QPen, QTextFormat,
+)
 from PySide6.QtWidgets import QTextEdit, QWidget
 
 
@@ -44,6 +46,10 @@ def _is_document_file(p: Path) -> bool:
         return True
     return p.suffix.lower() in _DOCUMENT_SUFFIXES
 
+
+# Colour of the "desk" between sheets; matches the editor's backdrop.
+DESK_COLOR = QColor("#d0d4d8")
+_SHEET_EDGE = QColor("#b8bcc1")
 
 # Block-format property carrying a heading's display number ("2.1").
 # The number is painted, never stored as text, so it can't leak into the
@@ -220,6 +226,8 @@ class PagedTextEdit(QTextEdit):
         self._images_dir: Path | None = None
         self._image_counter = 0
         self._overlay = _PageBreakOverlay(self)
+        # Real pages replace the dashed "page N / N+1" break lines.
+        self._overlay.hide()
         self.setAcceptDrops(True)
 
     def set_images_dir(self, path: Path) -> None:
@@ -305,24 +313,74 @@ class PagedTextEdit(QTextEdit):
         self._overlay.update()
 
     def set_page_size_px(self, width_px: int, height_px: int) -> None:
-        """Record the page dimensions used by the break-line overlay.
-
-        We deliberately do NOT call QTextDocument.setPageSize: that forces
-        document().size().height() to report a multiple of the page
-        height even when the content is short, which made a brand-new
-        document render as a fully-empty A4 sheet with the title floating
-        in the middle. The page-break overlay paints its dashed indicator
-        lines at multiples of page_height_px without help from the layout
-        engine; the document itself flows as one continuous sheet that
-        grows with content.
-        """
+        """Lay the document out on real pages of this size, like Word:
+        text that would cross a page's bottom margin moves to the next
+        sheet, and each sheet is drawn separately with a gap between."""
         self._page_width_px = width_px
         self._page_height_px = height_px
+        self._apply_pagination()
         self._overlay.update()
+
+    def _apply_pagination(self) -> None:
+        # QTextEdit resets the page height to "unlimited" whenever it
+        # relays out (resize, wrap-mode change), which silently turns
+        # pagination off; re-assert it afterwards.
+        if self._page_height_px > 0:
+            size = QSizeF(self.viewport().width() or self._page_width_px,
+                          self._page_height_px)
+            if self.document().pageSize() != size:
+                self.document().setPageSize(size)
+
+    def page_gap_px(self) -> int:
+        """Grey gap drawn between sheets, scaled with the page."""
+        return max(6, round(self._page_height_px * 0.011))
 
     def paintEvent(self, ev):
         super().paintEvent(ev)
+        self._paint_sheets()
         self._paint_heading_numbers()
+
+    def _paint_sheets(self) -> None:
+        """Turn the paginated layout into separate sheets: desk-coloured
+        gaps with a soft shadow between pages, an edge around each page,
+        and the page number centred in each bottom margin (LaTeX's
+        default plain page style)."""
+        H = self._page_height_px
+        doc = self.document()
+        if H <= 0 or doc.pageSize().height() <= 0:
+            return
+        pages = max(1, doc.pageCount())
+        dy = -self.verticalScrollBar().value()
+        w = self.viewport().width()
+        g = self.page_gap_px()
+        bottom_margin = doc.rootFrame().frameFormat().bottomMargin()
+        p = QPainter(self.viewport())
+        font = self.font()
+        font.setPointSizeF(max(6.0, font.pointSizeF() * 0.9))
+        p.setFont(font)
+        fm = p.fontMetrics()
+        for k in range(pages):
+            top = k * H + dy + (g / 2 if k else 0)
+            bottom = (k + 1) * H + dy - (g / 2 if k < pages - 1 else 1)
+            if bottom < -H or top > self.viewport().height() + H:
+                continue
+            if k < pages - 1:
+                gap = QRectF(0, bottom, w, g)
+                p.fillRect(gap, DESK_COLOR)
+                shade = QLinearGradient(0, bottom, 0, bottom + g * 0.6)
+                shade.setColorAt(0, QColor(0, 0, 0, 55))
+                shade.setColorAt(1, QColor(0, 0, 0, 0))
+                p.fillRect(QRectF(0, bottom, w, g * 0.6), shade)
+            p.setPen(QPen(_SHEET_EDGE, 1))
+            p.drawRect(QRectF(0.5, top + 0.5, w - 1, bottom - top - 1))
+            number = str(k + 1)
+            p.setPen(QColor(90, 90, 90))
+            y = (k + 1) * H + dy - bottom_margin / 2 + fm.ascent() / 2
+            if k < pages - 1:
+                y -= g / 2
+            p.drawText(QPointF((w - fm.horizontalAdvance(number)) / 2, y),
+                       number)
+        p.end()
 
     def _paint_heading_numbers(self) -> None:
         doc = self.document()
@@ -359,6 +417,7 @@ class PagedTextEdit(QTextEdit):
 
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
+        self._apply_pagination()
         self._overlay.resize(self.viewport().size())
 
     # ----- paste / drop: route images through imageReceived signal -----
