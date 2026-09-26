@@ -903,6 +903,7 @@ class DocumentEditor(QWidget):
         self._building = False
         # Initialise meta up front — _apply_page_size below reads it.
         self._meta = DocMeta()
+        self._heading_offset: list[int] = [0] * 6
         # Zoom state: tracked so set_zoom_percent can compute deltas.
         self._base_font_pt = 12
         self._body_font_pt = 12   # user-controllable body text size
@@ -2396,8 +2397,9 @@ class DocumentEditor(QWidget):
         try:
             prev_state = None
             pdf_breaks = self._pdf_page_start_blocks()
-            has_chapters = self._has_chapter_blocks()
-            counters = [0] * 6
+            offset = self._heading_offset
+            has_chapters = self._has_chapter_blocks() or offset[0] > 0
+            counters = list(offset)
             block = doc.firstBlock()
             while block.isValid():
                 if QTextCursor(block).currentTable() is not None:
@@ -3300,6 +3302,17 @@ class DocumentEditor(QWidget):
         block = self._edit.textCursor().block()
         if block.userState() == _STATE_MATH_BLOCK:
             self._math_refresh.start()
+
+    def set_heading_offset(self, counters: list[int] | None) -> None:
+        """Numbered headings already used by earlier documents of a
+        project, per level (index 0 = chapter). LaTeX keeps counting
+        across \\include, so this document's first section continues
+        from there instead of restarting at 1."""
+        counters = list(counters or [0] * 6)[:6]
+        counters += [0] * (6 - len(counters))
+        if counters != self._heading_offset:
+            self._heading_offset = counters
+            self._apply_page_layout()
 
     def sync_pages_to_pdf(self) -> None:
         """Re-paginate after a compile so sheets start where the PDF's

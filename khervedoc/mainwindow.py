@@ -168,11 +168,15 @@ class _ProjectSidebar(QWidget):
 
     def set_active_index(self, idx: int) -> None:
         self._active_index = idx
+        # Bolding an item fires itemChanged, which would re-send each
+        # item's tick state as a chapter toggle.
+        self._list.blockSignals(True)
         for i in range(self._list.count()):
             item = self._list.item(i)
             font = item.font()
             font.setBold(i == idx)
             item.setFont(font)
+        self._list.blockSignals(False)
 
     def recompute_auto_pages(self) -> None:
         """Recompute start_page for every chapter from cumulative page counts.
@@ -1983,6 +1987,7 @@ class MainWindow(QMainWindow):
             self._path_label.setToolTip(str(self._project_path))
             return
         name = self._current_path.name if self._current_path else "Untitled"
+        self._editor.set_heading_offset(None)
         self._project_sidebar.set_single(
             self._doc_stem(self._current_path) if self._current_path
             else "Untitled")
@@ -2495,12 +2500,40 @@ class MainWindow(QMainWindow):
         self._project_chapter_idx = idx
         self._project_sidebar.set_active_index(idx)
         self._import_source_dir = ch_path.parent
+        self._editor.set_heading_offset(self._heading_offset_before(idx))
         self._editor.set_document(doc)
         self._update_title()
+
+    def _heading_offset_before(self, idx: int) -> list[int]:
+        """Heading counters after all enabled documents before *idx*,
+        counted the way LaTeX counts them through the \\includes."""
+        counters = [0] * 6
+        proj_dir = self._project_path.parent
+        for i, ch in enumerate(self._project.chapters[:idx]):
+            if not ch.enabled:
+                continue
+            doc = self._project_chapter_docs.get(i)
+            if doc is None:
+                try:
+                    doc = from_json((proj_dir / ch.path).read_text(
+                        encoding="utf-8"))
+                except Exception:
+                    continue
+                self._project_chapter_docs[i] = doc
+            for block in doc.children:
+                if isinstance(block, Section) and block.numbered \
+                        and 0 <= block.level <= 5:
+                    counters[block.level] += 1
+                    for k in range(block.level + 1, 6):
+                        counters[k] = 0
+        return counters
 
     def _on_chapter_toggled(self, idx: int, enabled: bool) -> None:
         if self._project is not None:
             self._project.chapters[idx].enabled = enabled
+            if idx < self._project_chapter_idx:
+                self._editor.set_heading_offset(
+                    self._heading_offset_before(self._project_chapter_idx))
 
     def _on_add_document(self) -> None:
         if self._project is not None:

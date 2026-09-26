@@ -65,3 +65,30 @@ def test_adding_a_document_shows_both(window, tmp_path, monkeypatch):
     assert "\\begin{document}" in master           # not a chapter body
     assert "\\include{thesis-1}" in master and "\\include{methods}" in master
     assert "Original words." in (tmp_path / "thesis-1.tex").read_text()
+
+
+def test_section_numbers_continue_across_documents(window, tmp_path,
+                                                   monkeypatch):
+    from khervedoc.editor import _P_HEADING_NUMBER
+    window._editor.set_document(Document(children=[
+        Section(level=1, children=[Text("Introduction")]),
+        Section(level=2, children=[Text("Background")]),
+        Paragraph(children=[Text("x")])]))
+    path = tmp_path / "thesis.ktex.json"
+    window._current_path = path
+    window._write_to(path)
+    monkeypatch.setattr(QInputDialog, "getText",
+                        lambda *a, **k: ("Methods", True))
+    window._on_add_document()
+
+    def first_number():
+        block = window._editor.text_edit.document().firstBlock()
+        return block.blockFormat().property(_P_HEADING_NUMBER)
+
+    assert first_number() == "2"          # continues after "1 Introduction"
+    window._switch_chapter(0)
+    assert first_number() == "1"
+    from PySide6.QtCore import Qt
+    window._project_sidebar._list.item(0).setCheckState(Qt.Unchecked)
+    window._switch_chapter(1)
+    assert first_number() == "1"          # ...so Methods is section 1
