@@ -63,3 +63,53 @@ def test_underscore_in_missing_path_escaped_in_placeholder(tmp_path: Path):
     src = r"\includegraphics{QuickStart_Preference.png}"
     out = _rewrite_includegraphics(src, tmp_path)
     assert r"\_" in out
+
+
+class _FakeProc:
+    def __init__(self, code, out):
+        self.returncode, self.stdout, self.stderr = code, out, ""
+
+
+def _fake_tectonic(monkeypatch, tmp_path, responses):
+    """Patch subprocess.run to replay `responses` keyed by only-cached flag."""
+    from khervedoc import compiler
+    calls = []
+
+    def fake_run(cmd, **kw):
+        cached = "--only-cached" in cmd
+        calls.append(cached)
+        code, out, make_pdf = responses[cached]
+        if make_pdf:
+            (tmp_path / "document.pdf").write_bytes(b"%PDF")
+        return _FakeProc(code, out)
+
+    monkeypatch.setattr(compiler, "_find_tectonic", lambda: "tectonic")
+    monkeypatch.setattr(compiler.subprocess, "run", fake_run)
+    return calls
+
+
+def test_compile_uses_cache_only_when_everything_is_cached(monkeypatch, tmp_path):
+    from khervedoc.compiler import compile_tex
+    calls = _fake_tectonic(monkeypatch, tmp_path, {True: (0, "ok", True)})
+    r = compile_tex("x", tmp_path)
+    assert r.ok and calls == [True]
+
+
+def test_compile_goes_online_when_cache_misses_a_package(monkeypatch, tmp_path):
+    from khervedoc.compiler import compile_tex
+    calls = _fake_tectonic(monkeypatch, tmp_path, {
+        True: (0, "! LaTeX Error: File `tikz.sty' not found.", True),
+        False: (0, "ok", True),
+    })
+    r = compile_tex("x", tmp_path)
+    assert r.ok and calls == [True, False]
+
+
+def test_compile_offline_reports_missing_package(monkeypatch, tmp_path):
+    from khervedoc.compiler import compile_tex
+    calls = _fake_tectonic(monkeypatch, tmp_path, {
+        True: (0, "! LaTeX Error: File `tikz.sty' not found.", True),
+        False: (1, "caused by: error sending request for url", False),
+    })
+    r = compile_tex("x", tmp_path)
+    assert not r.ok and "tikz.sty" in r.error and "Offline" in r.error

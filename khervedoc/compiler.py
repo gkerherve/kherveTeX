@@ -76,9 +76,10 @@ def _find_tectonic() -> str | None:
     """
     # Frozen PyInstaller bundle — tectonic.exe lives next to the launcher
     if getattr(sys, "frozen", False):
-        bundled = Path(sys._MEIPASS) / "tectonic.exe"
-        if bundled.exists():
-            return str(bundled)
+        for name in ("tectonic.exe", "tectonic"):
+            bundled = Path(sys._MEIPASS) / name
+            if bundled.exists():
+                return str(bundled)
     found = shutil.which("tectonic")
     if found:
         return found
@@ -87,11 +88,55 @@ def _find_tectonic() -> str | None:
         Path.home() / "bin" / "tectonic",
         Path.home() / ".cargo" / "bin" / "tectonic.exe",
         Path.home() / "scoop" / "shims" / "tectonic.exe",
+        Path("/opt/homebrew/bin/tectonic"),
+        Path("/usr/local/bin/tectonic"),
     ]
     for c in candidates:
         if c.exists():
             return str(c)
     return None
+
+
+def default_tectonic_cache_dir() -> Path:
+    """Tectonic's per-OS cache location, used when the binary can't be asked."""
+    if sys.platform == "win32":
+        return (Path.home() / "AppData" / "Local"
+                / "TectonicProject" / "Tectonic" / "bundles")
+    if sys.platform == "darwin":
+        return (Path.home() / "Library" / "Caches"
+                / "TectonicProject.Tectonic" / "bundles")
+    base = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    return base / "Tectonic" / "bundles"
+
+
+def query_tectonic_cache_dir(tectonic_path: str) -> Path | None:
+    """Ask the tectonic binary where it caches bundle files."""
+    try:
+        kw: dict = dict(capture_output=True, text=True, encoding="utf-8",
+                        errors="replace", timeout=10)
+        if sys.platform == "win32":
+            kw["creationflags"] = subprocess.CREATE_NO_WINDOW
+        proc = subprocess.run(
+            [tectonic_path, "-X", "show", "user-cache-dir"], **kw)
+        lines = (proc.stdout or "").strip().splitlines()
+        if proc.returncode == 0 and lines:
+            return Path(lines[-1].strip())
+    except Exception:
+        pass
+    return None
+
+
+# Signs in tectonic's log that the network was needed but unreachable.
+_NETWORK_ERROR_RE = re.compile(
+    r"error sending request|failed to (?:fetch|connect)|dns error|"
+    r"tcp connect error|Connection refused|network is unreachable|"
+    r"timed out|failed to lookup address", re.IGNORECASE)
+# A TeX input missing from the local cache (only-cached mode).
+_MISSING_FILE_RE = re.compile(r"File `([^']+)' not found")
+
+
+def _is_offline_failure(log: str) -> bool:
+    return bool(_NETWORK_ERROR_RE.search(log))
 
 
 @dataclass
@@ -109,7 +154,7 @@ def tectonic_available() -> bool:
 def tectonic_cache_size_mb() -> float:
     """Return the approximate size of the tectonic cache in MB."""
     cache_dir = _tectonic_cache_dir()
-    if cache_dir is None:
+    if cache_dir is None or not cache_dir.is_dir():
         return 0.0
     total = sum(f.stat().st_size for f in cache_dir.rglob("*") if f.is_file())
     return total / (1024 * 1024)
@@ -120,24 +165,11 @@ def _tectonic_cache_dir() -> Path | None:
     tectonic_path = _find_tectonic()
     if tectonic_path is None:
         return None
-    try:
-        kw: dict = dict(capture_output=True, text=True, encoding="utf-8",
-                        errors="replace", timeout=10)
-        if sys.platform == "win32":
-            kw["creationflags"] = subprocess.CREATE_NO_WINDOW
-        proc = subprocess.run(
-            [tectonic_path, "-X", "show", "user-cache-dir"], **kw)
-        d = proc.stdout.strip().splitlines()[-1].strip() if proc.stdout else ""
-        if d and Path(d).is_dir():
-            return Path(d)
-    except Exception:
-        pass
-    # Fallback to known Windows location
-    fallback = (Path.home() / "AppData" / "Local"
-                / "TectonicProject" / "Tectonic" / "bundles")
-    if fallback.is_dir():
-        return fallback
-    return None
+    d = query_tectonic_cache_dir(tectonic_path)
+    if d is not None and d.is_dir():
+        return d
+    fallback = default_tectonic_cache_dir()
+    return fallback if fallback.is_dir() else None
 
 
 def download_tectonic_bundle(on_output=None) -> tuple[bool, str]:
@@ -295,6 +327,9 @@ Hello $E=mc^2$.
 
     shutil.rmtree(workdir, ignore_errors=True)
     log = "\n".join(all_log)
+    if _is_offline_failure(log) and len(failed) == total:
+        return False, log + "\n\nNo internet connection — the offline " \
+            "bundle can only be downloaded while online."
     if failed:
         log += f"\n\nNote: {len(failed)} classes had compile errors " \
                f"(packages were still cached): {', '.join(failed)}"
@@ -485,35 +520,52 @@ def compile_tex(
         existing = env.get("TEXINPUTS", "")
         env["TEXINPUTS"] = sep.join(texinputs_parts) + sep + existing
 
-    try:
+    def _run(only_cached: bool):
+        cmd = [tectonic_path]
+        if only_cached:
+            cmd.append("--only-cached")
+        cmd += ["-Z", "continue-on-errors", "--keep-logs", "--synctex",
+                "--outdir", str(workdir), str(tex_path)]
         kw: dict = dict(capture_output=True, text=True, encoding="utf-8",
                         errors="replace", timeout=120, env=env)
         if sys.platform == "win32":
             kw["creationflags"] = subprocess.CREATE_NO_WINDOW
-        proc = subprocess.run(
-            [
-                tectonic_path,
-                "-Z", "continue-on-errors",
-                "--keep-logs",
-                "--synctex",
-                "--outdir", str(workdir),
-                str(tex_path),
-            ],
-            **kw,
-        )
+        proc = subprocess.run(cmd, **kw)
+        return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+
+    pdf_path = workdir / f"{basename}.pdf"
+    # Cache first: without --only-cached tectonic may contact its bundle
+    # server on every run, which stalls or fails with no network (trains,
+    # planes). Only go online when the cache is genuinely missing a file.
+    try:
+        code, log = _run(only_cached=True)
+        missing = _MISSING_FILE_RE.findall(log)
+        # continue-on-errors still yields a PDF when a package is missing
+        # from the cache, so a clean exit alone doesn't mean success.
+        cached_ok = code == 0 and pdf_path.exists() and not missing
+        if not cached_ok:
+            cached_log = log
+            code, log = _run(only_cached=False)
+            if _is_offline_failure(log):
+                names = ", ".join(sorted(set(missing))) or "some TeX files"
+                return CompileResult(
+                    ok=False,
+                    pdf_path=pdf_path if pdf_path.exists() else None,
+                    log=cached_log + "\n\n--- online retry ---\n" + log,
+                    error=f"Offline, and {names} not in the local TeX "
+                          f"cache yet. Connect once to compile this "
+                          f"document (or run Download offline bundle).")
     except subprocess.TimeoutExpired:
         return CompileResult(False, None, "", "tectonic timed out after 120s")
 
-    log = (proc.stdout or "") + (proc.stderr or "")
-    pdf_path = workdir / f"{basename}.pdf"
-    if proc.returncode == 0 and pdf_path.exists():
+    if code == 0 and pdf_path.exists():
         return CompileResult(True, pdf_path, log, None)
 
     return CompileResult(
         ok=False,
         pdf_path=pdf_path if pdf_path.exists() else None,
         log=log,
-        error=f"tectonic exited with code {proc.returncode}",
+        error=f"tectonic exited with code {code}",
     )
 
 

@@ -66,9 +66,13 @@ def _seed_tectonic_cache() -> None:
     bundled = Path(sys._MEIPASS) / "khervedoc" / "tectonic_cache"
     if not bundled.is_dir():
         return
-    # Tectonic's cache on Windows: %LOCALAPPDATA%/TectonicProject/Tectonic/bundles
-    dest = (Path.home() / "AppData" / "Local"
-            / "TectonicProject" / "Tectonic" / "bundles")
+    from .compiler import (_find_tectonic, default_tectonic_cache_dir,
+                           query_tectonic_cache_dir)
+    # Ask the bundled binary itself: the cache path differs per OS and a
+    # mismatch silently leaves the user with an empty cache.
+    tec = _find_tectonic()
+    dest = (query_tectonic_cache_dir(tec) if tec else None) \
+        or default_tectonic_cache_dir()
     dest.mkdir(parents=True, exist_ok=True)
     # Copy everything that doesn't already exist at the destination.
     for src_path in bundled.rglob("*"):
