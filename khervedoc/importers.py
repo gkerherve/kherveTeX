@@ -1004,7 +1004,7 @@ def expand_includes(tex_source: str, base_dir: Path,
 
 
 def import_tex(tex_source: str, base_dir: Path | None = None) -> Document:
-    """Parse a LaTeX source string into a Document. Unknown commands and
+    r"""Parse a LaTeX source string into a Document. Unknown commands and
     environments are preserved as RawLatex blocks so nothing is silently
     lost from the source. With *base_dir*, files pulled in by `\input`
     and friends are inlined first (see `expand_includes`)."""

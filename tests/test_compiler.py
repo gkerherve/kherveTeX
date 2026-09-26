@@ -75,7 +75,7 @@ def _fake_tectonic(monkeypatch, tmp_path, responses):
     from khervedoc import compiler
     calls = []
 
-    def fake_run(cmd, **kw):
+    def fake_run(cmd, timeout=None, **kw):
         cached = "--only-cached" in cmd
         calls.append(cached)
         code, out, make_pdf = responses[cached]
@@ -84,7 +84,7 @@ def _fake_tectonic(monkeypatch, tmp_path, responses):
         return _FakeProc(code, out)
 
     monkeypatch.setattr(compiler, "_find_tectonic", lambda: "tectonic")
-    monkeypatch.setattr(compiler.subprocess, "run", fake_run)
+    monkeypatch.setattr(compiler, "_run_tracked", fake_run)
     return calls
 
 
@@ -113,3 +113,28 @@ def test_compile_offline_reports_missing_package(monkeypatch, tmp_path):
     })
     r = compile_tex("x", tmp_path)
     assert not r.ok and "tikz.sty" in r.error and "Offline" in r.error
+
+
+def test_cancel_running_kills_a_live_compile(tmp_path):
+    import sys, threading
+    from khervedoc import compiler
+    done = {}
+
+    def run():
+        try:
+            done["r"] = compiler._run_tracked(
+                [sys.executable, "-c", "import time; time.sleep(60)"], 90)
+        except Exception as exc:   # pragma: no cover
+            done["r"] = exc
+
+    t = threading.Thread(target=run)
+    t.start()
+    import time
+    for _ in range(100):
+        if compiler._RUNNING:
+            break
+        time.sleep(0.05)
+    compiler.cancel_running()
+    t.join(10)
+    assert not t.is_alive()
+    assert done["r"].returncode != 0

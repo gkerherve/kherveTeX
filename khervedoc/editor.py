@@ -2357,7 +2357,11 @@ class DocumentEditor(QWidget):
         ff.setBottomMargin(m.margin_bottom_cm * _PX_PER_CM * zoom)
         ff.setLeftMargin(m.margin_left_cm * _PX_PER_CM * zoom)
         ff.setRightMargin(m.margin_right_cm * _PX_PER_CM * zoom)
-        root.setFrameFormat(ff)
+        # Only write what changed: every format write counts as a document
+        # edit, and this runs after each edit, so an unconditional write
+        # re-triggered the compile forever.
+        if ff != root.frameFormat():
+            root.setFrameFormat(ff)
 
         em_px = self._body_font_pt * 96 / 72 * zoom
         spacing = max(0.5, float(m.line_spacing or 1.0))
@@ -2427,7 +2431,8 @@ class DocumentEditor(QWidget):
                     else:
                         bfmt.setTextIndent(0)
                         bfmt.setBottomMargin(0.8 * em_px)
-                QTextCursor(block).setBlockFormat(bfmt)
+                if bfmt != block.blockFormat():
+                    QTextCursor(block).setBlockFormat(bfmt)
                 if block.text().strip() or state not in (_STATE_PARAGRAPH, -1):
                     prev_state = state
                 block = block.next()

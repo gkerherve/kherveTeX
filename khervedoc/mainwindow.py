@@ -2058,14 +2058,23 @@ class MainWindow(QMainWindow):
         # Stop background threads before Qt tears down the widget tree.
         # Destroying a running QThread is undefined behaviour in Qt and
         # triggers STATUS_STACK_BUFFER_OVERRUN (0xC0000409) on Windows.
-        for worker in (self._compile_worker, self._git_worker):
+        busy = [w for w in (self._compile_worker,
+                            getattr(self, "_bundle_worker", None))
+                 if w is not None and w.isRunning()]
+        if busy:
+            # A compile can outlast any sane timeout; kill it so the
+            # thread returns instead of being destroyed mid-run (SIGABRT).
+            from . import compiler
+            compiler.cancel_running()
+        for worker in (self._compile_worker, self._git_worker,
+                       getattr(self, "_bundle_worker", None)):
             if worker is not None:
                 try:
                     worker.finished_with.disconnect()
                 except RuntimeError:
                     pass
                 if worker.isRunning():
-                    worker.wait(5000)
+                    worker.wait()
         self._compile_worker = None
         self._git_worker = None
         # Remove ourselves from the live-windows registry so the Window

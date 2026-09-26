@@ -139,6 +139,40 @@ def _is_offline_failure(log: str) -> bool:
     return bool(_NETWORK_ERROR_RE.search(log))
 
 
+# Compiler processes currently running, so the app can stop them when a
+# window closes: Qt aborts the process if a QThread is destroyed while
+# still waiting on one (compiles can run for minutes).
+_RUNNING: set[subprocess.Popen] = set()
+_cancelled = False
+
+
+def _run_tracked(cmd: list[str], timeout: float, **kw):
+    """subprocess.run() whose process `cancel_running()` can kill."""
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, **kw)
+    _RUNNING.add(proc)
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
+        raise
+    finally:
+        _RUNNING.discard(proc)
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
+def cancel_running() -> None:
+    """Kill every compiler process started by this module."""
+    global _cancelled
+    _cancelled = True
+    for proc in list(_RUNNING):
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+
 @dataclass
 class CompileResult:
     ok: bool
@@ -185,6 +219,8 @@ def download_tectonic_bundle(on_output=None) -> tuple[bool, str]:
     tectonic_path = _find_tectonic()
     if tectonic_path is None:
         return False, "tectonic is not installed"
+    global _cancelled
+    _cancelled = False
 
     import tempfile
     workdir = Path(tempfile.mkdtemp(prefix="khervedoc-bundle-"))
@@ -316,9 +352,15 @@ Hello $E=mc^2$.
                  "--outdir", str(workdir),
                  str(tex_path)],
                 **kw)
-            for line in proc.stdout:
-                all_log.append(line.rstrip())
-            proc.wait()
+            _RUNNING.add(proc)
+            try:
+                for line in proc.stdout:
+                    all_log.append(line.rstrip())
+                proc.wait()
+            finally:
+                _RUNNING.discard(proc)
+            if _cancelled:
+                break
             if proc.returncode != 0:
                 failed.append(name)
         except Exception as exc:
@@ -469,6 +511,8 @@ def compile_tex(
     so a single missing image doesn't halt the whole preview — tectonic
     still emits the PDF with a "?" placeholder where the image would go.
     """
+    global _cancelled
+    _cancelled = False
     workdir.mkdir(parents=True, exist_ok=True)
     # Copy auxiliary TeX files (.cls, .sty, .bst, .bib) from source_dir
     # into workdir so tectonic can find them — tectonic's bundle system
@@ -526,11 +570,11 @@ def compile_tex(
             cmd.append("--only-cached")
         cmd += ["-Z", "continue-on-errors", "--keep-logs", "--synctex",
                 "--outdir", str(workdir), str(tex_path)]
-        kw: dict = dict(capture_output=True, text=True, encoding="utf-8",
-                        errors="replace", timeout=120, env=env)
+        kw: dict = dict(text=True, encoding="utf-8", errors="replace",
+                        env=env)
         if sys.platform == "win32":
             kw["creationflags"] = subprocess.CREATE_NO_WINDOW
-        proc = subprocess.run(cmd, **kw)
+        proc = _run_tracked(cmd, 120, **kw)
         return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
     pdf_path = workdir / f"{basename}.pdf"
@@ -543,7 +587,7 @@ def compile_tex(
         # continue-on-errors still yields a PDF when a package is missing
         # from the cache, so a clean exit alone doesn't mean success.
         cached_ok = code == 0 and pdf_path.exists() and not missing
-        if not cached_ok:
+        if not cached_ok and not _cancelled:
             cached_log = log
             code, log = _run(only_cached=False)
             if _is_offline_failure(log):
@@ -752,11 +796,10 @@ def compile_typst(
     pdf_path = workdir / f"{basename}.pdf"
     try:
         cmd = [typst_path, "compile", str(typ_path), str(pdf_path)]
-        kw: dict = dict(capture_output=True, text=True, encoding="utf-8",
-                        errors="replace", timeout=120)
+        kw: dict = dict(text=True, encoding="utf-8", errors="replace")
         if sys.platform == "win32":
             kw["creationflags"] = subprocess.CREATE_NO_WINDOW
-        proc = subprocess.run(cmd, **kw)
+        proc = _run_tracked(cmd, 120, **kw)
     except subprocess.TimeoutExpired:
         return CompileResult(False, None, "", "typst timed out after 120s")
 
