@@ -259,6 +259,7 @@ _STATE_RAW = 102
 
 # Re-export from model so existing imports (tests, etc.) keep working.
 from .model import CHAPTER_CLASSES, class_supports_chapter  # noqa: F401
+from .references import ReferenceResolver
 
 
 # ---- char-format custom property ids ----
@@ -553,6 +554,7 @@ def _citation_format(keys_style: str) -> QTextCharFormat:
     fmt = QTextCharFormat()
     fmt.setForeground(QColor("#5b2d83")); fmt.setBackground(QColor("#f1e5ff"))
     fmt.setProperty(_P_CITATION, keys_style)
+    fmt.setToolTip("\\cite{" + keys_style.partition("|")[0] + "}")
     return fmt
 
 
@@ -560,6 +562,8 @@ def _crossref_format(label_kind: str) -> QTextCharFormat:
     fmt = QTextCharFormat()
     fmt.setForeground(QColor("#0a6")); fmt.setBackground(QColor("#e3f5ea"))
     fmt.setProperty(_P_CROSSREF, label_kind)
+    label, _, kind = label_kind.partition("|")
+    fmt.setToolTip(f"\\{kind or 'ref'}{{{label}}}")
     return fmt
 
 
@@ -940,6 +944,7 @@ class DocumentEditor(QWidget):
         self._debounce = QTimer(self)
         self._debounce.setSingleShot(True)
         self._debounce.setInterval(450)
+        self._debounce.timeout.connect(self._refresh_reference_labels)
         self._debounce.timeout.connect(self.documentChanged)
 
         self._math_refresh = QTimer(self)
@@ -954,6 +959,8 @@ class DocumentEditor(QWidget):
         # save_kdocz will bundle them into the archive on Save As .kdocz.
         self._images_dir = Path(tempfile.mkdtemp(prefix="khervedoc-imgs-"))
         self._equations_dir: Path | None = None
+        self._doc_dir: Path | None = None
+        self._resolver = ReferenceResolver(Document())
         # Full-resolution equation renders by resource URL, kept so zoom
         # changes can re-scale from the original rather than a copy.
         self._math_sources: dict[str, QImage] = {}
@@ -1028,6 +1035,7 @@ class DocumentEditor(QWidget):
                         shutil.copy2(f, dest)
 
         self._equations_dir = eq_dir
+        self._doc_dir = doc_dir
         self._images_dir = fig_dir
         self._edit.set_images_dir(fig_dir)
 
@@ -1147,6 +1155,7 @@ class DocumentEditor(QWidget):
                 f = QFont(self._visual_font_family)
                 f.setPointSize(self._body_font_pt)
                 self._edit.setFont(f)
+            self._resolver = ReferenceResolver(doc, self._doc_dir)
             self._edit.clear()
             cursor = self._edit.textCursor()
             cursor.movePosition(QTextCursor.Start)
@@ -1715,11 +1724,11 @@ class DocumentEditor(QWidget):
             cursor.insertText(text, _footnote_format(text))
         elif isinstance(node, Citation):
             payload = f"{','.join(node.keys)}|{node.style}"
-            display = f"[{','.join(node.keys)}]"
+            display = self._resolver.cite_text(node.keys, node.style)
             cursor.insertText(display, _citation_format(payload))
         elif isinstance(node, CrossRef):
             payload = f"{node.label}|{node.kind}"
-            display = f"<{node.kind}:{node.label}>"
+            display = self._resolver.ref_text(node.label, node.kind)
             cursor.insertText(display, _crossref_format(payload))
         elif isinstance(node, InlineRaw):
             # A \\ break should LOOK like a break (titles imported with
@@ -3097,6 +3106,52 @@ class DocumentEditor(QWidget):
         block = self._edit.textCursor().block()
         if block.userState() == _STATE_MATH_BLOCK:
             self._math_refresh.start()
+
+    def _refresh_reference_labels(self) -> None:
+        """Re-resolve citation numbers and \\ref targets after an edit —
+        adding a citation or a section renumbers the ones after it."""
+        if self._building:
+            return
+        self._resolver = ReferenceResolver(self.get_document(), self._doc_dir)
+        doc = self._edit.document()
+        updates = []
+        block = doc.begin()
+        while block.isValid():
+            it = block.begin()
+            while not it.atEnd():
+                frag = it.fragment()
+                if frag.isValid():
+                    fmt = frag.charFormat()
+                    cite = fmt.property(_P_CITATION)
+                    ref = fmt.property(_P_CROSSREF)
+                    want = None
+                    if cite:
+                        keys, _, style = cite.partition("|")
+                        want = self._resolver.cite_text(
+                            [k for k in keys.split(",") if k], style or "cite")
+                    elif ref:
+                        label, _, kind = ref.partition("|")
+                        want = self._resolver.ref_text(label, kind or "ref")
+                    if want is not None and want != frag.text():
+                        updates.append((frag.position(), frag.length(),
+                                        want, fmt))
+                it += 1
+            block = block.next()
+        if not updates:
+            return
+        self._building = True
+        edit = QTextCursor(doc)
+        edit.joinPreviousEditBlock()
+        try:
+            # Back to front so earlier positions stay valid.
+            for pos, length, text, fmt in reversed(updates):
+                c = QTextCursor(doc)
+                c.setPosition(pos)
+                c.setPosition(pos + length, QTextCursor.KeepAnchor)
+                c.insertText(text, fmt)
+        finally:
+            edit.endEditBlock()
+            self._building = False
 
     def _resize_math_images(self) -> None:
         """Re-fit every equation image after a zoom or body-size change."""

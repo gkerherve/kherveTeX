@@ -82,3 +82,21 @@ def test_default_visual_font_tracks_latex_font(qapp):
         assert got in {"Times New Roman", "Times"}
     else:
         assert got == "Georgia"
+
+
+def test_citations_display_resolved_but_roundtrip_keys(qapp):
+    from khervedoc.model import Citation, CrossRef
+    ed = DocumentEditor()
+    doc = Document(children=[
+        Section(level=1, label="sec:intro", children=[Text("Intro")]),
+        Paragraph(children=[Text("See "), Citation(keys=["k1"]),
+                            Text(" and "), CrossRef(label="sec:intro")]),
+    ])
+    ed.set_document(doc)
+    text = ed._edit.toPlainText()
+    assert "[1]" in text and "k1" not in text
+    para = ed.get_document().children[1]
+    assert any(isinstance(c, Citation) and c.keys == ["k1"]
+               for c in para.children)
+    assert any(isinstance(c, CrossRef) and c.label == "sec:intro"
+               for c in para.children)
