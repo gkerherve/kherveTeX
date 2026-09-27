@@ -86,7 +86,12 @@ def test_figure_is_shown_at_its_latex_width_and_resizes_with_mouse(tmp_path):
     img.save(str(path))
     ed = DocumentEditor()
     ed.resize(1000, 800)
+    from khervedoc.model import Paragraph, Text
+    # Text before the figure: a figure lives in a table, and positions
+    # computed from the cell's own layout put the handle at the top of
+    # the page instead of on the image.
     ed.set_document(Document(children=[
+        Paragraph(children=[Text("Some text above. " * 30)]),
         Figure(path=str(path), caption="c", width="0.5\\textwidth")]))
     ed.show()
     QApplication.processEvents()
@@ -96,6 +101,9 @@ def test_figure_is_shown_at_its_latex_width_and_resizes_with_mouse(tmp_path):
     pos = table.cellAt(0, 0).firstCursorPosition().position()
     rect = edit._image_view_rect(pos, _image_fmt(edit, pos))
     assert abs(rect.width() - 0.5 * text_w) < 2        # 0.5\textwidth
+    under = edit.cursorForPosition(rect.center().toPoint()).position()
+    assert under in (pos, pos + 1)                     # rect is on the image
+    assert rect.top() > 60
     assert abs(rect.height() - rect.width() / 2) < 2   # aspect kept
 
     def send(kind, at, buttons):

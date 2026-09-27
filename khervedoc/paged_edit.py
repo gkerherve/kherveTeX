@@ -491,21 +491,23 @@ class PagedTextEdit(QTextEdit):
         return None
 
     def _image_view_rect(self, pos: int, fmt):
-        block = self.document().findBlock(pos)
-        lay = block.layout()
-        if lay is None:
-            return None
-        rel = pos - block.position()
-        line = lay.lineForTextPosition(rel)
-        if not line.isValid():
-            return None
-        x = line.cursorToX(rel)
-        x = x[0] if isinstance(x, tuple) else x
+        """Where an inline image is drawn, in viewport coordinates.
+
+        Uses Qt's cursor rectangle, which accounts for table cells and
+        frames: a block's own layout position is relative to its cell,
+        so figures (which live in tables) were framed at the wrong place.
+        An image sits on the line's top, so its box starts there."""
+        c = QTextCursor(self.document())
+        c.setPosition(pos)
+        cr = QTextEdit.cursorRect(self, c)
         w, h = fmt.width(), fmt.height()
-        origin = lay.position()
-        top = origin.y() + line.y() + line.ascent() - h
-        tl = self.doc_to_view(origin.x() + x, top)
-        return QRectF(tl.x(), tl.y(), w, h)
+        if self._columns > 1:
+            # cursorRect is in single-flow coordinates; re-map into columns.
+            doc_pt = QPointF(cr.left() + self.horizontalScrollBar().value(),
+                             cr.top() + self.verticalScrollBar().value())
+            tl = self.doc_to_view(doc_pt.x(), doc_pt.y())
+            return QRectF(tl.x(), tl.y(), w, h)
+        return QRectF(cr.left(), cr.top(), w, h)
 
     def _handle_rect(self, rect: QRectF) -> QRectF:
         s = self._HANDLE
