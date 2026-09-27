@@ -29,6 +29,24 @@ def _obj(props: dict, required: list[str] | None = None) -> dict:
             "required": required or [], "additionalProperties": False}
 
 
+_SHAPES_DOC = (
+    "Array of shape objects, all lengths in mm. Common optional keys: "
+    "stroke (#rrggbb or null for none, default #1a1a1a), width (stroke "
+    "mm, default 0.5), dash (solid|dash|dot|dashdot), fill (#rrggbb or "
+    "null, default null), rotation (deg), opacity (0-1). "
+    "rect / rounded_rect / ellipse: x, y (top-left), w, h, radius "
+    "(rounded_rect, default 2.5), label (text centred inside), "
+    "font_size (pt, default 11), text_color. circle: x, y (centre), r. "
+    "line / arrow / double_arrow: points [[x1,y1],[x2,y2]]; arrow head "
+    "filled|open|stealth. polygon (closed, fillable) / polyline (open "
+    "path): points [[x,y],...]. text: text, x, y, anchor "
+    "(center default | left | topleft), font_size, color, bold, italic. "
+    "symbol: symbol \"library/name\" from list_drawing_symbols, x, y "
+    "(centre), optional w / h (keeps aspect if only one), label "
+    "(replaces a flowchart node's caption, else placed below). Later "
+    "shapes draw on top. A readable figure is ~60-160 mm wide; text of "
+    "9-12 pt; leave ~10 mm between boxes for arrows.")
+
 TOOLS: list[dict] = [
     # ── reading ──────────────────────────────────────────────────
     {"name": "get_document_info",
@@ -139,6 +157,73 @@ TOOLS: list[dict] = [
      "description": "Start a blank document. Refuses to discard unsaved "
                     "changes unless discard_unsaved_changes is true.",
      "input_schema": _obj({"discard_unsaved_changes": _BOOL})},
+    # ── equations, chemistry and drawings ───────────────────────
+    {"name": "insert_equation",
+     "description": "Insert a LaTeX math equation (the math only, no $ "
+                    "or \\[ \\]). display=true (default) makes a "
+                    "display equation block (numbered/label optional); "
+                    "display=false puts inline math in a new paragraph. "
+                    "The result says whether the editor typesets it "
+                    "natively or shows unknown commands as raw source.",
+     "input_schema": _obj({"latex": _STR, "display": _BOOL,
+                           "numbered": _BOOL, "label": _STR,
+                           "after": _INT}, ["latex"])},
+    {"name": "insert_chemistry",
+     "description": "Insert a chemical formula or reaction in mhchem "
+                    "syntax, e.g. \"2H2 + O2 -> 2H2O\" or \"SO4^2-\" — "
+                    "just the body, it is wrapped in \\ce{...} and the "
+                    "mhchem package is added. display=false (default) is "
+                    "inline in a new paragraph; display=true is a "
+                    "numbered equation block.",
+     "input_schema": _obj({"formula": _STR, "display": _BOOL,
+                           "numbered": _BOOL, "after": _INT},
+                          ["formula"])},
+    {"name": "list_drawing_symbols",
+     "description": "Symbol libraries (flowchart, electrical, optics, "
+                    "maths, labware, arrows) and the symbol names usable "
+                    "as {\"type\": \"symbol\", \"symbol\": "
+                    "\"library/name\"} in drawings, with default sizes "
+                    "in mm.",
+     "input_schema": _obj({"library": _STR})},
+    {"name": "insert_drawing",
+     "description": "Draw a vector figure (diagram, flowchart, setup "
+                    "sketch) from JSON shapes and insert it as an "
+                    "editable drawing figure the user can re-open. "
+                    "Units are MILLIMETRES, origin top-left, y down; the "
+                    "drawing is cropped to its content. See the "
+                    "`shapes` schema.",
+     "input_schema": _obj({
+         "shapes": {"type": "array", "items": {"type": "object"},
+                    "description": _SHAPES_DOC},
+         "caption": _STR, "label": _STR,
+         "width": {"type": "string",
+                   "description": "LaTeX width, default 0.7\\textwidth"},
+         "after": _INT}, ["shapes"])},
+    {"name": "get_drawing",
+     "description": "The shapes of the drawing figure at block `index`, "
+                    "in the insert_drawing schema (mm). Items the schema "
+                    "cannot express come back as type \"other\" with "
+                    "their bounding box; include_raw adds the full "
+                    "canvas item dicts.",
+     "input_schema": _obj({"index": _INT, "include_raw": _BOOL},
+                          ["index"])},
+    {"name": "update_drawing",
+     "description": "Rewrite the drawing figure at block `index`: "
+                    "mode \"replace\" (default) redraws it from `shapes`; "
+                    "\"append\" adds `shapes` to what is there (use "
+                    "get_drawing coordinates). Caption and label are "
+                    "kept.",
+     "input_schema": _obj({"index": _INT,
+                           "shapes": {"type": "array",
+                                      "items": {"type": "object"}},
+                           "mode": {"type": "string",
+                                    "enum": ["replace", "append"]}},
+                          ["index", "shapes"])},
+    {"name": "open_in_khervepaint",
+     "description": "Open the drawing figure at block `index` in the "
+                    "KhervePaint app for full editing. Its saves update "
+                    "the figure automatically.",
+     "input_schema": _obj({"index": _INT}, ["index"])},
     {"name": "export_pdf",
      "description": "Compile and write the PDF to `path`. Needs Full "
                     "access.",
@@ -148,12 +233,13 @@ TOOLS: list[dict] = [
 READ_ONLY_TOOLS = frozenset({
     "get_document_info", "get_outline", "read_blocks", "get_latex",
     "search_text", "list_references", "get_compile_log", "render_page",
+    "list_drawing_symbols", "get_drawing",
 })
 #: Tools that manage files, the compile or the undo stack themselves;
 #: wrapping them in an edit block would record an empty undo step.
 NO_UNDO_BLOCK_TOOLS = READ_ONLY_TOOLS | {
     "compile_document", "save_document", "open_document",
-    "new_document", "export_pdf", "set_metadata",
+    "new_document", "export_pdf", "set_metadata", "open_in_khervepaint",
 }
 #: Tools that touch a client-chosen filesystem path.
 PATH_TOOLS = frozenset({"open_document", "export_pdf"})
@@ -218,9 +304,23 @@ class ToolExecutor:
 
     def _set_body(self, blocks: list) -> None:
         """Replace the body in one undo step, keeping Title / Author."""
-        from .model import Author, Title
-        self._editor.replace_body(
-            [b for b in blocks if not isinstance(b, (Title, Author))])
+        from .model import Author, Figure, Paragraph, Table, Title
+        body = [b for b in blocks if not isinstance(b, (Title, Author))]
+
+        def empty(b):
+            return isinstance(b, Paragraph) and not any(
+                getattr(c, "text", "x").strip() for c in b.children)
+
+        def framed(b):
+            return isinstance(b, (Figure, Table))
+        # A figure/table is a frame in the editor, and Qt always puts a
+        # block on each side of a frame; those read back as empty
+        # paragraphs, so without this every call would add two more.
+        body = [b for i, b in enumerate(body)
+                if not (empty(b) and (
+                    (i > 0 and framed(body[i - 1]))
+                    or (i + 1 < len(body) and framed(body[i + 1]))))]
+        self._editor.replace_body(body)
 
     def _unsaved(self) -> bool:
         return self._editor.text_edit.document().isModified()
@@ -500,6 +600,204 @@ class ToolExecutor:
         self._refuse_discard(args)
         self._mw._new()
         return {"ok": True}
+
+    # equations, chemistry, drawings -------------------------------
+
+    def _insert_at(self, new: list, after) -> int:
+        blocks = self._blocks()
+        at = len(blocks) if after is None else int(after) + 1
+        if not (0 <= at <= len(blocks)):
+            raise ToolError(f"`after` must be -1..{len(blocks) - 1}.")
+        self._set_body(blocks[:at] + new + blocks[at:])
+        # The editor may pad figures with empty paragraphs, so the new
+        # block's index is found rather than assumed.
+        now = self._blocks()
+        for i in range(at, len(now)):
+            if type(now[i]) is type(new[0]) and now[i] == new[0]:
+                return i
+        for i in range(at, len(now)):
+            if type(now[i]) is type(new[0]):
+                return i
+        return at
+
+    @staticmethod
+    def _math_node(latex: str, display: bool, numbered: bool,
+                   label):
+        from .model import MathBlock, MathInline, Paragraph
+        if display:
+            return MathBlock(latex=latex, numbered=numbered,
+                             label=label or None)
+        return Paragraph(children=[MathInline(latex=latex)])
+
+    @staticmethod
+    def _raw_math(latex: str) -> list[str]:
+        from .mathbox import Raw, parse_latex
+        found = []
+
+        def walk(node):
+            if isinstance(node, Raw):
+                found.append(node.latex)
+            for child in getattr(node, "children", None) or []:
+                walk(child)
+            for slot in node.slots() if hasattr(node, "slots") else []:
+                walk(slot)
+        walk(parse_latex(latex))
+        return found
+
+    def _t_insert_equation(self, args: dict) -> dict:
+        latex = (args.get("latex") or "").strip()
+        for a, b in (("$$", "$$"), ("\\[", "\\]"), ("$", "$")):
+            if len(latex) > len(a) + len(b) and latex.startswith(a) \
+                    and latex.endswith(b):
+                latex = latex[len(a):-len(b)].strip()
+                break
+        if not latex:
+            raise ToolError("`latex` is empty.")
+        display = args.get("display", True) is not False
+        if args.get("label") and not display:
+            raise ToolError("Only a display equation can carry a label.")
+        numbered = bool(args.get("numbered")) or bool(args.get("label"))
+        at = self._insert_at([self._math_node(
+            latex, display, numbered, args.get("label"))], args.get("after"))
+        raw = self._raw_math(latex)
+        res = {"at_index": at, "display": display, "numbered": numbered,
+               "latex": latex, "typesets_natively": not raw,
+               "total_blocks": len(self._blocks())}
+        if raw:
+            res["not_typeset_in_editor"] = raw[:10]
+            res["note"] = ("The editor shows these parts as source; the "
+                           "compiled PDF is unaffected if the LaTeX is "
+                           "valid — compile_document to check.")
+        return res
+
+    def _t_insert_chemistry(self, args: dict) -> dict:
+        from .chemistry import wrap_ce
+        latex = wrap_ce(args.get("formula") or "")
+        if not latex:
+            raise ToolError("`formula` is empty.")
+        meta = self._editor.meta()
+        added = "mhchem" not in meta.packages
+        if added:
+            meta.packages.append("mhchem")
+            self._editor.set_meta(meta)
+        display = bool(args.get("display", False))
+        numbered = display and args.get("numbered", True) is not False
+        at = self._insert_at([self._math_node(latex, display, numbered,
+                                              None)], args.get("after"))
+        return {"at_index": at, "latex": latex, "display": display,
+                "mhchem_package_added": added,
+                "total_blocks": len(self._blocks())}
+
+    def _t_list_drawing_symbols(self, args: dict) -> dict:
+        from .paint.authoring import LIBRARIES, list_symbols
+        libs = list_symbols()
+        want = args.get("library")
+        if want:
+            if want not in libs:
+                raise ToolError(f"Unknown library; use one of "
+                                f"{', '.join(LIBRARIES)}.")
+            libs = {want: libs[want]}
+        return {"libraries": libs,
+                "usage": "{\"type\": \"symbol\", \"symbol\": "
+                         "\"optics/laser\", \"x\": 30, \"y\": 20}"}
+
+    def _drawing_at(self, index) -> tuple[int, object, Path]:
+        from .model import Figure
+        blocks = self._blocks()
+        if index is None:
+            raise ToolError("`index` is required.")
+        i = int(index)
+        if not (0 <= i < len(blocks)):
+            raise ToolError(f"Block {i} is outside 0..{len(blocks) - 1}.")
+        fig = blocks[i]
+        if not isinstance(fig, Figure):
+            raise ToolError(f"Block {i} is a {type(fig).__name__}, not a "
+                            f"figure. Call get_outline.")
+        png = self._editor._resolve_image_path(fig.path)
+        if png is None or not png.with_suffix(".svg").exists():
+            raise ToolError(f"Figure {i} is not an editable drawing (no "
+                            f".svg beside its image).")
+        return i, fig, png
+
+    @staticmethod
+    def _shapes_into(scene, shapes) -> int:
+        from .paint.authoring import ShapeError, add_shapes
+        try:
+            return add_shapes(scene, shapes)
+        except ShapeError as exc:
+            raise ToolError(str(exc)) from None
+
+    @staticmethod
+    def _save_scene(scene, png: Path) -> dict:
+        from .paint import export
+        if not export.save_drawing(scene, png):
+            raise ToolError("The drawing is empty.")
+        return {"png": str(png), "svg": str(png.with_suffix(".svg")),
+                "pdf": str(png.with_suffix(".pdf"))}
+
+    def _t_insert_drawing(self, args: dict) -> dict:
+        from .drawing_dialog import next_drawing_path
+        from .model import Figure
+        from .paint.authoring import new_scene
+        from .serializer import escape_text
+        scene = new_scene()
+        n = self._shapes_into(scene, args.get("shapes"))
+        images = Path(self._editor._images_dir)
+        images.mkdir(parents=True, exist_ok=True)
+        png = next_drawing_path(images)
+        files = self._save_scene(scene, png)
+        fig = Figure(path=str(png),
+                     caption=escape_text(args.get("caption") or ""),
+                     label=args.get("label") or None,
+                     width=args.get("width") or "0.7\\textwidth",
+                     source="drawing")
+        at = self._insert_at([fig], args.get("after"))
+        return {"at_index": at, "items": n, "files": files,
+                "total_blocks": len(self._blocks())}
+
+    def _t_get_drawing(self, args: dict) -> dict:
+        from .paint import document, export
+        from .paint.authoring import new_scene, scene_to_shapes
+        i, fig, png = self._drawing_at(args.get("index"))
+        scene = new_scene()
+        export.load_svg(scene, png.with_suffix(".svg"))
+        res = {"index": i, "caption": fig.caption, "label": fig.label,
+               "width": fig.width, "files": {
+                   "png": str(png), "svg": str(png.with_suffix(".svg"))},
+               "shapes": scene_to_shapes(scene)}
+        if args.get("include_raw"):
+            raw = []
+            for it in scene.vector_items():
+                try:
+                    raw.append(document.item_to_dict(it))
+                except ValueError:
+                    raw.append({"type": type(it).__name__})
+            res["raw_items"] = raw
+        return res
+
+    def _t_update_drawing(self, args: dict) -> dict:
+        from .paint import export
+        from .paint.authoring import new_scene
+        i, _fig, png = self._drawing_at(args.get("index"))
+        mode = args.get("mode") or "replace"
+        if mode not in ("replace", "append"):
+            raise ToolError("mode must be replace or append.")
+        scene = new_scene()
+        if mode == "append":
+            export.load_svg(scene, png.with_suffix(".svg"))
+        n = self._shapes_into(scene, args.get("shapes"))
+        files = self._save_scene(scene, png)
+        self._editor.refresh_figure_image(png)
+        return {"index": i, "mode": mode, "items_added": n,
+                "items_total": len(scene.vector_items()), "files": files}
+
+    def _t_open_in_khervepaint(self, args: dict) -> dict:
+        i, _fig, png = self._drawing_at(args.get("index"))
+        ok, msg = self._editor.edit_in_khervepaint(png, interactive=False)
+        if not ok:
+            raise ToolError(msg)
+        return {"index": i, "opened": str(png.with_suffix(".svg")),
+                "message": msg}
 
     def _t_export_pdf(self, args: dict) -> dict:
         target = Path(args.get("path", "")).expanduser()

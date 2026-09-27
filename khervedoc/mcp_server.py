@@ -116,6 +116,17 @@ labels it lists; do not invent bibliography entries.
 - After a substantive edit, compile_document and check the result; \
 render_page shows a page image so you can verify equations, tables \
 and layout the way the reader will see them.
+- Equations: insert_equation takes the math alone (no $ or \\[ \\]); \
+its result says whether the editor typesets it natively. Chemistry: \
+insert_chemistry takes mhchem syntax (2H2 + O2 -> 2H2O) and adds the \
+mhchem package itself — do not hand-write \\ce in insert_latex.
+- Drawings: for diagrams, flowcharts and apparatus sketches use \
+insert_drawing with JSON shapes in millimetres (boxes with labels, \
+arrows, text, and library symbols from list_drawing_symbols) — not \
+TikZ. The result is an editable figure. Check it with get_drawing or a \
+render_page after compiling; fix it with update_drawing. \
+open_in_khervepaint hands a drawing to the full KhervePaint app when \
+the user wants to edit it by hand.
 - Every tool call is one step on the editor's undo stack, so the user \
 can Ctrl+Z it — but their unsaved work is real. open_document and \
 new_document refuse to discard it unless you pass \

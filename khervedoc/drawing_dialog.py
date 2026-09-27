@@ -215,6 +215,18 @@ def drawing_source_for(png_path: Path) -> Path | None:
     return None
 
 
+def next_drawing_path(images_dir: Path) -> Path:
+    """First free ``drawing_NNN.png`` in *images_dir* (no sibling of any
+    drawing extension may exist either)."""
+    i = 1
+    while True:
+        stem = Path(images_dir) / f"drawing_{i:03d}"
+        if not any(stem.with_suffix(e).exists()
+                   for e in (".png", ".svg", ".pdf", ".json")):
+            return stem.with_suffix(".png")
+        i += 1
+
+
 # ---------------------------------------------------------------- widgets
 
 class _ColorButton(QToolButton):
@@ -300,6 +312,14 @@ class DrawingDialog(QDialog):
                                    | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self._accept_and_save)
         buttons.rejected.connect(self.reject)
+        #: Set when the user closed the dialog via "Open in KhervePaint";
+        #: the editor then launches it on the saved drawing.
+        self.handoff_to_khervepaint = False
+        kp = buttons.addButton("Open in KhervePaint…",
+                               QDialogButtonBox.ActionRole)
+        kp.setToolTip("Save this drawing and continue editing it in the "
+                      "full KhervePaint app. Its saves update the figure.")
+        kp.clicked.connect(self._open_in_khervepaint)
         for b in buttons.buttons():
             b.setAutoDefault(False)
             b.setDefault(False)
@@ -1336,15 +1356,24 @@ class DrawingDialog(QDialog):
     def _target_path(self) -> Path:
         if self._existing_path is not None:
             return self._existing_path.with_suffix(".png")
-        i = 1
-        while True:
-            stem = self._images_dir / f"drawing_{i:03d}"
-            if not any(stem.with_suffix(e).exists()
-                       for e in (".png", ".svg", ".pdf", ".json")):
-                return stem.with_suffix(".png")
-            i += 1
+        return next_drawing_path(self._images_dir)
 
     def _accept_and_save(self) -> None:
+        if self._save():
+            self.accept()
+
+    def _open_in_khervepaint(self) -> None:
+        """Save what is on the canvas, then hand it to KhervePaint; the
+        editor watches the SVG and picks up KhervePaint's saves."""
+        if not self.scene.vector_items() and self._existing_path is None:
+            self._status.setText("Draw something first: KhervePaint opens "
+                                 "the saved drawing.")
+            return
+        if self._save():
+            self.handoff_to_khervepaint = True
+            self.accept()
+
+    def _save(self) -> bool:
         focus = self.scene.focusItem()
         if focus is not None:
             focus.clearFocus()            # commit an in-progress text edit
@@ -1354,10 +1383,10 @@ class DrawingDialog(QDialog):
             ok = export.save_drawing(self.scene, target)
         except OSError as exc:
             self._status.setText(f"Could not save: {exc}")
-            return
+            return False
         if not ok:
             self.reject()
-            return
+            return False
         self._saved_path = target
         self.drawingSaved.emit(str(target))
-        self.accept()
+        return True

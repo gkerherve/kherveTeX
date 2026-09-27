@@ -117,6 +117,53 @@ def _contains_raw(node, _seen=None) -> bool:
     return False
 
 
+_CE_ARROWS = {"<=>": r"\rightleftharpoons", "<->": r"\leftrightarrow",
+              "->": r"\rightarrow", "<-": r"\leftarrow",
+              "=": "=", "+": "+"}
+
+
+def _ce_species(tok: str) -> str:
+    """One mhchem species ("2H2O", "SO4^2-", "Na+", "CuSO4.5H2O", "H2O(l)")
+    as upright math: element symbols roman, counts subscripted, charge up,
+    hydrate dots centred."""
+    if "." in tok or "*" in tok:
+        return r"\cdot ".join(_ce_species(p) for p in _re.split(r"[.*]", tok))
+    m = _re.match(r"^(\d*)(.*?)(\((?:s|l|g|aq)\))?$", tok)
+    coeff, body, state = m.group(1), m.group(2), m.group(3) or ""
+    charge = ""
+    cm = _re.search(r"\^\{?([0-9]*[+-])\}?$", body) \
+        or _re.search(r"(?<=[A-Za-z0-9)\]])([0-9]*[+-])$", body)
+    if cm and body[:cm.start()]:
+        charge, body = cm.group(1), body[:cm.start()]
+    out = []
+    for part in _re.findall(r"[A-Z][a-z]?|\d+|[a-z]+|.", body):
+        if part.isdigit():
+            out.append(f"_{{{part}}}")
+        elif part.isalpha():
+            out.append(rf"\mathrm{{{part}}}")
+        else:
+            out.append(part)
+    res = "".join(out)
+    if charge:
+        res += f"^{{{charge}}}"
+    if state:
+        res += rf"\,\mathrm{{{state}}}"
+    return rf"{coeff}\,{res}" if coeff else res
+
+
+def _ce_to_math(latex: str) -> str:
+    """Rewrite \\ce{...} (mhchem) into plain math the typesetter draws,
+    covering ordinary formulas and reactions; the LaTeX output still
+    uses mhchem. Anything unusual is left as it was."""
+    def conv(m):
+        body = m.group(1).strip()
+        parts = []
+        for tok in body.split():
+            parts.append(_CE_ARROWS.get(tok) or _ce_species(tok))
+        return " ".join(parts)
+    return _re.sub(r"\\ce\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}", conv, latex)
+
+
 def _render_math_typeset(latex: str, png_path: Path, display: bool) -> bool:
     """Typeset *latex* with the equation editor's own engine (Latin
     Modern Math), so an inserted equation looks exactly as it did in the
@@ -126,6 +173,8 @@ def _render_math_typeset(latex: str, png_path: Path, display: bool) -> bool:
     try:
         from . import mathbox as mb, mathlayout as ml
         src = _re.sub(r"\\(label\{[^}]*\}|nonumber|notag)", "", latex.strip())
+        if "\\ce{" in src:
+            src = _ce_to_math(src)
         row = mb.parse_latex(src)
         if _contains_raw(row):
             return False
@@ -1499,6 +1548,11 @@ class DocumentEditor(QWidget):
             else:
                 state = block.level
             cursor.block().setUserState(state)
+            # Headings are always flush left; without this a heading that
+            # lands in the first block keeps a removed title's centring.
+            hfmt = cursor.blockFormat()
+            hfmt.setAlignment(Qt.AlignLeft)
+            cursor.setBlockFormat(hfmt)
             cfmt = self._heading_fmt(block.level)
             for inline in block.children:
                 self._insert_inline(cursor, inline, base_format=cfmt)
@@ -3060,6 +3114,67 @@ class DocumentEditor(QWidget):
                      source="drawing")
         self._insert_figure_widget(c, fig)
         self._on_text_changed()
+        if dlg.handoff_to_khervepaint:
+            self.edit_in_khervepaint(path)
+
+    # ----- KhervePaint hand-off -----------------------------------------
+
+    def khervepaint_link(self):
+        if getattr(self, "_kp_link", None) is None:
+            from .khervepaint_link import KhervePaintLink
+            self._kp_link = KhervePaintLink(self)
+            self._kp_link.drawingUpdated.connect(self.refresh_figure_image)
+        return self._kp_link
+
+    def edit_in_khervepaint(self, png_path, interactive: bool = True
+                            ) -> tuple[bool, str]:
+        """Open a drawing figure in KhervePaint; its saves flow back into
+        the figure. Interactively, a missing KhervePaint offers to locate
+        it."""
+        from . import khervepaint_link as kpl
+        ok, msg = self.khervepaint_link().open(png_path)
+        if ok or not interactive:
+            return ok, msg
+        if msg != kpl.NOT_FOUND_MESSAGE:
+            QMessageBox.warning(self, "KhervePaint", msg)
+            return ok, msg
+        box = QMessageBox(QMessageBox.Information, "KhervePaint", msg,
+                          QMessageBox.Cancel, self)
+        locate = box.addButton("Locate KhervePaint…",
+                               QMessageBox.AcceptRole)
+        box.exec()
+        if box.clickedButton() is not locate:
+            return ok, msg
+        from PySide6.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Locate KhervePaint", "",
+            "KhervePaint (KhervePaint* *.app *.exe *.py);;All files (*)")
+        if not path:
+            return ok, msg
+        if not kpl.set_custom_path(path):
+            QMessageBox.warning(self, "KhervePaint",
+                                f"{path} cannot be run as KhervePaint.")
+            return ok, msg
+        return self.khervepaint_link().open(png_path)
+
+    def _figure_tables(self):
+        for frame in self._edit.document().rootFrame().childFrames():
+            if isinstance(frame, QTextTable) and frame.format().property(
+                    _P_FIGURE_PATH) is not None:
+                yield frame
+
+    def refresh_figure_image(self, img_path) -> int:
+        """Redraw every figure showing *img_path* after the file changed on
+        disk. Returns how many figures were refreshed."""
+        target = Path(img_path).resolve()
+        n = 0
+        for qtable in list(self._figure_tables()):
+            resolved = self._resolve_image_path(
+                qtable.format().property(_P_FIGURE_PATH) or "")
+            if resolved is not None and resolved.resolve() == target:
+                self._refresh_figure_image(qtable, resolved)
+                n += 1
+        return n
 
     # ----- double-click-to-re-edit drawings ---------------------------
 
@@ -3227,6 +3342,8 @@ class DocumentEditor(QWidget):
         tfmt.setProperty(_P_FIGURE_SOURCE, "drawing")
         qtable.setFormat(tfmt)
         self._refresh_figure_image(qtable, resolved)
+        if dlg.handoff_to_khervepaint:
+            self.edit_in_khervepaint(resolved)
 
     def _refresh_figure_image(self, qtable: QTextTable,
                               img_path: Path) -> None:
@@ -3242,17 +3359,16 @@ class DocumentEditor(QWidget):
         cursor.setBlockFormat(bf)
         img = QImage(str(img_path))
         if not img.isNull():
-            max_w, max_h = 400, 300
-            if img.width() > max_w or img.height() > max_h:
-                img = img.scaled(max_w, max_h, Qt.KeepAspectRatio,
-                                 Qt.SmoothTransformation)
+            w, h = self._figure_display_size(
+                qtable.format().property(_P_FIGURE_WIDTH)
+                or "0.8\\textwidth", img)
             # Cache-buster so Qt doesn't show the stale version.
             url = QUrl(f"figure:{img_path}?v={time.time()}")
             self._edit.document().addResource(2, url, img)
             img_fmt = QTextImageFormat()
             img_fmt.setName(url.toString())
-            img_fmt.setWidth(img.width())
-            img_fmt.setHeight(img.height())
+            img_fmt.setWidth(w)
+            img_fmt.setHeight(h)
             cursor.insertImage(img_fmt)
         cursor.endEditBlock()
         self._on_text_changed()
@@ -3287,6 +3403,21 @@ class DocumentEditor(QWidget):
         word = word_cursor.selectedText().strip()
         if word and self._spell_highlighter.is_misspelled(word):
             self._prepend_spell_suggestions(menu, word_cursor, word)
+        fig_table = self._edit.cursorForPosition(pos).currentTable()
+        if fig_table is not None and fig_table.format().property(
+                _P_FIGURE_PATH) is not None:
+            from .drawing_dialog import drawing_source_for
+            resolved = self._resolve_image_path(
+                fig_table.format().property(_P_FIGURE_PATH) or "")
+            if resolved is not None and drawing_source_for(resolved) \
+                    and resolved.with_suffix(".svg").exists():
+                menu.addSeparator()
+                menu.addAction(
+                    "Edit drawing…",
+                    lambda t=fig_table: self._edit_existing_figure(t))
+                menu.addAction(
+                    "Edit in KhervePaint",
+                    lambda p=resolved: self.edit_in_khervepaint(p))
         qtable = self._current_table()
         if qtable is not None:
             menu.addSeparator()
