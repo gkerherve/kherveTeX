@@ -236,3 +236,51 @@ def test_page_ranges_follow_new_order(window, tmp_path, monkeypatch):
     window._project_sidebar._move_down()
     assert [c.last_known_pages for c in proj.chapters] == [4, 10, 6]
     assert [c.start_page for c in proj.chapters] == [1, 5, 15]
+
+
+# ---------------------------------------------------------- add existing
+
+def test_add_existing_files_from_elsewhere(window, tmp_path, monkeypatch):
+    from khervedoc import kdocz
+    from khervedoc.model import from_json, to_json
+    proj = _three_docs(window, tmp_path, monkeypatch)
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    a = other / "appendix.kdoc.json"
+    a.write_text(to_json(Document(children=[
+        Paragraph(children=[Text("appendix words")])])), encoding="utf-8")
+    b = other / "notes.ktexz"
+    kdocz.save_kdocz(Document(children=[
+        Paragraph(children=[Text("bundle words")])]), b)
+
+    window._add_existing_documents([str(a), str(b)])
+    assert [ch.label for ch in proj.chapters][-2:] == ["appendix", "notes"]
+    texts = [(tmp_path / ch.path).read_text() for ch in proj.chapters[-2:]]
+    assert "appendix words" in texts[0] and "bundle words" in texts[1]
+    # Adding the same file again does not duplicate it.
+    added = tmp_path / proj.chapters[-2].path
+    window._add_existing_documents([str(added)])
+    assert len(proj.chapters) == 5
+    assert from_json(added.read_text()).children
+
+
+def test_dropping_files_on_the_list_adds_them(window, tmp_path, monkeypatch,
+                                              qapp):
+    from PySide6.QtCore import QMimeData, QPoint, QUrl, Qt
+    from PySide6.QtGui import QDropEvent
+    from khervedoc.model import to_json
+    got = []
+    # Only the signal is under test here, not the window's handler.
+    window._project_sidebar.addExistingRequested.disconnect()
+    window._project_sidebar.addExistingRequested.connect(got.append)
+    f = tmp_path / "x.kdoc.json"
+    f.write_text(to_json(Document(children=[])), encoding="utf-8")
+    mime = QMimeData()
+    mime.setUrls([QUrl.fromLocalFile(str(f)),
+                  QUrl.fromLocalFile(str(tmp_path / "pic.png"))])
+    ev = QDropEvent(QPoint(5, 5), Qt.CopyAction, mime, Qt.LeftButton,
+                    Qt.NoModifier)
+    vp = window._project_sidebar._list.viewport()
+    assert window._project_sidebar.eventFilter(vp, ev)
+    qapp.processEvents()
+    assert got == [[str(f)]]

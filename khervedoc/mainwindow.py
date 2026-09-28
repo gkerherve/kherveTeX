@@ -68,6 +68,8 @@ class _ProjectSidebar(QWidget):
     chapterDoubleClicked = Signal(int)
     chapterToggled = Signal(int, bool)
     addChapterRequested = Signal()
+    # Existing document files to add, from the Add menu or a drop.
+    addExistingRequested = Signal(list)
     # New order as a list of old indices; the window applies it, so the
     # project, its open documents and the numbering all move together.
     orderRequested = Signal(list)
@@ -108,6 +110,8 @@ class _ProjectSidebar(QWidget):
         self._list.model().rowsMoved.connect(self._on_rows_moved)
         self._list.setContextMenuPolicy(Qt.CustomContextMenu)
         self._list.customContextMenuRequested.connect(self._on_context_menu)
+        # InternalMove refuses drops from Finder; catch file drops first.
+        self._list.viewport().installEventFilter(self)
         layout.addWidget(self._list, 1)
 
         # Move up / down buttons
@@ -133,7 +137,10 @@ class _ProjectSidebar(QWidget):
         self._add_btn.setToolTip(
             "Add another document (chapter). A single document becomes a "
             "project the first time you add one.")
-        self._add_btn.clicked.connect(self.addChapterRequested)
+        add_menu = QMenu(self._add_btn)
+        add_menu.addAction("New document\u2026", self.addChapterRequested)
+        add_menu.addAction("Existing file\u2026", self._pick_existing)
+        self._add_btn.setMenu(add_menu)
         btn_row.addWidget(self._add_btn)
         self._compile_btn = QPushButton("\u25b6 Compile")
         self._compile_btn.clicked.connect(self.compileRequested)
@@ -194,6 +201,40 @@ class _ProjectSidebar(QWidget):
             font.setBold(i == idx)
             item.setFont(font)
         self._list.blockSignals(False)
+
+    def _pick_existing(self) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Add existing documents", "",
+            "KherveTeX documents (*.ktexz *.ktex.json *.kdocz *.kdoc.json"
+            " *.tex);;All files (*)")
+        if paths:
+            self.addExistingRequested.emit(paths)
+
+    @staticmethod
+    def _addable(path: str) -> bool:
+        low = path.lower()
+        return low.endswith((".ktexz", ".ktex.json", ".kdocz", ".kdoc.json",
+                             ".tex")) and not low.endswith(".kdocproj.json")
+
+    def _dropped_files(self, event) -> list[str]:
+        mime = event.mimeData()
+        if not mime.hasUrls():
+            return []
+        return [u.toLocalFile() for u in mime.urls()
+                if u.isLocalFile() and self._addable(u.toLocalFile())]
+
+    def eventFilter(self, obj, event) -> bool:
+        if obj is self._list.viewport() and event.type() in (
+                QEvent.DragEnter, QEvent.DragMove, QEvent.Drop):
+            files = self._dropped_files(event)
+            if files:
+                event.setDropAction(Qt.CopyAction)
+                event.accept()
+                if event.type() == QEvent.Drop:
+                    QTimer.singleShot(
+                        0, lambda f=files: self.addExistingRequested.emit(f))
+                return True
+        return super().eventFilter(obj, event)
 
     def recompute_auto_pages(self) -> None:
         """Recompute start_page for every chapter from cumulative page counts.
@@ -990,6 +1031,8 @@ class MainWindow(QMainWindow):
         self._project_sidebar.chapterDoubleClicked.connect(self._switch_chapter)
         self._project_sidebar.chapterToggled.connect(self._on_chapter_toggled)
         self._project_sidebar.addChapterRequested.connect(self._on_add_document)
+        self._project_sidebar.addExistingRequested.connect(
+            self._add_existing_documents)
         self._project_sidebar.orderRequested.connect(self._reorder_chapters)
         self._project_sidebar.removeRequested.connect(self._remove_chapter)
         self._project_sidebar.compileRequested.connect(self._compile_project)
@@ -2687,6 +2730,19 @@ class MainWindow(QMainWindow):
     def _convert_to_project(self) -> None:
         """Turn the open document into a project holding it plus a new
         document, so both are listed side by side from now on."""
+        label, ok = QInputDialog.getText(
+            self, "Add document", "Name of the new document:",
+            text="Chapter 2")
+        if not ok or not label.strip():
+            return
+        if not self._make_project_from_open_document():
+            return
+        self._append_chapter(label.strip())
+        self._save_project()
+
+    def _make_project_from_open_document(self) -> bool:
+        """Wrap the open document in a one-document project in its folder.
+        False if the user declined to save it first."""
         if self._current_path is None:
             QMessageBox.information(
                 self, "Add document",
@@ -2694,12 +2750,7 @@ class MainWindow(QMainWindow):
                 "project are kept together in its folder.")
             self._save_as()
             if self._current_path is None:
-                return
-        label, ok = QInputDialog.getText(
-            self, "Add document", "Name of the new document:",
-            text="Chapter 2")
-        if not ok or not label.strip():
-            return
+                return False
         import copy
         proj_dir = self._current_path.parent
         stem = self._doc_stem(self._current_path)
@@ -2720,8 +2771,69 @@ class MainWindow(QMainWindow):
         proj_path = proj_dir / f"{stem}.kdocproj.json"
         proj_path.write_text(project_to_json(proj), encoding="utf-8")
         self._open_project_from_path(proj_path)
-        self._append_chapter(label.strip())
-        self._save_project()
+        return True
+
+    def _add_existing_documents(self, paths: list) -> None:
+        """Add document files to the project as they are. A file already
+        in the project folder is referenced in place; anything else is
+        copied in as a document (bundle images unpacked beside it)."""
+        if self._project is None and not self._make_project_from_open_document():
+            return
+        proj_dir = self._project_path.parent
+        have = {(proj_dir / ch.path).resolve() for ch in self._project.chapters}
+        added, failed = 0, []
+        for p in map(Path, paths):
+            try:
+                rel = self._chapter_file_for(p, proj_dir, have)
+            except Exception as exc:
+                failed.append(f"{p.name}: {exc}")
+                continue
+            if rel is None:
+                continue
+            have.add((proj_dir / rel).resolve())
+            self._project.chapters.append(ChapterEntry(
+                path=rel, label=self._doc_stem(p), enabled=True))
+            added += 1
+        if failed:
+            QMessageBox.warning(self, "Add documents",
+                                "Could not add:\n" + "\n".join(failed))
+        if added:
+            self._project_sidebar.set_project(self._project)
+            self._save_project()
+            self._status.showMessage(
+                f"Added {added} document{'s' if added > 1 else ''}", 5000)
+
+    def _chapter_file_for(self, src: Path, proj_dir: Path,
+                          have: set) -> str | None:
+        """Project-relative .kdoc.json holding *src*, or None if it is
+        already listed."""
+        low = src.name.lower()
+        if src.resolve() in have:
+            return None
+        if low.endswith((".kdoc.json", ".ktex.json")) \
+                and src.parent.resolve() == proj_dir.resolve():
+            return src.name
+        from .model import Figure
+        stem = self._doc_stem(src)
+        if kdocz.is_kdocz_path(src):
+            doc, _ = kdocz.load_kdocz(src, proj_dir / f"{stem}_files")
+        elif low.endswith(".tex"):
+            doc = importers.import_tex(src.read_text(encoding="utf-8"),
+                                       base_dir=src.parent)
+        else:
+            doc = from_json(src.read_text(encoding="utf-8"))
+        # Relative figure paths pointed next to the source; keep them working.
+        for block in doc.children:
+            if isinstance(block, Figure) and block.path \
+                    and not Path(block.path).is_absolute():
+                block.path = str((src.parent / block.path).resolve())
+        dest = proj_dir / f"{stem}.kdoc.json"
+        n = 1
+        while dest.exists():
+            dest = proj_dir / f"{stem}_{n}.kdoc.json"
+            n += 1
+        dest.write_text(to_json(doc), encoding="utf-8")
+        return dest.name
 
     def _add_chapter_to_project(self) -> None:
         if self._project is None or self._project_path is None:
