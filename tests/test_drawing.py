@@ -56,7 +56,7 @@ def test_kdocz_bundles_drawing_siblings(tmp_path):
     fig = loaded.children[0]
     assert fig.source == "drawing"
     assert fig.path.endswith("figure_001.png")
-    assert (extract / "images" / "figure_001.pdf").exists()
+    assert (extract / "figures" / "figure_001.pdf").exists()
 
 
 def test_kdocz_does_not_bundle_siblings_of_plain_figures(tmp_path):
