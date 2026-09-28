@@ -176,7 +176,12 @@ class _ProjectSidebar(QWidget):
         title = proj.meta.title or "Untitled Project"
         self._title_label.setText(f"<b>{title}</b>")
         self._auto_page_cb.setChecked(proj.auto_page_numbers)
-        self._rebuild_list()
+        # Page ranges follow list position, so a reorder or removal must
+        # renumber now rather than wait for the next compile.
+        if proj.auto_page_numbers:
+            self.recompute_auto_pages()
+        else:
+            self._rebuild_list()
 
     def set_active_index(self, idx: int) -> None:
         self._active_index = idx

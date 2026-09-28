@@ -223,3 +223,16 @@ def test_remove_button_only_shown_for_projects(window, tmp_path, monkeypatch):
     assert sb._remove_btn.isHidden()
     _three_docs(window, tmp_path, monkeypatch)
     assert not sb._remove_btn.isHidden()
+
+
+def test_page_ranges_follow_new_order(window, tmp_path, monkeypatch):
+    proj = _three_docs(window, tmp_path, monkeypatch)
+    proj.auto_page_numbers = True
+    for ch, pages in zip(proj.chapters, (10, 4, 6)):
+        ch.last_known_pages = pages
+    window._project_sidebar.recompute_auto_pages()
+    assert [c.start_page for c in proj.chapters] == [1, 11, 15]
+    window._project_sidebar._list.setCurrentRow(0)
+    window._project_sidebar._move_down()
+    assert [c.last_known_pages for c in proj.chapters] == [4, 10, 6]
+    assert [c.start_page for c in proj.chapters] == [1, 5, 15]

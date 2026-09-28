@@ -5,7 +5,7 @@ from pathlib import Path
 
 # Bumped by hand only for meaningful feature/behaviour shifts. The patch
 # component is the total commit count and is appended automatically.
-__version__ = "0.201"
+__version__ = "0.202"
 
 
 def _git_build_info() -> tuple[int, str] | None:
