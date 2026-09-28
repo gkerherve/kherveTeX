@@ -84,6 +84,19 @@ _SHEET_EDGE = QColor("#b8bcc1")
 HEADING_NUMBER_PROPERTY = QTextFormat.UserProperty + 40
 
 
+
+_PASTE_DPI = 300
+
+
+def _clipboard_pdf(source) -> bytes | None:
+    """The vector PDF flavour an Office app puts on the clipboard, if any."""
+    for fmt in source.formats():
+        if "pdf" in fmt.lower():
+            data = bytes(source.data(fmt))
+            if data.startswith(b"%PDF"):
+                return data
+    return None
+
 class _PageBreakOverlay(QWidget):
     """Transparent child of the viewport that paints page-break lines."""
 
@@ -789,6 +802,15 @@ class PagedTextEdit(QTextEdit):
         return super().canInsertFromMimeData(source)
 
     def insertFromMimeData(self, source) -> None:
+        # Word / PowerPoint put a vector PDF beside a screen-resolution
+        # bitmap; Qt's imageData() is that blurry bitmap, so render the
+        # PDF ourselves when it's there.
+        pdf = _clipboard_pdf(source)
+        if pdf is not None:
+            path = self._save_pdf_raster(pdf)
+            if path is not None:
+                self.imageReceived.emit(str(path))
+                return
         # Clipboard-image case: e.g. Snipping Tool, screenshots, Slack pastes.
         if source.hasImage():
             img = source.imageData()
@@ -836,6 +858,18 @@ class PagedTextEdit(QTextEdit):
         if img.save(str(path), "PNG"):
             return path
         return None
+
+    def _save_pdf_raster(self, data: bytes) -> Path | None:
+        path = self._next_image_filename(".png")
+        if path is None:
+            return None
+        try:
+            import fitz
+            with fitz.open(stream=data, filetype="pdf") as pdf:
+                pdf[0].get_pixmap(dpi=_PASTE_DPI, alpha=True).save(str(path))
+        except Exception:
+            return None
+        return path
 
     def _copy_local(self, src: Path) -> Path | None:
         path = self._next_image_filename(src.suffix)
