@@ -119,7 +119,7 @@ class _ProjectSidebar(QWidget):
         layout.addLayout(move_row)
 
         btn_row = QHBoxLayout()
-        self._add_btn = QPushButton("+ Add document")
+        self._add_btn = QPushButton("+ Add")
         self._add_btn.setToolTip(
             "Add another document (chapter). A single document becomes a "
             "project the first time you add one.")
@@ -967,6 +967,9 @@ class MainWindow(QMainWindow):
         # Always shown: lists the single open document, or the project's
         # documents once there is more than one.
         self._project_dock.toggleViewAction().setShortcut(QKeySequence("Ctrl+5"))
+        # The list only holds document names; the default width (the
+        # sidebar's size hint) leaves the editor cramped.
+        self.resizeDocks([self._project_dock], [150], Qt.Horizontal)
         self._project_sidebar.chapterDoubleClicked.connect(self._switch_chapter)
         self._project_sidebar.chapterToggled.connect(self._on_chapter_toggled)
         self._project_sidebar.addChapterRequested.connect(self._on_add_document)
