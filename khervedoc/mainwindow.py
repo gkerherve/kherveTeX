@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from . import (
     __version__, chemistry, equations, git_backend, icons, kdocz, page_sizes,
+    project_store,
     symbols, themes, version_string,
 )
 from .compiler import (
@@ -2262,7 +2263,9 @@ class MainWindow(QMainWindow):
 
     def _open_path(self, path: Path) -> None:
         # Intercept project files before the normal document path.
-        if path.name.lower().endswith(".kdocproj.json"):
+        if path.name.lower().endswith(".kdocproj.json") or (
+                kdocz.is_kdocz_path(path)
+                and kdocz.read_project_json(path) is not None):
             self._open_project_from_path(path)
             return
         suffix = path.suffix.lower()
@@ -2463,12 +2466,14 @@ class MainWindow(QMainWindow):
             kdocz.save_kdocz(doc, path)
         else:
             path.write_text(to_json(doc), encoding="utf-8")
-        tex_path = path.parent / f"{tex_basename}.tex"
+        # Working files live in .kherve/ so the folder shows only .ktex.
+        work = project_store.work_dir(path.parent)
+        tex_path = work / f"{tex_basename}.tex"
         tex_path.write_text(serialize_document(doc), encoding="utf-8")
         self._editor.text_edit.document().setModified(False)
         if self._compiler == "typst":
             from .typst_serializer import serialize_document as serialize_typst
-            typ_path = path.parent / f"{tex_basename}.typ"
+            typ_path = work / f"{tex_basename}.typ"
             typ_path.write_text(serialize_typst(doc), encoding="utf-8")
         self._io_label.setText("")
 
@@ -2518,36 +2523,31 @@ class MainWindow(QMainWindow):
         proj = Project()
         proj.meta.title = title.strip()
         proj.meta.documentclass = "book"
-        # Create a first chapter file
-        ch_name = "chapter1"
-        ch_path = proj_dir / f"{ch_name}.kdoc.json"
-        ch_doc = Document(
+        # The first document is the project's main .ktex and holds the
+        # project itself, so the folder is just the .ktex files.
+        main = project_store.unique_path(proj_dir, self._safe_name(title))
+        project_store.write_doc(Document(
             children=[Section(level=1, children=[Text(text="Introduction")])],
-            meta=proj.meta,
-        )
-        ch_path.write_text(to_json(ch_doc), encoding="utf-8")
+            meta=proj.meta), main)
         proj.chapters.append(ChapterEntry(
-            path=f"{ch_name}.kdoc.json",
-            label="1 \u2014 Introduction",
-            enabled=True,
-            start_page=1,
-            numbering="arabic",
-        ))
-        proj_path = proj_dir / f"{title.strip()}.kdocproj.json"
-        proj_path.write_text(project_to_json(proj), encoding="utf-8")
-        self._open_project_from_path(proj_path)
+            path=main.name, label="Introduction", enabled=True,
+            start_page=1, numbering="arabic"))
+        kdocz.write_project_json(main, project_to_json(proj))
+        self._open_project_from_path(main)
 
     def _open_project(self) -> None:
         path_s, _ = QFileDialog.getOpenFileName(
             self, "Open project", "",
-            "KherveTeX Project (*.kdocproj.json);;All files (*)")
+            "KherveTeX project (*.ktex *.kdocproj.json);;All files (*)")
         if not path_s:
             return
         self._open_project_from_path(Path(path_s))
 
     def _open_project_from_path(self, path: Path) -> None:
         try:
-            proj = project_from_json(path.read_text(encoding="utf-8"))
+            proj = project_store.read_project(path)
+            if proj is None:
+                raise ValueError(f"{path.name} does not hold a project")
         except Exception as exc:
             QMessageBox.critical(self, "Open project failed", str(exc))
             return
@@ -2571,22 +2571,75 @@ class MainWindow(QMainWindow):
             return
         # Save current chapter doc back to disk
         self._flush_current_chapter()
-        # Save the manifest
-        self._project_path.write_text(
-            project_to_json(self._project), encoding="utf-8")
-        # Write each chapter's .tex alongside its .kdoc.json
+        self._write_project_manifest()
         proj_dir = self._project_path.parent
         chapter_docs = self._write_chapter_tex_files(proj_dir)
-        # Write the master .tex
         master_tex = serialize_project_master(self._project, chapter_docs)
-        master_stem = self._project_path.stem
-        if master_stem.endswith(".kdocproj"):
-            master_stem = master_stem[:-len(".kdocproj")]
-        master_path = proj_dir / f"{master_stem}.tex"
+        master_path = self._master_tex_path()
         master_path.write_text(master_tex, encoding="utf-8")
         self._status.showMessage(
             f"\u2714 Project saved ({master_path.name} + "
             f"{len(self._project.chapters)} chapters)", 5000)
+
+    @staticmethod
+    def _safe_name(label: str) -> str:
+        return "".join(
+            c if c.isalnum() or c in " _-" else "_" for c in label
+        ).strip().replace(" ", "_") or "document"
+
+    def _master_tex_path(self) -> Path:
+        """The project's master .tex — in .kherve/, and not named like the
+        main document's own chapter file, which it \\includes."""
+        stem = project_store.doc_stem(self._project_path)
+        return project_store.work_dir(self._project_path.parent) \
+            / f"{stem}-master.tex"
+
+    def _write_project_manifest(self) -> None:
+        if self._project_path.name.lower().endswith(".kdocproj.json"):
+            self._migrate_legacy_project()
+        kdocz.write_project_json(self._project_path,
+                                 project_to_json(self._project))
+
+    def _migrate_legacy_project(self) -> None:
+        """Turn a .kdocproj.json project of .kdoc.json files into .ktex
+        files, the first holding the project. The old files are moved to
+        .kherve/legacy/, not deleted."""
+        import shutil as _shutil
+        from .serializer import _chapter_stem
+        proj_dir = self._project_path.parent
+        legacy = project_store.work_dir(proj_dir) / "legacy"
+        legacy.mkdir(exist_ok=True)
+        proj_stem = project_store.doc_stem(self._project_path)
+
+        def stash(p: Path) -> None:
+            if p.exists():
+                _shutil.move(str(p), str(legacy / p.name))
+
+        for i, ch in enumerate(self._project.chapters):
+            src = proj_dir / ch.path
+            if kdocz.is_kdocz_path(src) and not kdocz.is_legacy_bundle(src):
+                continue
+            doc = self._project_chapter_docs.get(i)
+            if doc is None:
+                doc = project_store.read_doc(src)
+            stem = project_store.doc_stem(src)
+            stash(proj_dir / f"{_chapter_stem(ch)}.tex")
+            stash(src)
+            # "Paper-1" was the copy of Paper.ktex made when the project
+            # began; it is the newer text, so it takes the original name.
+            if i == 0 and stem == f"{proj_stem}-1":
+                stash(proj_dir / f"{proj_stem}.ktex")
+                dest = proj_dir / f"{proj_stem}.ktex"
+            else:
+                dest = project_store.unique_path(proj_dir, stem)
+            project_store.write_doc(doc, dest)
+            ch.path = dest.name
+        stash(proj_dir / f"{proj_stem}.tex")
+        stash(self._project_path)
+        self._project_path = proj_dir / self._project.chapters[0].path
+        self._status.showMessage(
+            "Project converted to .ktex files; the old files are in "
+            ".kherve/legacy", 8000)
 
     def _close_project(self) -> None:
         if self._project is not None:
@@ -2606,8 +2659,7 @@ class MainWindow(QMainWindow):
         idx = self._project_chapter_idx
         self._project_chapter_docs[idx] = doc
         ch = self._project.chapters[idx]
-        ch_path = self._project_path.parent / ch.path
-        ch_path.write_text(to_json(doc), encoding="utf-8")
+        project_store.write_doc(doc, self._project_path.parent / ch.path)
 
     def _switch_chapter(self, idx: int) -> None:
         if self._project is None or self._project_path is None:
@@ -2622,7 +2674,7 @@ class MainWindow(QMainWindow):
             doc = self._project_chapter_docs[idx]
         elif ch_path.exists():
             try:
-                doc = from_json(ch_path.read_text(encoding="utf-8"))
+                doc = project_store.read_doc(ch_path)
             except Exception as exc:
                 QMessageBox.warning(
                     self, "Chapter load failed",
@@ -2649,8 +2701,7 @@ class MainWindow(QMainWindow):
             doc = self._project_chapter_docs.get(i)
             if doc is None:
                 try:
-                    doc = from_json((proj_dir / ch.path).read_text(
-                        encoding="utf-8"))
+                    doc = project_store.read_doc(proj_dir / ch.path)
                 except Exception:
                     continue
                 self._project_chapter_docs[i] = doc
@@ -2764,25 +2815,28 @@ class MainWindow(QMainWindow):
             if self._current_path is None:
                 return False
         import copy
-        proj_dir = self._current_path.parent
-        stem = self._doc_stem(self._current_path)
+        # The open document itself becomes the project's main .ktex.
+        main = self._current_path
+        if not kdocz.is_kdocz_path(main) or kdocz.is_legacy_bundle(main):
+            main = main.parent / f"{self._doc_stem(main)}{kdocz.NATIVE_SUFFIX}"
         doc = self._editor.get_document()
-        # Not "{stem}.kdoc.json": its .tex would be "{stem}.tex", the
-        # same file as the project's master, which would include itself.
-        n = 1
-        first = proj_dir / f"{stem}-{n}.kdoc.json"
-        while first.exists():
-            n += 1
-            first = proj_dir / f"{stem}-{n}.kdoc.json"
-        first.write_text(to_json(doc), encoding="utf-8")
+        project_store.write_doc(doc, main)
+        stem = self._doc_stem(main)
         proj = Project(meta=copy.deepcopy(doc.meta))
         proj.meta.title = doc.meta.title or stem
         proj.chapters.append(ChapterEntry(
-            path=first.name, label=stem, enabled=True,
+            path=main.name, label=stem, enabled=True,
             start_page=1, numbering="arabic"))
-        proj_path = proj_dir / f"{stem}.kdocproj.json"
-        proj_path.write_text(project_to_json(proj), encoding="utf-8")
-        self._open_project_from_path(proj_path)
+        kdocz.write_project_json(main, project_to_json(proj))
+        if main != self._current_path and self._current_path.exists():
+            # A .ktex.json / .ktexz original is now superseded by the .ktex.
+            import shutil as _shutil
+            legacy = project_store.work_dir(main.parent) / "legacy"
+            legacy.mkdir(exist_ok=True)
+            _shutil.move(str(self._current_path),
+                         str(legacy / self._current_path.name))
+        self._current_path = None
+        self._open_project_from_path(main)
         return True
 
     def _add_existing_documents(self, paths: list) -> None:
@@ -2817,18 +2871,24 @@ class MainWindow(QMainWindow):
 
     def _chapter_file_for(self, src: Path, proj_dir: Path,
                           have: set) -> str | None:
-        """Project-relative .kdoc.json holding *src*, or None if it is
-        already listed."""
+        """Project-relative .ktex holding *src*, or None if it is already
+        listed. A .ktex in the folder is used as it is; one elsewhere is
+        copied in; anything else is converted to .ktex."""
+        import shutil as _shutil
         low = src.name.lower()
         if src.resolve() in have:
             return None
-        if low.endswith((".kdoc.json", ".ktex.json")) \
-                and src.parent.resolve() == proj_dir.resolve():
+        native = kdocz.is_kdocz_path(src) and not kdocz.is_legacy_bundle(src)
+        if native and src.parent.resolve() == proj_dir.resolve():
             return src.name
         from .model import Figure
         stem = self._doc_stem(src)
+        if native:
+            dest = project_store.unique_path(proj_dir, stem)
+            _shutil.copy2(src, dest)
+            return dest.name
         if kdocz.is_kdocz_path(src):
-            doc, _ = kdocz.load_kdocz(src, proj_dir / f"{stem}_files")
+            doc, _ = kdocz.load_kdocz(src)
         elif low.endswith(".tex"):
             doc = importers.import_tex(src.read_text(encoding="utf-8"),
                                        base_dir=src.parent)
@@ -2839,12 +2899,8 @@ class MainWindow(QMainWindow):
             if isinstance(block, Figure) and block.path \
                     and not Path(block.path).is_absolute():
                 block.path = str((src.parent / block.path).resolve())
-        dest = proj_dir / f"{stem}.kdoc.json"
-        n = 1
-        while dest.exists():
-            dest = proj_dir / f"{stem}_{n}.kdoc.json"
-            n += 1
-        dest.write_text(to_json(doc), encoding="utf-8")
+        dest = project_store.unique_path(proj_dir, stem)
+        project_store.write_doc(doc, dest)
         return dest.name
 
     def _add_chapter_to_project(self) -> None:
@@ -2859,20 +2915,13 @@ class MainWindow(QMainWindow):
 
     def _append_chapter(self, label: str) -> None:
         proj_dir = self._project_path.parent
-        # Generate a filename from the label
-        safe_name = "".join(
-            c if c.isalnum() or c in " _-" else "_" for c in label
-        ).strip().replace(" ", "_").lower()
-        ch_path = proj_dir / f"{safe_name}.kdoc.json"
-        n = 1
-        while ch_path.exists():
-            ch_path = proj_dir / f"{safe_name}_{n}.kdoc.json"
-            n += 1
+        ch_path = project_store.unique_path(
+            proj_dir, self._safe_name(label).lower())
         doc = Document(
             children=[Section(level=1, children=[Text(text=label)])],
             meta=self._project.meta,
         )
-        ch_path.write_text(to_json(doc), encoding="utf-8")
+        project_store.write_doc(doc, ch_path)
         self._project.chapters.append(ChapterEntry(
             path=ch_path.name,
             label=label,
@@ -2890,11 +2939,13 @@ class MainWindow(QMainWindow):
         from .serializer import _chapter_stem
         docs: list = []
         failed: list[str] = []
-        for ch in self._project.chapters:
+        work = project_store.work_dir(proj_dir)
+        for i, ch in enumerate(self._project.chapters):
             ch_path = proj_dir / ch.path
             try:
-                doc = from_json(ch_path.read_text(encoding="utf-8"))
-                (proj_dir / f"{_chapter_stem(ch)}.tex").write_text(
+                doc = self._project_chapter_docs.get(i) \
+                    or project_store.read_doc(ch_path)
+                (work / f"{_chapter_stem(ch)}.tex").write_text(
                     chapter_body_tex(doc, ch_path.parent, proj_dir),
                     encoding="utf-8")
                 docs.append(doc)
@@ -2915,22 +2966,17 @@ class MainWindow(QMainWindow):
         self._flush_current_chapter()
         proj_dir = self._project_path.parent
         from .serializer import _chapter_stem
+        self._write_project_manifest()
+        proj_dir = self._project_path.parent
         chapter_docs = self._write_chapter_tex_files(proj_dir)
-        # Write the master .tex
         master_tex = serialize_project_master(self._project, chapter_docs)
-        master_stem = self._project_path.stem
-        if master_stem.endswith(".kdocproj"):
-            master_stem = master_stem[:-len(".kdocproj")]
-        master_path = proj_dir / f"{master_stem}.tex"
-        master_path.write_text(master_tex, encoding="utf-8")
-        # Save the manifest too
-        self._project_path.write_text(
-            project_to_json(self._project), encoding="utf-8")
+        self._master_tex_path().write_text(master_tex, encoding="utf-8")
         # Copy chapter .tex files into the build dir so \include can find them
         self._build_dir.mkdir(parents=True, exist_ok=True)
+        work = project_store.work_dir(proj_dir)
         for ch in self._project.chapters:
             stem = _chapter_stem(ch)
-            src = proj_dir / f"{stem}.tex"
+            src = work / f"{stem}.tex"
             if src.exists():
                 _shutil.copy2(src, self._build_dir / f"{stem}.tex")
         source = master_tex

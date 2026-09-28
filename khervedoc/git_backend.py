@@ -123,7 +123,12 @@ def commit_all(repo_dir: Path, message: str | None = None,
     index = repo.index
     if file_stem:
         repo_root = Path(repo.workdir)
-        for p in repo_root.iterdir():
+        # The readable .tex lives in the hidden .kherve/ working folder.
+        work = Path(repo_dir) / ".kherve"
+        candidates = list(repo_root.iterdir())
+        if work.is_dir():
+            candidates += list(work.iterdir())
+        for p in candidates:
             if p.name.startswith(file_stem) and p.is_file():
                 # Path relative to repo root for index.add.
                 rel = str(p.relative_to(repo_root)).replace("\\", "/")

@@ -1249,12 +1249,14 @@ class DocumentEditor(QWidget):
     def set_document_dir(self, doc_dir: Path) -> None:
         """Point image storage at permanent subdirs next to the document.
 
-        Creates ``equations/`` and ``figures/`` folders under *doc_dir*
-        and migrates any images that were in the previous temp dirs."""
+        Creates ``equations/`` and ``figures/`` under the hidden
+        ``.kherve/`` folder beside the document (the .ktex bundles the
+        figures it uses) and migrates any images from the previous dirs."""
         import shutil
+        from .project_store import work_dir
 
-        eq_dir = doc_dir / "equations"
-        fig_dir = doc_dir / "figures"
+        eq_dir = work_dir(doc_dir) / "equations"
+        fig_dir = work_dir(doc_dir) / "figures"
         eq_dir.mkdir(exist_ok=True)
         fig_dir.mkdir(exist_ok=True)
 

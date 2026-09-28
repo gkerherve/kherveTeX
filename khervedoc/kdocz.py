@@ -8,6 +8,8 @@ Layout inside the archive:
     document.json   - the KherveTeX document model, image paths rewritten
                       to point at the bundled files ("figures/figure_001.png")
     document.tex    - the generated LaTeX, for readers without KherveTeX
+    project.json    - only in a project's main document: the list and
+                      order of the project's other .ktex files
     figures/        - the bundled image files referenced by Figure nodes
                       (older archives used images/; paths in document.json
                       say which)
@@ -36,6 +38,7 @@ SCHEMA_VERSION = 1
 MANIFEST_BASENAME = "manifest.json"
 DOC_BASENAME = "document.json"
 TEX_BASENAME = "document.tex"
+PROJECT_BASENAME = "project.json"
 IMAGES_DIR = "figures"
 EQUATIONS_DIR = "equations"
 NATIVE_SUFFIX = ".ktex"
@@ -107,7 +110,12 @@ def save_kdocz(doc: Document, out_path: Path) -> None:
     from .serializer import serialize_document
     out_path = Path(out_path)
     archive_doc, images = _bundle_figures(doc, out_path.parent)
+    # A project's main document carries the project; saving its text
+    # must not drop it.
+    project = read_project_json(out_path)
     with zipfile.ZipFile(out_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        if project is not None:
+            zf.writestr(PROJECT_BASENAME, project)
         zf.writestr(MANIFEST_BASENAME, json.dumps(
             {"format": "ktex", "schema_version": SCHEMA_VERSION,
              "app": "KherveTeX"},
@@ -116,6 +124,32 @@ def save_kdocz(doc: Document, out_path: Path) -> None:
         zf.writestr(TEX_BASENAME, serialize_document(archive_doc))
         for src_path, arc_name in images:
             zf.write(src_path, arcname=arc_name)
+
+
+def read_project_json(path: Path) -> str | None:
+    """The project.json text stored in a .ktex, or None."""
+    try:
+        with zipfile.ZipFile(path, "r") as zf:
+            if PROJECT_BASENAME in zf.namelist():
+                return zf.read(PROJECT_BASENAME).decode("utf-8")
+    except (OSError, zipfile.BadZipFile):
+        pass
+    return None
+
+
+def write_project_json(path: Path, project_json: str) -> None:
+    """Store *project_json* in the .ktex at *path*, keeping every other
+    entry. Zip entries can't be replaced in place, so the archive is
+    rewritten through a temp file."""
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    with zipfile.ZipFile(path, "r") as src, \
+            zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_DEFLATED) as dst:
+        for item in src.infolist():
+            if item.filename != PROJECT_BASENAME:
+                dst.writestr(item, src.read(item.filename))
+        dst.writestr(PROJECT_BASENAME, project_json)
+    tmp.replace(path)
 
 
 def export_latex_zip(doc: Document, out_path: Path, base_dir: Path,

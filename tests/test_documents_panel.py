@@ -60,11 +60,15 @@ def test_adding_a_document_shows_both(window, tmp_path, monkeypatch):
     assert "Methods" in window._editor.text_edit.toPlainText()
     window._switch_chapter(0)
     assert "Original words." in window._editor.text_edit.toPlainText()
-    assert (tmp_path / "thesis.kdocproj.json").exists()
-    master = (tmp_path / "thesis.tex").read_text()
+    # The folder shows only the documents; working files are hidden.
+    assert sorted(p.name for p in tmp_path.iterdir()
+                  if not p.name.startswith(".")) == ["methods.ktex",
+                                                     "thesis.ktex"]
+    work = tmp_path / ".kherve"
+    master = (work / "thesis-master.tex").read_text()
     assert "\\begin{document}" in master           # not a chapter body
-    assert "\\include{thesis-1}" in master and "\\include{methods}" in master
-    assert "Original words." in (tmp_path / "thesis-1.tex").read_text()
+    assert "\\include{thesis}" in master and "\\include{methods}" in master
+    assert "Original words." in (work / "thesis.tex").read_text()
 
 
 def test_section_numbers_continue_across_documents(window, tmp_path,
@@ -124,7 +128,7 @@ def _first_number(window):
 def _includes(tmp_path):
     import re
     return re.findall(r"\\include\{([^}]+)\}",
-                      (tmp_path / "thesis.tex").read_text())
+                      (tmp_path / ".kherve" / "thesis-master.tex").read_text())
 
 
 def test_move_down_reorders_project_and_master(window, tmp_path, monkeypatch):
@@ -193,7 +197,7 @@ def test_remove_button_takes_document_out(window, tmp_path, monkeypatch):
     assert window._project_chapter_idx == 1    # Results, moved up
     assert "Results" in window._editor.text_edit.toPlainText()
     assert _first_number(window) == "2"
-    assert (tmp_path / "methods.kdoc.json").exists() or \
+    assert (tmp_path / "methods.ktex").exists() or \
         any(p.name.startswith("methods") for p in tmp_path.iterdir())
 
 
@@ -255,13 +259,49 @@ def test_add_existing_files_from_elsewhere(window, tmp_path, monkeypatch):
 
     window._add_existing_documents([str(a), str(b)])
     assert [ch.label for ch in proj.chapters][-2:] == ["appendix", "notes"]
-    texts = [(tmp_path / ch.path).read_text() for ch in proj.chapters[-2:]]
+    from khervedoc import project_store
+    assert [ch.path for ch in proj.chapters][-2:] == ["appendix.ktex",
+                                                      "notes.ktex"]
+    texts = [to_json(project_store.read_doc(tmp_path / ch.path))
+             for ch in proj.chapters[-2:]]
     assert "appendix words" in texts[0] and "bundle words" in texts[1]
     # Adding the same file again does not duplicate it.
     added = tmp_path / proj.chapters[-2].path
     window._add_existing_documents([str(added)])
     assert len(proj.chapters) == 5
-    assert from_json(added.read_text()).children
+    # A .ktex from elsewhere is copied in unchanged.
+    c = other / "extra.ktex"
+    kdocz.save_kdocz(Document(children=[]), c)
+    window._add_existing_documents([str(c)])
+    assert (tmp_path / "extra.ktex").read_bytes() == c.read_bytes()
+
+
+def test_legacy_json_project_converts_to_ktex_files(window, tmp_path,
+                                                    monkeypatch):
+    from khervedoc.model import (ChapterEntry, Project, project_to_json,
+                                 to_json)
+    for name, words in (("Paper-1", "main words"), ("test2", "second")):
+        (tmp_path / f"{name}.kdoc.json").write_text(to_json(Document(
+            children=[Paragraph(children=[Text(words)])])), encoding="utf-8")
+        (tmp_path / f"{name}.tex").write_text("old", encoding="utf-8")
+    (tmp_path / "Paper.ktex").write_bytes(b"older copy")
+    proj = Project()
+    proj.chapters = [ChapterEntry(path="Paper-1.kdoc.json", label="Paper"),
+                     ChapterEntry(path="test2.kdoc.json", label="test2")]
+    pp = tmp_path / "Paper.kdocproj.json"
+    pp.write_text(project_to_json(proj), encoding="utf-8")
+    window._open_project_from_path(pp)
+    window._save_project()
+    visible = sorted(p.name for p in tmp_path.iterdir()
+                     if not p.name.startswith("."))
+    assert visible == ["Paper.ktex", "test2.ktex"]
+    legacy = {p.name for p in (tmp_path / ".kherve" / "legacy").iterdir()}
+    assert {"Paper-1.kdoc.json", "Paper.kdocproj.json", "Paper.ktex"} <= legacy
+    # Opening the main .ktex reopens the whole project.
+    window._open_path(tmp_path / "Paper.ktex")
+    assert [c.path for c in window._project.chapters] == ["Paper.ktex",
+                                                          "test2.ktex"]
+    assert "main words" in window._editor.text_edit.toPlainText()
 
 
 def test_dropping_files_on_the_list_adds_them(window, tmp_path, monkeypatch,
@@ -284,3 +324,15 @@ def test_dropping_files_on_the_list_adds_them(window, tmp_path, monkeypatch,
     assert window._project_sidebar.eventFilter(vp, ev)
     qapp.processEvents()
     assert got == [[str(f)]]
+
+
+def test_saving_a_document_leaves_only_the_ktex_visible(window, tmp_path):
+    window._editor.set_document(Document(children=[
+        Paragraph(children=[Text("words")])]))
+    path = tmp_path / "solo.ktex"
+    window._current_path = path
+    window._editor.set_document_dir(tmp_path)
+    window._write_to(path)
+    assert [p.name for p in tmp_path.iterdir()
+            if not p.name.startswith(".")] == ["solo.ktex"]
+    assert (tmp_path / ".kherve" / "solo.tex").exists()

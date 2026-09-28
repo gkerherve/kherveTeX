@@ -15,7 +15,8 @@ The title bar shows `kherveDOC v<major>.<minor>.<commits>+<sha7>`.
 - Three tabs: **Formatted** (WYSIWYG), **LaTeX** (live read-only syntax-highlighted source), **PDF** (live preview).
 
 **File**
-- Native format: `.ktex`, a ZIP archive holding the document model (`document.json`), its generated LaTeX (`document.tex`) and every figure (`figures/`). A sibling `.tex` is written on each save so Git history stays readable. Older `.ktexz` / `.kdocz` files open and are saved as `.ktex`; plain `.ktex.json` is still supported.
+- Native format: `.ktex`, a ZIP archive holding the document model (`document.json`), its generated LaTeX (`document.tex`) and every figure (`figures/`). Working files (the generated `.tex`, equation previews, pasted figures) go in a hidden `.kherve/` folder, so the document folder shows only `.ktex` files; Git still tracks the `.tex` there so history stays readable.
+- Projects: the main `.ktex` also stores the list and order of the project's other `.ktex` files, so opening it opens the whole project. Old `.kdocproj.json` projects are converted on save (the old files move to `.kherve/legacy/`). Older `.ktexz` / `.kdocz` files open and are saved as `.ktex`; plain `.ktex.json` is still supported.
 - File > Export > LaTeX package (.zip): `main.tex`, `figures/` and `equations/` (one `.tex` per display equation), ready for Overleaf or a journal.
 - Import: `.tex` (regex-based subset parser, falls back to RawLatex), `.docx` (uses python-docx, **embedded images are extracted** into a sibling folder and inserted as Figure nodes).
 - Export: `.tex`, `.pdf`.
