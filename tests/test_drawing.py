@@ -49,8 +49,8 @@ def test_kdocz_bundles_drawing_siblings(tmp_path):
     out = tmp_path / "doc.kdocz"
     save_kdocz(doc, out)
     names = zipfile.ZipFile(out).namelist()
-    assert {"images/figure_001.png", "images/figure_001.svg",
-            "images/figure_001.pdf"} <= set(names)
+    assert {"figures/figure_001.png", "figures/figure_001.svg",
+            "figures/figure_001.pdf"} <= set(names)
 
     loaded, extract = load_kdocz(out, tmp_path / "x")
     fig = loaded.children[0]
@@ -66,7 +66,7 @@ def test_kdocz_does_not_bundle_siblings_of_plain_figures(tmp_path):
     save_kdocz(Document(children=[Figure(path=str(tmp_path / "photo.png"))]),
                out)
     names = zipfile.ZipFile(out).namelist()
-    assert "images/figure_001.pdf" not in names
+    assert "figures/figure_001.pdf" not in names
 
 
 def test_figure_is_shown_at_its_latex_width_and_resizes_with_mouse(tmp_path):
