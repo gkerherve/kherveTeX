@@ -389,6 +389,19 @@ def drawing() -> QIcon:
 
 # ----- file ops + history -----
 
+def formatting_marks() -> QIcon:
+    """Pilcrow (¶), as Word's Show formatting marks button."""
+    px, p = _new_canvas()
+    p.setRenderHint(QPainter.Antialiasing, True)
+    p.setPen(QPen(_fg(), 1.6)); p.setBrush(QBrush(_fg()))
+    p.drawEllipse(QRectF(6, 4, 7, 8))
+    p.drawLine(QPointF(13, 4), QPointF(18, 4))
+    p.drawLine(QPointF(12.5, 4), QPointF(12.5, 20))
+    p.drawLine(QPointF(16.5, 4), QPointF(16.5, 20))
+    p.end()
+    return QIcon(px)
+
+
 def file_new() -> QIcon:
     px, p = _new_canvas()
     page_bg = QColor("#2d2d2d") if _dark else Qt.white

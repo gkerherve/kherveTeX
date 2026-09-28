@@ -100,3 +100,25 @@ def test_author_and_affiliation_fonts_follow_zoom_and_stay_put():
     e.set_zoom_percent(200)
     a2 = author.begin().fragment().charFormat().fontPointSize()
     assert abs(a2 - 2 * a_pt) < 0.1
+
+
+def test_formatting_marks_are_display_only():
+    import os
+    import pytest
+    pytest.importorskip("PySide6")
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtGui import QTextOption
+    from khervedoc.editor import DocumentEditor
+    QApplication.instance() or QApplication([])
+
+    e = DocumentEditor()
+    e.set_document(_doc())
+    before = e.get_document()
+    e.set_show_formatting_marks(True)
+    opt = e._edit.document().defaultTextOption()
+    assert opt.flags() & QTextOption.ShowTabsAndSpaces
+    assert e.get_document() == before
+    e.set_show_formatting_marks(False)
+    assert not (e._edit.document().defaultTextOption().flags()
+                & QTextOption.ShowTabsAndSpaces)

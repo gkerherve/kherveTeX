@@ -1520,6 +1520,11 @@ class MainWindow(QMainWindow):
             statusTip="Compile the PDF now",
             triggered=self._kick_compile)
         self._auto_compile = True
+        self.act_show_marks = QAction(
+            icons.formatting_marks(), "Show formatting &marks", self,
+            checkable=True, shortcut=QKeySequence("Ctrl+*"),
+            toolTip="Show spaces and paragraph marks (¶)",
+            toggled=lambda on: self._editor.set_show_formatting_marks(on))
         self.act_auto_compile = QAction(
             icons.auto_compile_on(), "Auto-compile", self,
             checkable=True, checked=True,
@@ -1669,6 +1674,8 @@ class MainWindow(QMainWindow):
         m_view.addAction(self.act_view_latex)
         m_view.addAction(self.act_view_pdf)
         m_view.addAction(self.act_view_console)
+        m_view.addSeparator()
+        m_view.addAction(self.act_show_marks)
         m_view.addSeparator()
         self.act_visual_only = QAction(
             "&Visual only (like Word)", self, checkable=True,
@@ -1923,6 +1930,7 @@ class MainWindow(QMainWindow):
         self._numbered_cb.toggled.connect(
             lambda checked: self._editor.toggle_heading_numbered(checked))
         tb.addWidget(self._numbered_cb)
+        tb.addAction(self.act_show_marks)
 
         # Narrow template combo — just the document-class shortcodes.
         self._template_combo = QComboBox(self)

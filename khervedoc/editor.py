@@ -19,7 +19,7 @@ from PySide6.QtCore import QEvent, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import (
     QAction, QBrush, QColor, QTextFormat, QFont, QFontDatabase, QFontMetricsF, QImage, QKeySequence, QTextBlockFormat,
     QTextCharFormat, QTextCursor, QTextFrameFormat, QTextImageFormat,
-    QTextLength, QTextListFormat, QTextTable, QTextTableFormat,
+    QTextLength, QTextListFormat, QTextOption, QTextTable, QTextTableFormat,
 )
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -2813,6 +2813,18 @@ class DocumentEditor(QWidget):
 
     def zoom_percent(self) -> int:
         return self._zoom_percent
+
+    def set_show_formatting_marks(self, show: bool) -> None:
+        """Draw spaces, tabs and paragraph ends like Word's ¶ button.
+        Display only: the marks never reach the model or the LaTeX."""
+        doc = self._edit.document()
+        opt = doc.defaultTextOption()
+        flags = QTextOption.Flag(0)
+        if show:
+            flags = (QTextOption.ShowTabsAndSpaces
+                     | QTextOption.ShowLineAndParagraphSeparators)
+        opt.setFlags(flags)
+        doc.setDefaultTextOption(opt)
 
     def set_zoom_percent(self, percent: int) -> None:
         percent = max(25, min(400, int(percent)))
