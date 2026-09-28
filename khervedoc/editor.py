@@ -3570,6 +3570,43 @@ class DocumentEditor(QWidget):
         new = dlg.latex()
         return new if new and new != latex else None
 
+    def convert_selection_to_equation(self) -> None:
+        """Rebuild the selected text as math — for equations pasted from
+        Word, which arrive as flattened Unicode. The guess opens in the
+        equation builder; a whole-line selection becomes a display
+        equation (numbered when Word's "(2)" was there), else inline."""
+        from .equation_editor import EquationEditorDialog
+        from .word_math import convert
+        c = self._edit.textCursor()
+        if not c.hasSelection():
+            return
+        text = c.selection().toPlainText()
+        latex, number = convert(text)
+        dlg = EquationEditorDialog(self, initial_latex=latex)
+        if dlg.exec() != QDialog.Accepted or not dlg.latex().strip():
+            return
+        self.replace_selection_with_math(dlg.latex(), numbered=number is not None)
+
+    def replace_selection_with_math(self, latex: str, numbered: bool) -> None:
+        c = self._edit.textCursor()
+        doc = self._edit.document()
+        first = doc.findBlock(c.selectionStart())
+        last = doc.findBlock(c.selectionEnd())
+        whole = (first == last and c.selectedText().strip()
+                 == first.text().strip()) or first != last
+        if not whole:
+            c.beginEditBlock()
+            c.removeSelectedText()
+            self._insert_inline(c, MathInline(latex=latex))
+            c.endEditBlock()
+            return
+        c.removeSelectedText()
+        if not c.block().text().strip() and c.block().previous().isValid():
+            c.select(QTextCursor.BlockUnderCursor)
+            c.removeSelectedText()
+        self._edit.setTextCursor(c)
+        self.insert_math_block_with(latex, numbered=numbered)
+
     def _has_math_at(self, cursor: QTextCursor) -> bool:
         block = cursor.block()
         if block.userState() == _STATE_MATH_BLOCK:
@@ -3785,6 +3822,15 @@ class DocumentEditor(QWidget):
             act = QAction("Open in equation editor…", menu)
             act.triggered.connect(
                 lambda _=False, c=math_cursor: self._edit_math_at(c))
+            menu.insertAction(first, act)
+            if first is not None:
+                menu.insertSeparator(first)
+        sel = self._edit.textCursor()
+        if math_cursor is None and sel.hasSelection() \
+                and sel.selectedText().strip():
+            first = menu.actions()[0] if menu.actions() else None
+            act = QAction("Convert to equation…", menu)
+            act.triggered.connect(self.convert_selection_to_equation)
             menu.insertAction(first, act)
             if first is not None:
                 menu.insertSeparator(first)
