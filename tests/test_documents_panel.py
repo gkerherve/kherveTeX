@@ -92,3 +92,134 @@ def test_section_numbers_continue_across_documents(window, tmp_path,
     window._project_sidebar._list.item(0).setCheckState(Qt.Unchecked)
     window._switch_chapter(1)
     assert first_number() == "1"          # ...so Methods is section 1
+
+
+# ---------------------------------------------------------- order / remove
+
+def _three_docs(window, tmp_path, monkeypatch):
+    """Intro (this file), then Methods, then Results."""
+    window._editor.set_document(Document(children=[
+        Section(level=1, children=[Text("Introduction")]),
+        Paragraph(children=[Text("intro words")])]))
+    path = tmp_path / "thesis.ktex.json"
+    window._current_path = path
+    window._write_to(path)
+    for name in ("Methods", "Results"):
+        monkeypatch.setattr(QInputDialog, "getText",
+                            lambda *a, n=name, **k: (n, True))
+        window._on_add_document()
+    return window._project
+
+
+def _labels(window):
+    return [ch.label or ch.path for ch in window._project.chapters]
+
+
+def _first_number(window):
+    from khervedoc.editor import _P_HEADING_NUMBER
+    block = window._editor.text_edit.document().firstBlock()
+    return block.blockFormat().property(_P_HEADING_NUMBER)
+
+
+def _includes(tmp_path):
+    import re
+    return re.findall(r"\\include\{([^}]+)\}",
+                      (tmp_path / "thesis.tex").read_text())
+
+
+def test_move_down_reorders_project_and_master(window, tmp_path, monkeypatch):
+    _three_docs(window, tmp_path, monkeypatch)
+    window._save_project()
+    before = _includes(tmp_path)
+    assert len(before) == 3
+    window._project_sidebar._list.setCurrentRow(0)
+    window._project_sidebar._move_down()
+    assert _includes(tmp_path) == [before[1], before[0], before[2]]
+    assert "Methods" in _labels(window)[0]
+
+
+def test_reordering_keeps_each_document_with_its_text(window, tmp_path,
+                                                      monkeypatch):
+    _three_docs(window, tmp_path, monkeypatch)
+    window._reorder_chapters([2, 0, 1])
+    window._switch_chapter(1)
+    assert "intro words" in window._editor.text_edit.toPlainText()
+    window._switch_chapter(0)
+    assert "Results" in window._editor.text_edit.toPlainText()
+
+
+def test_open_document_is_renumbered_when_moved(window, tmp_path, monkeypatch):
+    _three_docs(window, tmp_path, monkeypatch)
+    window._switch_chapter(2)                  # Results: section 3
+    assert _first_number(window) == "3"
+    window._project_sidebar._list.setCurrentRow(2)
+    window._project_sidebar._move_up()
+    window._project_sidebar._move_up()         # now first
+    assert window._project_chapter_idx == 0
+    assert _first_number(window) == "1"
+    assert "Results" in window._editor.text_edit.toPlainText()
+
+
+def test_other_document_renumbers_when_open_one_moves(window, tmp_path,
+                                                      monkeypatch):
+    _three_docs(window, tmp_path, monkeypatch)
+    window._switch_chapter(0)                  # Introduction: 1
+    window._reorder_chapters([1, 0, 2])        # Methods goes first
+    assert window._project_chapter_idx == 1
+    assert _first_number(window) == "2"
+
+
+def test_drag_and_drop_reorders(window, tmp_path, monkeypatch, qapp):
+    from PySide6.QtCore import QModelIndex
+    _three_docs(window, tmp_path, monkeypatch)
+    lst = window._project_sidebar._list
+    assert lst.model().moveRow(QModelIndex(), 2, QModelIndex(), 0)
+    qapp.processEvents()
+    assert "Results" in _labels(window)[0]
+    assert len(window._project.chapters) == 3
+
+
+def test_remove_button_takes_document_out(window, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    _three_docs(window, tmp_path, monkeypatch)
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.Yes)
+    window._switch_chapter(2)
+    window._project_sidebar._list.setCurrentRow(1)
+    window._project_sidebar._remove_current()
+    assert len(window._project.chapters) == 2
+    assert not any("Methods" in x for x in _labels(window))
+    assert len(_includes(tmp_path)) == 2
+    assert window._project_chapter_idx == 1    # Results, moved up
+    assert "Results" in window._editor.text_edit.toPlainText()
+    assert _first_number(window) == "2"
+    assert (tmp_path / "methods.kdoc.json").exists() or \
+        any(p.name.startswith("methods") for p in tmp_path.iterdir())
+
+
+def test_removing_the_open_document_opens_a_neighbour(window, tmp_path,
+                                                      monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    _three_docs(window, tmp_path, monkeypatch)
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.Yes)
+    window._switch_chapter(0)
+    window._remove_chapter(0)
+    assert window._project_chapter_idx == 0
+    assert "Methods" in window._editor.text_edit.toPlainText()
+
+
+def test_remove_cancelled_keeps_document(window, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    _three_docs(window, tmp_path, monkeypatch)
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.No)
+    window._remove_chapter(1)
+    assert len(window._project.chapters) == 3
+
+
+def test_remove_button_only_shown_for_projects(window, tmp_path, monkeypatch):
+    sb = window._project_sidebar
+    assert sb._remove_btn.isHidden()
+    _three_docs(window, tmp_path, monkeypatch)
+    assert not sb._remove_btn.isHidden()

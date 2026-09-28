@@ -68,6 +68,10 @@ class _ProjectSidebar(QWidget):
     chapterDoubleClicked = Signal(int)
     chapterToggled = Signal(int, bool)
     addChapterRequested = Signal()
+    # New order as a list of old indices; the window applies it, so the
+    # project, its open documents and the numbering all move together.
+    orderRequested = Signal(list)
+    removeRequested = Signal(int)
     compileRequested = Signal()
     autoPageToggled = Signal(bool)
 
@@ -116,6 +120,12 @@ class _ProjectSidebar(QWidget):
         self._down_btn.setToolTip("Move selected chapter down")
         self._down_btn.clicked.connect(self._move_down)
         move_row.addWidget(self._down_btn)
+        self._remove_btn = QPushButton("\u2715 Remove")
+        self._remove_btn.setToolTip(
+            "Remove the selected document from the project (its file is "
+            "kept on disk)")
+        self._remove_btn.clicked.connect(self._remove_current)
+        move_row.addWidget(self._remove_btn)
         layout.addLayout(move_row)
 
         btn_row = QHBoxLayout()
@@ -139,7 +149,7 @@ class _ProjectSidebar(QWidget):
         # is only worth its space once there is a project.
         for w in (self._title_label, self._auto_page_cb,
                   self._summary_label, self._up_btn,
-                  self._down_btn, self._compile_btn):
+                  self._down_btn, self._remove_btn, self._compile_btn):
             w.setVisible(visible)
 
     def set_single(self, name: str) -> None:
@@ -246,6 +256,7 @@ class _ProjectSidebar(QWidget):
 
             text = f"{prefix}{label}{page_range}"
             item = QListWidgetItem(text)
+            item.setData(Qt.UserRole, i)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsDragEnabled)
             item.setCheckState(Qt.Checked if ch.enabled else Qt.Unchecked)
             if not ch.enabled:
@@ -272,51 +283,51 @@ class _ProjectSidebar(QWidget):
         self.chapterDoubleClicked.emit(self._list.row(item))
 
     def _on_rows_moved(self, *_args) -> None:
-        new_order: list[ChapterEntry] = []
-        for i in range(self._list.count()):
-            text = self._list.item(i).text()
-            for ch in self._chapters:
-                label = ch.label or Path(ch.path).stem
-                if text.startswith(label) and ch not in new_order:
-                    new_order.append(ch)
-                    break
-        if len(new_order) == len(self._chapters):
-            self._chapters[:] = new_order
-            self._rebuild_list()
+        # Qt has already moved the row; read the order back from the
+        # original index each item carries.
+        order = [self._list.item(i).data(Qt.UserRole)
+                 for i in range(self._list.count())]
+        if sorted(order) == list(range(len(self._chapters))) \
+                and order != sorted(order):
+            QTimer.singleShot(0, lambda o=order: self.orderRequested.emit(o))
+
+    def _move(self, idx: int, delta: int) -> None:
+        dest = idx + delta
+        if not (0 <= idx < len(self._chapters)
+                and 0 <= dest < len(self._chapters)):
+            return
+        order = list(range(len(self._chapters)))
+        order[idx], order[dest] = order[dest], order[idx]
+        self.orderRequested.emit(order)
+        self._list.setCurrentRow(dest)
 
     def _move_up(self) -> None:
-        idx = self._list.currentRow()
-        if idx <= 0 or idx >= len(self._chapters):
-            return
-        self._chapters[idx], self._chapters[idx - 1] = (
-            self._chapters[idx - 1], self._chapters[idx])
-        if self._active_index == idx:
-            self._active_index = idx - 1
-        elif self._active_index == idx - 1:
-            self._active_index = idx
-        self._rebuild_list()
-        self._list.setCurrentRow(idx - 1)
+        self._move(self._list.currentRow(), -1)
 
     def _move_down(self) -> None:
+        self._move(self._list.currentRow(), +1)
+
+    def _remove_current(self) -> None:
         idx = self._list.currentRow()
-        if idx < 0 or idx >= len(self._chapters) - 1:
-            return
-        self._chapters[idx], self._chapters[idx + 1] = (
-            self._chapters[idx + 1], self._chapters[idx])
-        if self._active_index == idx:
-            self._active_index = idx + 1
-        elif self._active_index == idx + 1:
-            self._active_index = idx
-        self._rebuild_list()
-        self._list.setCurrentRow(idx + 1)
+        if 0 <= idx < len(self._chapters):
+            self.removeRequested.emit(idx)
 
     def _on_context_menu(self, pos) -> None:
         item = self._list.itemAt(pos)
+        menu = QMenu(self)
+        act_add = menu.addAction("Add document\u2026")
         if item is None or self._project is None:
+            if menu.exec(self._list.mapToGlobal(pos)) == act_add:
+                self.addChapterRequested.emit()
             return
         idx = self._list.row(item)
+        self._list.setCurrentRow(idx)
         ch = self._chapters[idx]
-        menu = QMenu(self)
+        act_up = menu.addAction("Move up")
+        act_up.setEnabled(idx > 0)
+        act_down = menu.addAction("Move down")
+        act_down.setEnabled(idx < len(self._chapters) - 1)
+        menu.addSeparator()
         act_rename = menu.addAction("Rename label\u2026")
 
         # Chapter type submenu
@@ -348,12 +359,18 @@ class _ProjectSidebar(QWidget):
         act_roman.setChecked(ch.numbering == "roman")
 
         menu.addSeparator()
-        act_remove = menu.addAction("Remove from project")
+        act_remove = menu.addAction("Remove from project\u2026")
 
         chosen = menu.exec(self._list.mapToGlobal(pos))
         if chosen is None:
             return
-        if chosen == act_rename:
+        if chosen == act_add:
+            self.addChapterRequested.emit()
+        elif chosen == act_up:
+            self._move(idx, -1)
+        elif chosen == act_down:
+            self._move(idx, +1)
+        elif chosen == act_rename:
             new_label, ok = QInputDialog.getText(
                 self, "Rename chapter", "Label:", text=ch.label)
             if ok and new_label.strip():
@@ -383,12 +400,7 @@ class _ProjectSidebar(QWidget):
             ch.numbering = "roman"
             self._rebuild_list()
         elif chosen == act_remove:
-            self._chapters.pop(idx)
-            if self._active_index == idx:
-                self._active_index = -1
-            elif self._active_index > idx:
-                self._active_index -= 1
-            self._rebuild_list()
+            self.removeRequested.emit(idx)
         else:
             for key, act in type_actions.items():
                 if chosen == act:
@@ -973,6 +985,8 @@ class MainWindow(QMainWindow):
         self._project_sidebar.chapterDoubleClicked.connect(self._switch_chapter)
         self._project_sidebar.chapterToggled.connect(self._on_chapter_toggled)
         self._project_sidebar.addChapterRequested.connect(self._on_add_document)
+        self._project_sidebar.orderRequested.connect(self._reorder_chapters)
+        self._project_sidebar.removeRequested.connect(self._remove_chapter)
         self._project_sidebar.compileRequested.connect(self._compile_project)
 
         self._status = QStatusBar(self)
@@ -2578,6 +2592,70 @@ class MainWindow(QMainWindow):
             if idx < self._project_chapter_idx:
                 self._editor.set_heading_offset(
                     self._heading_offset_before(self._project_chapter_idx))
+
+    def _reorder_chapters(self, order: list) -> None:
+        """Put the project's documents in *order* (old indices). LaTeX
+        numbers chapters and sections by position, so everything after
+        the first moved document is renumbered."""
+        proj = self._project
+        if proj is None or sorted(order) != list(range(len(proj.chapters))):
+            return
+        self._flush_current_chapter()
+        proj.chapters[:] = [proj.chapters[i] for i in order]
+        self._project_chapter_docs = {
+            new: self._project_chapter_docs[old]
+            for new, old in enumerate(order)
+            if old in self._project_chapter_docs}
+        if self._project_chapter_idx >= 0:
+            self._project_chapter_idx = order.index(self._project_chapter_idx)
+        self._after_project_change()
+
+    def _remove_chapter(self, idx: int) -> None:
+        """Take a document out of the project. Its files stay on disk."""
+        proj = self._project
+        if proj is None or not 0 <= idx < len(proj.chapters):
+            return
+        if len(proj.chapters) == 1:
+            QMessageBox.information(
+                self, "Remove document",
+                "A project needs at least one document.")
+            return
+        ch = proj.chapters[idx]
+        name = ch.label or Path(ch.path).stem
+        if QMessageBox.question(
+                self, "Remove document",
+                f"Remove \u201c{name}\u201d from the project?\n\n"
+                "Its file stays in the project folder.") != QMessageBox.Yes:
+            return
+        self._flush_current_chapter()
+        was_current = idx == self._project_chapter_idx
+        order = [i for i in range(len(proj.chapters)) if i != idx]
+        proj.chapters.pop(idx)
+        self._project_chapter_docs = {
+            new: self._project_chapter_docs[old]
+            for new, old in enumerate(order)
+            if old in self._project_chapter_docs}
+        if was_current:
+            self._project_chapter_idx = -1
+            self._after_project_change()
+            self._switch_chapter(min(idx, len(proj.chapters) - 1))
+            return
+        if self._project_chapter_idx > idx:
+            self._project_chapter_idx -= 1
+        self._after_project_change()
+
+    def _after_project_change(self) -> None:
+        """Order or membership changed: save, redraw the list, renumber
+        the open document and recompile."""
+        self._project_sidebar.set_project(self._project)
+        self._project_sidebar.set_active_index(self._project_chapter_idx)
+        if self._project_chapter_idx >= 0:
+            self._editor.set_heading_offset(
+                self._heading_offset_before(self._project_chapter_idx))
+        if self._project_path is not None:
+            self._save_project()
+        if self._auto_compile:
+            self._kick_compile()
 
     def _on_add_document(self) -> None:
         if self._project is not None:
