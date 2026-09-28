@@ -59,7 +59,7 @@ TEMPLATE_CHOICES = [
 ]
 
 from .model import (
-    Abstract, Author, Citation, Comment, CrossRef, Document, DocMeta, Figure,
+    Abstract, Affiliation, Author, Citation, Correspondence, Comment, CrossRef, Document, DocMeta, Figure,
     Footnote, Frame, Highlight, HIGHLIGHT_COLORS, InlineRaw, Keywords, Link,
     List as ListNode, ListItem, MathBlock, MathInline, Paragraph, RawLatex,
     Section, Table, Text, Title,
@@ -347,6 +347,8 @@ _STATE_ABSTRACT = 9     # Abstract paragraph; consecutive blocks merge
 _STATE_KEYWORDS = 10    # Keyword line; consecutive blocks merge with \sep
 _STATE_CHAPTER = 11     # \chapter — only valid in report/book/memoir classes
 _STATE_FRAME = 12       # \begin{frame} — only valid in beamer class
+_STATE_AFFILIATION = 13  # Institution line under the authors
+_STATE_CORRESPONDENCE = 14  # Corresponding-author note (\thanks)
 # Unnumbered variants: \section*{}, \subsection*{}, etc.
 # State = 20 + level for headings, 31 for chapter*.
 _STATE_HEADING_STAR_BASE = 20   # 21..25 = heading 1*..5*
@@ -559,6 +561,8 @@ def _style_code(state: int) -> int | None:
     if state == _STATE_KEYWORDS: return -4
     if state in (_STATE_CHAPTER, _STATE_CHAPTER_STAR): return -5
     if state == _STATE_FRAME: return -6
+    if state == _STATE_AFFILIATION: return -7
+    if state == _STATE_CORRESPONDENCE: return -8
     if 1 <= state <= 5: return state
     if _STATE_HEADING_STAR_BASE < state <= _STATE_HEADING_STAR_BASE + 5:
         return state - _STATE_HEADING_STAR_BASE
@@ -602,10 +606,16 @@ def _title_block_format() -> QTextBlockFormat:
     return bfmt
 
 
-def _author_char_format() -> QTextCharFormat:
+# Title-block line sizes relative to body text, matching \maketitle's
+# \large author and \small affiliation so the page looks like the PDF.
+_TITLE_BLOCK_SCALE = {-2: 1.2, -7: 0.9, -8: 0.8}
+
+
+def _author_char_format(body_pt: float = 12,
+                        family: str | None = None) -> QTextCharFormat:
     fmt = QTextCharFormat()
-    f = QFont()
-    f.setItalic(True); f.setPointSize(14)
+    f = QFont(family) if family else QFont()
+    f.setItalic(True); f.setPointSizeF(body_pt * _TITLE_BLOCK_SCALE[-2])
     fmt.setFont(f)
     fmt.setForeground(QColor("#555"))
     return fmt
@@ -615,6 +625,25 @@ def _author_block_format() -> QTextBlockFormat:
     bfmt = QTextBlockFormat()
     bfmt.setAlignment(Qt.AlignHCenter)
     bfmt.setTopMargin(0); bfmt.setBottomMargin(24)
+    return bfmt
+
+
+def _affiliation_char_format(correspondence: bool = False,
+                             body_pt: float = 12,
+                             family: str | None = None) -> QTextCharFormat:
+    fmt = QTextCharFormat()
+    f = QFont(family) if family else QFont()
+    f.setItalic(not correspondence)
+    f.setPointSizeF(body_pt * _TITLE_BLOCK_SCALE[-8 if correspondence else -7])
+    fmt.setFont(f)
+    fmt.setForeground(QColor("#555"))
+    return fmt
+
+
+def _affiliation_block_format() -> QTextBlockFormat:
+    bfmt = QTextBlockFormat()
+    bfmt.setAlignment(Qt.AlignHCenter)
+    bfmt.setTopMargin(0); bfmt.setBottomMargin(6)
     return bfmt
 
 
@@ -1540,7 +1569,16 @@ class DocumentEditor(QWidget):
             cursor.setBlockFormat(_author_block_format())
             cursor.block().setUserState(_STATE_AUTHOR)
             for inline in block.children:
-                self._insert_inline(cursor, inline, base_format=_author_char_format())
+                self._insert_inline(cursor, inline, base_format=self._title_block_fmt(-2))
+            return
+        if isinstance(block, (Affiliation, Correspondence)):
+            corr = isinstance(block, Correspondence)
+            cursor.setBlockFormat(_affiliation_block_format())
+            cursor.block().setUserState(
+                _STATE_CORRESPONDENCE if corr else _STATE_AFFILIATION)
+            for inline in block.children:
+                self._insert_inline(
+                    cursor, inline, base_format=self._title_block_fmt(-8 if corr else -7))
             return
         if isinstance(block, Abstract):
             cursor.setBlockFormat(_abstract_block_format())
@@ -2256,6 +2294,11 @@ class DocumentEditor(QWidget):
             return Title(children=children)
         if state == _STATE_AUTHOR:
             return Author(children=children)
+        if state == _STATE_AFFILIATION:
+            return Affiliation(
+                children=self._strip_implicit_marks(children, ["italic"]))
+        if state == _STATE_CORRESPONDENCE:
+            return Correspondence(children=children)
         if state == _STATE_ABSTRACT:
             return Abstract(children=children)
         if state == _STATE_KEYWORDS:
@@ -2426,6 +2469,7 @@ class DocumentEditor(QWidget):
             -1 = Title,  -2 = Author,  -3 = Abstract,  -4 = Keywords,
             -5 = Chapter (\\chapter — only valid in report/book/memoir),
             -6 = Frame (\\begin{frame} — only valid in beamer),
+            -7 = Affiliation,  -8 = Correspondence,
              0 = Body,  1..5 = Heading 1..5.
         *block* defaults to the caret's line."""
         cursor = self._edit.textCursor()
@@ -2442,8 +2486,15 @@ class DocumentEditor(QWidget):
         elif level == -2:
             block.setUserState(_STATE_AUTHOR)
             QTextCursor(block).setBlockFormat(_author_block_format())
-            cfmt = _author_char_format()
+            cfmt = self._title_block_fmt(-2)
             block_cursor.mergeCharFormat(cfmt)
+        elif level in (-7, -8):
+            corr = level == -8
+            block.setUserState(
+                _STATE_CORRESPONDENCE if corr else _STATE_AFFILIATION)
+            QTextCursor(block).setBlockFormat(_affiliation_block_format())
+            cfmt = self._title_block_fmt(level)
+            block_cursor.setCharFormat(cfmt)
         elif level == -3:
             block.setUserState(_STATE_ABSTRACT)
             QTextCursor(block).setBlockFormat(_abstract_block_format())
@@ -2619,6 +2670,16 @@ class DocumentEditor(QWidget):
         zoom = self._zoom_percent / 100 if self._zoom_percent else 1.0
         return _heading_char_format(level, self._body_font_pt * zoom,
                                     self._visual_font_family)
+
+    def _title_block_fmt(self, code: int) -> QTextCharFormat:
+        """Author (-2), Affiliation (-7) or Correspondence (-8) format at
+        the current zoom and visual font, like every other style."""
+        zoom = self._zoom_percent / 100 if self._zoom_percent else 1.0
+        body = self._body_font_pt * zoom
+        if code == -2:
+            return _author_char_format(body, self._visual_font_family)
+        return _affiliation_char_format(code == -8, body,
+                                        self._visual_font_family)
 
     def _title_fmt(self) -> QTextCharFormat:
         zoom = self._zoom_percent / 100 if self._zoom_percent else 1.0
@@ -3374,6 +3435,9 @@ class DocumentEditor(QWidget):
         Qt otherwise hands it whatever font the caret last held (another
         line's heading size, or none at all after an undo)."""
         code = _style_code(block.userState())
+        if code in _TITLE_BLOCK_SCALE:
+            self._conform_title_block(block, code)
+            return
         if code is None or code < 0:
             return
         zoom = self._zoom_percent / 100 if self._zoom_percent else 1.0
@@ -3398,6 +3462,32 @@ class DocumentEditor(QWidget):
             elif was_heading:
                 fix.setFontWeight(QFont.Normal)
             fix.setFontFamilies([self._visual_font_family])
+            c = QTextCursor(self._edit.document())
+            c.setPosition(pos)
+            c.setPosition(pos + n, QTextCursor.KeepAnchor)
+            c.mergeCharFormat(fix)
+
+    def _conform_title_block(self, block, code: int) -> None:
+        """Author / affiliation lines keep their style's size, family and
+        italic whatever font the caret carried in from elsewhere."""
+        want = self._title_block_fmt(code)
+        want_pt = want.fontPointSize()
+        spans = []
+        it = block.begin()
+        while not it.atEnd():
+            frag = it.fragment()
+            cf = frag.charFormat() if frag.isValid() else None
+            if (cf is not None and not cf.isImageFormat()
+                    and cf.property(_P_MATH) is None
+                    and (abs(cf.fontPointSize() - want_pt) > 0.01
+                         or cf.fontFamilies() != want.fontFamilies())):
+                spans.append((frag.position(), frag.length()))
+            it += 1
+        for pos, n in spans:
+            fix = QTextCharFormat()
+            fix.setFontPointSize(want_pt)
+            fix.setFontFamilies(want.fontFamilies())
+            fix.setFontItalic(want.fontItalic())
             c = QTextCursor(self._edit.document())
             c.setPosition(pos)
             c.setPosition(pos + n, QTextCursor.KeepAnchor)
@@ -3868,6 +3958,8 @@ class DocumentEditor(QWidget):
         if state == _STATE_KEYWORDS: return -4
         if state in (_STATE_CHAPTER, _STATE_CHAPTER_STAR): return -5
         if state == _STATE_FRAME: return -6
+        if state == _STATE_AFFILIATION: return -7
+        if state == _STATE_CORRESPONDENCE: return -8
         if 1 <= state <= 5: return state
         if _STATE_HEADING_STAR_BASE < state <= _STATE_HEADING_STAR_BASE + 5:
             return state - _STATE_HEADING_STAR_BASE

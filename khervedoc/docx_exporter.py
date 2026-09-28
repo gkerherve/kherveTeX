@@ -185,6 +185,13 @@ def export_docx(doc: M.Document, path: Path,
             para = out.add_paragraph(style="Subtitle")
             _add_inlines(para, block.children)
 
+        elif isinstance(block, (M.Affiliation, M.Correspondence)):
+            para = out.add_paragraph()
+            para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            _add_inlines(para, block.children)
+            for run in para.runs:
+                run.italic = isinstance(block, M.Affiliation)
+
         elif isinstance(block, M.Abstract):
             # Group consecutive abstracts visually — just add as italic paras.
             para = out.add_paragraph()

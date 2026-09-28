@@ -195,6 +195,23 @@ class Author:
 
 
 @dataclass
+class Affiliation:
+    """Institution line under the authors. Consecutive Author and
+    Affiliation blocks all feed the same \\author{...} so \\maketitle
+    prints each affiliation beneath the names, in the order written."""
+    children: list[Inline] = field(default_factory=list)
+    type: str = "Affiliation"
+
+
+@dataclass
+class Correspondence:
+    """Corresponding-author line (e-mail, address). Printed as a
+    footnote on the first author, the way journals mark it."""
+    children: list[Inline] = field(default_factory=list)
+    type: str = "Correspondence"
+
+
+@dataclass
 class Abstract:
     """One paragraph of the document's Abstract. Consecutive Abstract
     blocks are merged into a single \\begin{abstract}...\\end{abstract}
@@ -224,7 +241,7 @@ class Frame:
 
 
 Block = Union[Paragraph, Section, MathBlock, List, Figure, Table, RawLatex,
-              Title, Author, Abstract, Keywords, Frame]
+              Title, Author, Affiliation, Correspondence, Abstract, Keywords, Frame]
 
 
 # ---------------- Project (multi-chapter) ----------------
@@ -426,6 +443,10 @@ def _build_block(d: dict) -> Block:
         return Title(children=_build_inlines(d.get("children", [])))
     if t == "Author":
         return Author(children=_build_inlines(d.get("children", [])))
+    if t == "Affiliation":
+        return Affiliation(children=_build_inlines(d.get("children", [])))
+    if t == "Correspondence":
+        return Correspondence(children=_build_inlines(d.get("children", [])))
     if t == "Abstract":
         return Abstract(children=_build_inlines(d.get("children", [])))
     if t == "Keywords":

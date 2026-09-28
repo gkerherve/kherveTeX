@@ -7,7 +7,8 @@ from __future__ import annotations
 import re
 
 from .model import (
-    Abstract, Author, Block, ChapterEntry, Citation, Comment, CrossRef,
+    Abstract, Affiliation, Author, Block,
+    Correspondence, ChapterEntry, Citation, Comment, CrossRef,
     Document, Figure, Footnote, Frame, Highlight, HIGHLIGHT_COLORS, Inline,
     InlineRaw, Keywords, Link, List as ListNode, ListItem, MathBlock,
     MathInline, Paragraph, Project, RawLatex, Section, Table, Text, Title,
@@ -306,6 +307,9 @@ def serialize_block(node: Block, *, has_chapters: bool = False,
         # the preamble by serialize_document.
         return "\\maketitle\n"
 
+    if isinstance(node, (Affiliation, Correspondence)):
+        return ""
+
     if isinstance(node, Author):
         # Author blocks are pulled into the preamble; they don't render in
         # the body. \maketitle (emitted by the Title block) will print them.
@@ -564,6 +568,8 @@ def serialize_document(doc: Document) -> str:
     inline_title: str | None = None
     has_title_block = False
     author_parts: list[str] = []
+    affiliation_parts: list[str] = []
+    correspondence_parts: list[str] = []
     for block in doc.children:
         if isinstance(block, Title) and inline_title is None:
             inline_title = serialize_inlines(block.children)
@@ -572,6 +578,25 @@ def serialize_document(doc: Document) -> str:
             part = serialize_inlines(block.children)
             if part:
                 author_parts.append(part)
+        elif isinstance(block, Affiliation):
+            part = serialize_inlines(block.children)
+            if part:
+                affiliation_parts.append(part)
+                # Elsevier classes take affiliations as their own
+                # \address{}; everywhere else they sit under the names.
+                if not is_elsarticle:
+                    author_parts.append(f"{{\\small\\itshape {part}}}")
+        elif isinstance(block, Correspondence):
+            part = serialize_inlines(block.children)
+            if part:
+                correspondence_parts.append(part)
+    if correspondence_parts:
+        note = " ".join(correspondence_parts)
+        mark = "\\corref{cor1}" if is_elsarticle else f"\\thanks{{{note}}}"
+        if author_parts:
+            author_parts[0] += mark
+        elif not is_elsarticle:
+            author_parts.append(mark)
     title_text = inline_title if inline_title is not None else (
         escape_text((doc.meta.title or "").strip()))
     # Join multiple Author blocks with \\ so they wrap in the PDF.
@@ -601,7 +626,7 @@ def serialize_document(doc: Document) -> str:
         keywords_blocks: list = []
         body_blocks: list = []
         for block in doc.children:
-            if isinstance(block, (Title, Author)):
+            if isinstance(block, (Title, Author, Affiliation, Correspondence)):
                 continue   # handled via title_text / author_text
             if isinstance(block, Abstract):
                 abstract_blocks.append(block); continue
@@ -619,6 +644,11 @@ def serialize_document(doc: Document) -> str:
         extras_has_author = bool(re.search(r"\\author\b", extras))
         if author_text and not extras_has_author:
             front_parts.append(f"\\author{{{author_text}}}")
+        for part in affiliation_parts:
+            front_parts.append(f"\\address{{{part}}}")
+        if correspondence_parts and author_parts:
+            front_parts.append(
+                f"\\cortext[cor1]{{{' '.join(correspondence_parts)}}}")
         if extras:
             front_parts.append(extras)
         if abstract_blocks:
@@ -705,7 +735,8 @@ def serialize_document(doc: Document) -> str:
                 i += 1
                 if i < n: parts.append("\n")
                 continue
-            if isinstance(block, (Author, Abstract, Keywords)):
+            if isinstance(block, (Author, Affiliation, Correspondence,
+                                  Abstract, Keywords)):
                 i += 1
                 continue
             if isinstance(block, Frame):
@@ -731,7 +762,9 @@ def serialize_document(doc: Document) -> str:
             block = children[i]
             # Skip Title/Author/Abstract/Keywords blocks when body
             # frontmatter already carries the full metadata + \maketitle.
-            if fm_extras and isinstance(block, (Title, Author, Abstract, Keywords)):
+            if fm_extras and isinstance(block, (
+                    Title, Author, Affiliation, Correspondence,
+                    Abstract, Keywords)):
                 i += 1
                 continue
             # Skip the Title block's \maketitle if a RawLatex block
@@ -802,7 +835,7 @@ def serialize_chapter_body(doc: Document) -> str:
     i = 0
     while i < n:
         block = children[i]
-        if isinstance(block, (Title, Author)):
+        if isinstance(block, (Title, Author, Affiliation, Correspondence)):
             i += 1
             continue
         if isinstance(block, Abstract):

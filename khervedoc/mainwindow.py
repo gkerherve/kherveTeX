@@ -1902,6 +1902,8 @@ class MainWindow(QMainWindow):
         self._heading_combo.addItem("Body text", 0)
         self._heading_combo.addItem("Title", -1)
         self._heading_combo.addItem("Author", -2)
+        self._heading_combo.addItem("Affiliation", -7)
+        self._heading_combo.addItem("Correspondence", -8)
         self._heading_combo.addItem("Abstract", -3)
         self._heading_combo.addItem("Keywords", -4)
         self._heading_combo.addItem("Frame (slide)", -6)

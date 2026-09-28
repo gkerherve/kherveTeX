@@ -7,7 +7,8 @@ from __future__ import annotations
 import re
 
 from .model import (
-    Abstract, Author, Block, Citation, Comment, CrossRef, Document, Figure,
+    Abstract, Affiliation, Author, Block, Citation, Comment, Correspondence,
+    CrossRef, Document, Figure,
     Footnote, Frame, Highlight, HIGHLIGHT_COLORS, Inline, InlineRaw, Keywords,
     Link, List as ListNode, ListItem, MathBlock, MathInline, Paragraph,
     RawLatex, Section, Table, Text, Title,
@@ -155,7 +156,7 @@ def serialize_block(node: Block) -> str:
     if isinstance(node, Title):
         return ""
 
-    if isinstance(node, Author):
+    if isinstance(node, (Author, Affiliation, Correspondence)):
         return ""
 
     if isinstance(node, Abstract):
@@ -559,6 +560,13 @@ def serialize_document(doc: Document) -> str:
         lines.append(f"#align(center, text(size: 17pt, weight: \"bold\")[{title_text}])")
     if author_text:
         lines.append(f"#align(center, text(size: 12pt)[{author_text}])")
+    for block in doc.children:
+        if isinstance(block, Affiliation):
+            lines.append(f"#align(center, text(size: 10pt, style: \"italic\")"
+                         f"[{serialize_inlines(block.children)}])")
+        elif isinstance(block, Correspondence):
+            lines.append(f"#align(center, text(size: 9pt)"
+                         f"[{serialize_inlines(block.children)}])")
     if title_text or author_text:
         lines.append("")
 
@@ -568,7 +576,7 @@ def serialize_document(doc: Document) -> str:
     i = 0
     while i < n:
         block = children[i]
-        if isinstance(block, (Title, Author)):
+        if isinstance(block, (Title, Author, Affiliation, Correspondence)):
             i += 1
             continue
         # Merge consecutive Abstract blocks
