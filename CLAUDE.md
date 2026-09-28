@@ -2,7 +2,7 @@
 
 Project: WYSIWYG editor that produces LaTeX and tracks changes in Git.
 Stack: Python 3.12+, PySide6, tectonic (LaTeX engine), PyMuPDF, pygit2.
-Remote: https://github.com/gkerherve/kherveDOC
+Remote: https://github.com/gkerherve/kherveTeX
 
 ## Branching: `dev` is the working branch
 
