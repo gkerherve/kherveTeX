@@ -143,7 +143,11 @@ def test_serialize_project_master_page_numbering():
     master = serialize_project_master(proj)
     assert "\\pagenumbering{roman}" in master
     assert "\\pagenumbering{arabic}" in master
-    assert "\\setcounter{page}{1}" in master
+    # Auto numbering leaves the page counter to LaTeX...
+    assert "\\setcounter{page}" not in master
+    # ...manual numbering honours each document's start page.
+    proj.auto_page_numbers = False
+    assert "\\setcounter{page}{1}" in serialize_project_master(proj)
 
 
 def test_serialize_project_master_bibliography():

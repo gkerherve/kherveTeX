@@ -336,3 +336,42 @@ def test_saving_a_document_leaves_only_the_ktex_visible(window, tmp_path):
     assert [p.name for p in tmp_path.iterdir()
             if not p.name.startswith(".")] == ["solo.ktex"]
     assert (tmp_path / ".kherve" / "solo.tex").exists()
+
+
+def test_master_lets_latex_continue_page_numbers(window, tmp_path,
+                                                 monkeypatch):
+    from khervedoc.serializer import serialize_project_master
+    proj = _three_docs(window, tmp_path, monkeypatch)
+    proj.auto_page_numbers = True
+    for ch in proj.chapters:
+        ch.start_page = 5          # a stale guess must not reach LaTeX
+    master = serialize_project_master(proj, [])
+    assert "\\setcounter{page}" not in master
+    proj.auto_page_numbers = False
+    assert "\\setcounter{page}{5}" in serialize_project_master(proj, [])
+
+
+def test_page_counts_come_from_the_compile_log(window, tmp_path,
+                                               monkeypatch):
+    from types import SimpleNamespace
+    proj = _three_docs(window, tmp_path, monkeypatch)
+    proj.auto_page_numbers = True
+    pdf = tmp_path / "out.pdf"
+    import fitz
+    d = fitz.open()
+    for _ in range(10):
+        d.new_page()
+    d.save(pdf)
+    pdf.with_suffix(".log").write_text(
+        "KDOC:0:1:0\nKDOC:1:5:4\nKDOC:2:8:7\n"      # first pass
+        "KDOC:0:1:0\nKDOC:1:6:5\nKDOC:2:9:8\n")     # final pass wins
+    assert window._page_counts_from_log(SimpleNamespace(pdf_path=pdf, log=""))
+    assert [c.last_known_pages for c in proj.chapters] == [5, 3, 2]
+    assert [c.start_page for c in proj.chapters] == [1, 6, 9]
+
+
+def test_saving_a_project_clears_modified(window, tmp_path, monkeypatch):
+    _three_docs(window, tmp_path, monkeypatch)
+    window._editor.text_edit.document().setModified(True)
+    window._save_project()
+    assert not window._editor.text_edit.document().isModified()

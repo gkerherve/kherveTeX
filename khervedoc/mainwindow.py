@@ -1,6 +1,7 @@
 """Main window: tabbed interface (Formatted | LaTeX | PDF) with full menus."""
 from __future__ import annotations
 
+import re
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -62,6 +63,13 @@ def _roman(n: int) -> str:
             result += numeral
             n -= value
     return result
+
+
+# Written at the top of each project document's .tex: the log then says
+# how many pages were already out when the document began, which gives
+# its exact page count after a compile.
+_PAGE_MARK = ("\\typeout{{KDOC:{i}:\\thepage:"
+              "\\the\\ReadonlyShipoutCounter}}\n")
 
 
 class _ProjectSidebar(QWidget):
@@ -2477,15 +2485,21 @@ class MainWindow(QMainWindow):
             typ_path.write_text(serialize_typst(doc), encoding="utf-8")
         self._io_label.setText("")
 
+        self._git_snapshot(path.parent, path.name, tex_basename)
+
+    def _git_snapshot(self, folder: Path, name: str,
+                      file_stem: str | None) -> None:
+        """Commit the save (only *file_stem*'s files when given) and push
+        in the background if a remote is set."""
         commit_msg = getattr(self, "_pending_commit_msg", None) or \
-            f"Save {path.name} at {datetime.now().isoformat(timespec='seconds')}"
+            f"Save {name} at {datetime.now().isoformat(timespec='seconds')}"
         self._pending_commit_msg = None
         if git_backend.is_available():
-            git_backend.init_repo(path.parent)
-            oid = git_backend.commit_all(path.parent, commit_msg,
-                                         file_stem=tex_basename)
+            git_backend.init_repo(folder)
+            oid = git_backend.commit_all(folder, commit_msg,
+                                         file_stem=file_stem)
             if oid:
-                if git_backend.get_remotes(path.parent):
+                if git_backend.get_remotes(folder):
                     # Push on a background thread so a slow / dead
                     # remote can't freeze the editor for 30+ seconds
                     # every time the user hits Ctrl+S. The save itself
@@ -2494,7 +2508,7 @@ class MainWindow(QMainWindow):
                     self._status.showMessage(
                         "\u2714 Saved and snapshot created \u2014 uploading\u2026",
                         0)
-                    self._start_git_worker("push", path.parent, "origin")
+                    self._start_git_worker("push", folder, "origin")
                 else:
                     self._status.showMessage(
                         f"\u2714 Saved and snapshot created "
@@ -2577,9 +2591,10 @@ class MainWindow(QMainWindow):
         master_tex = serialize_project_master(self._project, chapter_docs)
         master_path = self._master_tex_path()
         master_path.write_text(master_tex, encoding="utf-8")
-        self._status.showMessage(
-            f"\u2714 Project saved ({master_path.name} + "
-            f"{len(self._project.chapters)} chapters)", 5000)
+        # Without this the open document kept reading as unsaved, and a
+        # project save never reached the Git history.
+        self._editor.text_edit.document().setModified(False)
+        self._git_snapshot(proj_dir, self._project_path.name, None)
 
     @staticmethod
     def _safe_name(label: str) -> str:
@@ -2946,7 +2961,8 @@ class MainWindow(QMainWindow):
                 doc = self._project_chapter_docs.get(i) \
                     or project_store.read_doc(ch_path)
                 (work / f"{_chapter_stem(ch)}.tex").write_text(
-                    chapter_body_tex(doc, ch_path.parent, proj_dir),
+                    _PAGE_MARK.format(i=i)
+                    + chapter_body_tex(doc, ch_path.parent, proj_dir),
                     encoding="utf-8")
                 docs.append(doc)
             except Exception as exc:
@@ -3014,7 +3030,8 @@ class MainWindow(QMainWindow):
             if self._side_by_side:
                 self._pdf_side_panel.show_pdf(result.pdf_path)
             if self._project is not None:
-                self._update_chapter_page_counts(result.pdf_path)
+                if not self._page_counts_from_log(result):
+                    self._update_chapter_page_counts(result.pdf_path)
             self._status.showMessage(
                 f"\u2714 Project compiled successfully", 5000)
         else:
@@ -3023,6 +3040,36 @@ class MainWindow(QMainWindow):
             if self._side_by_side:
                 self._pdf_side_panel.show_message(f"{result.error}\n\n{tail}")
         self._compile_worker = None
+
+    def _page_counts_from_log(self, result) -> bool:
+        """Each document's real page count and first page number, from the
+        markers its .tex writes to the log. False if none were found."""
+        log = result.log or ""
+        log_file = result.pdf_path.with_suffix(".log") \
+            if result.pdf_path is not None else None
+        if log_file is not None and log_file.exists():
+            log = log_file.read_text(encoding="utf-8", errors="replace")
+        found: dict[int, tuple] = {}
+        # The last pass's values win: early passes may lack the ToC.
+        for i, label, shipped in re.findall(
+                r"KDOC:(\d+):([^:\s]*):(\d+)", log):
+            found[int(i)] = (int(i), label, int(shipped))
+        marks = sorted(found.values(), key=lambda m: m[2])
+        chapters = self._project.chapters
+        marks = [m for m in marks if m[0] < len(chapters)]
+        if not marks:
+            return False
+        try:
+            import pymupdf
+            with pymupdf.open(result.pdf_path) as pdf:
+                total = len(pdf)
+        except Exception:
+            total = marks[-1][2] + 1
+        for k, (i, label, shipped) in enumerate(marks):
+            end = marks[k + 1][2] if k + 1 < len(marks) else total
+            chapters[i].last_known_pages = max(1, end - shipped)
+        self._project_sidebar.recompute_auto_pages()
+        return True
 
     def _update_chapter_page_counts(self, pdf_path: Path) -> None:
         """Read the compiled PDF and assign page counts to each enabled

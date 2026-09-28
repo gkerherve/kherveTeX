@@ -1062,7 +1062,10 @@ def serialize_project_master(proj: Project,
 
         # Enabled chapter: set counters to compensate for any skipped
         # chapters that came before.
-        if ch.start_page is not None:
+        # Auto numbering lets LaTeX carry the page on from the previous
+        # document, which is always right; start_page is then only what
+        # the Documents panel displays.
+        if ch.start_page is not None and not proj.auto_page_numbers:
             cmds.append(f"\\setcounter{{page}}{{{ch.start_page}}}")
         elif running_page_offset > 0:
             cmds.append(f"\\addtocounter{{page}}{{{running_page_offset}}}")
