@@ -366,3 +366,35 @@ def test_inserted_equations_are_typeset_not_shown_as_latex(qapp):
     assert image.height() > 1.6 * body_px
     assert source.foreground().color().alpha() == 0
     assert ed.get_document().children[0].latex == r"\frac{a + b}{c^2}"
+
+
+def test_double_click_on_the_viewport_reaches_the_filter(ed):
+    # QTextEdit delivers mouse events to its viewport, not to itself.
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+    seen = []
+    ed._edit_math_at = lambda c: seen.append(c) or True
+    ev = QMouseEvent(QEvent.Type.MouseButtonDblClick, QPointF(5, 5),
+                     QPointF(5, 5), Qt.LeftButton, Qt.LeftButton,
+                     Qt.NoModifier)
+    assert ed.eventFilter(ed._edit.viewport(), ev) is True
+    assert seen
+
+
+def test_selected_equation_is_offered_in_the_context_menu(ed):
+    sel = QTextCursor(ed._edit.document())
+    sel.setPosition(2)
+    sel.setPosition(3, QTextCursor.KeepAnchor)
+    ed._edit.setTextCursor(sel)
+    # Click far from any math so only the selection can supply it.
+    from PySide6.QtCore import QPoint
+    c = ed._math_cursor_for_menu(QPoint(10000, 10000))
+    assert c is not None and ed._has_math_at(c)
+
+
+def test_prose_selection_offers_no_equation_editor(ed):
+    sel = QTextCursor(ed._edit.document())
+    sel.setPosition(0)
+    sel.setPosition(1, QTextCursor.KeepAnchor)
+    ed._edit.setTextCursor(sel)
+    assert not ed._has_math_at(sel)

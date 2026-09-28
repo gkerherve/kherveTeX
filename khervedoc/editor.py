@@ -1059,6 +1059,8 @@ class DocumentEditor(QWidget):
         self._edit.setContextMenuPolicy(Qt.CustomContextMenu)
         self._edit.customContextMenuRequested.connect(self._show_context_menu)
         self._edit.installEventFilter(self)
+        # Mouse events land on the viewport, not the QTextEdit itself.
+        self._edit.viewport().installEventFilter(self)
         self._extra_context_actions: list[tuple[str, object]] = []
 
         self._page = QFrame()
@@ -3182,9 +3184,9 @@ class DocumentEditor(QWidget):
         # Qt can still deliver events while this widget is being torn down,
         # after _edit has gone; guard rather than raise from the override.
         edit = getattr(self, "_edit", None)
-        if (edit is not None and obj is edit
+        if (edit is not None and (obj is edit or obj is edit.viewport())
                 and event.type() == QEvent.Type.MouseButtonDblClick):
-            cursor = self._edit.cursorForPosition(event.pos())
+            cursor = self._edit.cursorForPosition(event.position().toPoint())
             qtable = cursor.currentTable()
             if qtable is not None:
                 tfmt = qtable.format()
@@ -3215,6 +3217,28 @@ class DocumentEditor(QWidget):
             return None
         new = dlg.latex()
         return new if new and new != latex else None
+
+    def _has_math_at(self, cursor: QTextCursor) -> bool:
+        block = cursor.block()
+        if block.userState() == _STATE_MATH_BLOCK:
+            return bool(block.text().replace("\ufffc", "").replace(
+                _MATH_SEP, "").strip(_LINE_SEP).strip())
+        return self._inline_math_span(block, cursor.position()) is not None
+
+    def _math_cursor_for_menu(self, pos) -> QTextCursor | None:
+        """The math the right-click refers to: the click point, else the
+        current selection (right-clicking beside a selected equation)."""
+        c = self._edit.cursorForPosition(pos)
+        if self._has_math_at(c):
+            return c
+        sel = self._edit.textCursor()
+        if sel.hasSelection():
+            for p in (sel.selectionStart(), sel.selectionStart() + 1):
+                c = QTextCursor(self._edit.document())
+                c.setPosition(min(p, self._edit.document().characterCount() - 1))
+                if self._has_math_at(c):
+                    return c
+        return None
 
     def _edit_math_at(self, cursor: QTextCursor) -> bool:
         """Re-open the equation builder for the math under *cursor*.
@@ -3403,6 +3427,15 @@ class DocumentEditor(QWidget):
         word = word_cursor.selectedText().strip()
         if word and self._spell_highlighter.is_misspelled(word):
             self._prepend_spell_suggestions(menu, word_cursor, word)
+        math_cursor = self._math_cursor_for_menu(pos)
+        if math_cursor is not None:
+            first = menu.actions()[0] if menu.actions() else None
+            act = QAction("Open in equation editor…", menu)
+            act.triggered.connect(
+                lambda _=False, c=math_cursor: self._edit_math_at(c))
+            menu.insertAction(first, act)
+            if first is not None:
+                menu.insertSeparator(first)
         fig_table = self._edit.cursorForPosition(pos).currentTable()
         if fig_table is not None and fig_table.format().property(
                 _P_FIGURE_PATH) is not None:
