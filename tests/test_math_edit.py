@@ -398,3 +398,15 @@ def test_prose_selection_offers_no_equation_editor(ed):
     sel.setPosition(1, QTextCursor.KeepAnchor)
     ed._edit.setTextCursor(sel)
     assert not ed._has_math_at(sel)
+
+
+def test_heading_on_a_new_empty_line_styles_what_is_typed(ed):
+    c = ed._edit.textCursor()
+    c.movePosition(QTextCursor.End)
+    ed._edit.setTextCursor(c)
+    ed._edit.textCursor().insertBlock()
+    ed.apply_heading(1)
+    ed._edit.textCursor().insertText("It would be")
+    b = ed._edit.document().lastBlock()
+    assert b.begin().fragment().charFormat().fontPointSize() == \
+        ed._heading_fmt(1).fontPointSize()

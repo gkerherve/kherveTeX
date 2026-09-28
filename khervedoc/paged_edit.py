@@ -252,6 +252,8 @@ class PagedTextEdit(QTextEdit):
         self._hover_img = None      # (doc pos, QRectF in view coords)
         self._img_drag = None       # (doc pos, start QPointF, w, h)
         self.viewport().setMouseTracking(True)
+        # A hovered image's position goes stale as soon as text moves.
+        self.textChanged.connect(self._forget_stale_hover)
         self._caret_timer = QTimer(self)
         self._caret_timer.timeout.connect(self._blink)
         # Number of pages in the most recent compiled PDF. The
@@ -472,8 +474,9 @@ class PagedTextEdit(QTextEdit):
         """(doc position, view rect) of a resizable image at view_pos."""
         doc = self.document()
         c = self.cursorForPosition(view_pos.toPoint())
+        last = doc.characterCount() - 1
         for pos in (c.position(), c.position() - 1):
-            if pos < 0:
+            if pos < 0 or pos + 1 > last:
                 continue
             cc = QTextCursor(doc)
             cc.setPosition(pos)
@@ -563,6 +566,11 @@ class PagedTextEdit(QTextEdit):
             self._hover_img = None
             self.viewport().update()
         super().leaveEvent(ev)
+
+    def _forget_stale_hover(self) -> None:
+        if self._img_drag is None and self._hover_img is not None:
+            self._hover_img = None
+            self.viewport().update()
 
     def _set_image_size(self, pos: int, w: float, h: float) -> None:
         cc = QTextCursor(self.document())

@@ -549,6 +549,22 @@ def screen_font_for(meta: DocMeta) -> str:
     return chosen or "Georgia"
 
 
+def _style_code(state: int) -> int | None:
+    """apply_heading's code for a text-block style, None for anything
+    that is not a styled text line (math, figures, tables, unset)."""
+    if state == _STATE_PARAGRAPH: return 0
+    if state == _STATE_TITLE: return -1
+    if state == _STATE_AUTHOR: return -2
+    if state == _STATE_ABSTRACT: return -3
+    if state == _STATE_KEYWORDS: return -4
+    if state in (_STATE_CHAPTER, _STATE_CHAPTER_STAR): return -5
+    if state == _STATE_FRAME: return -6
+    if 1 <= state <= 5: return state
+    if _STATE_HEADING_STAR_BASE < state <= _STATE_HEADING_STAR_BASE + 5:
+        return state - _STATE_HEADING_STAR_BASE
+    return None
+
+
 def _heading_char_format(level: int, body_pt: float = 12,
                          family: str | None = None) -> QTextCharFormat:
     fmt = QTextCharFormat()
@@ -1062,6 +1078,8 @@ class DocumentEditor(QWidget):
         # Mouse events land on the viewport, not the QTextEdit itself.
         self._edit.viewport().installEventFilter(self)
         self._extra_context_actions: list[tuple[str, object]] = []
+        self._in_key_edit = False
+        self._edit.document().contentsChange.connect(self._restyle_unstyled)
 
         self._page = QFrame()
         self._page.setObjectName("page")
@@ -2403,45 +2421,54 @@ class DocumentEditor(QWidget):
 
     # ---------- formatting actions (called by mainwindow) ----------
 
-    def apply_heading(self, level: int) -> None:
+    def apply_heading(self, level: int, block=None) -> None:
         """Apply a paragraph style by level code:
             -1 = Title,  -2 = Author,  -3 = Abstract,  -4 = Keywords,
             -5 = Chapter (\\chapter — only valid in report/book/memoir),
             -6 = Frame (\\begin{frame} — only valid in beamer),
-             0 = Body,  1..5 = Heading 1..5."""
+             0 = Body,  1..5 = Heading 1..5.
+        *block* defaults to the caret's line."""
         cursor = self._edit.textCursor()
-        block = cursor.block()
+        if block is None:
+            block = cursor.block()
         block_cursor = QTextCursor(block)
         block_cursor.select(QTextCursor.BlockUnderCursor)
         block_cursor.beginEditBlock()
         if level == -1:
             block.setUserState(_STATE_TITLE)
             QTextCursor(block).setBlockFormat(_title_block_format())
-            block_cursor.mergeCharFormat(self._title_fmt())
+            cfmt = self._title_fmt()
+            block_cursor.mergeCharFormat(cfmt)
         elif level == -2:
             block.setUserState(_STATE_AUTHOR)
             QTextCursor(block).setBlockFormat(_author_block_format())
-            block_cursor.mergeCharFormat(_author_char_format())
+            cfmt = _author_char_format()
+            block_cursor.mergeCharFormat(cfmt)
         elif level == -3:
             block.setUserState(_STATE_ABSTRACT)
             QTextCursor(block).setBlockFormat(_abstract_block_format())
-            block_cursor.setCharFormat(_abstract_char_format())
+            cfmt = _abstract_char_format()
+            block_cursor.setCharFormat(cfmt)
         elif level == -4:
             block.setUserState(_STATE_KEYWORDS)
             QTextCursor(block).setBlockFormat(_keywords_block_format())
-            block_cursor.setCharFormat(_keywords_char_format())
+            cfmt = _keywords_char_format()
+            block_cursor.setCharFormat(cfmt)
         elif level == -5:
             block.setUserState(_STATE_CHAPTER)
             QTextCursor(block).setBlockFormat(QTextBlockFormat())
-            block_cursor.mergeCharFormat(self._heading_fmt(0))
+            cfmt = self._heading_fmt(0)
+            block_cursor.mergeCharFormat(cfmt)
         elif level == -6:
             block.setUserState(_STATE_FRAME)
             QTextCursor(block).setBlockFormat(QTextBlockFormat())
-            block_cursor.mergeCharFormat(_frame_char_format())
+            cfmt = _frame_char_format()
+            block_cursor.mergeCharFormat(cfmt)
         elif level >= 1:
             block.setUserState(level)
             QTextCursor(block).setBlockFormat(QTextBlockFormat())
-            block_cursor.mergeCharFormat(self._heading_fmt(level))
+            cfmt = self._heading_fmt(level)
+            block_cursor.mergeCharFormat(cfmt)
         else:
             block.setUserState(_STATE_PARAGRAPH)
             QTextCursor(block).setBlockFormat(QTextBlockFormat())
@@ -2449,7 +2476,14 @@ class DocumentEditor(QWidget):
             f = QFont(self._visual_font_family)
             f.setPointSizeF(self._body_font_pt * (self._zoom_percent / 100))
             fmt.setFont(f)
+            cfmt = fmt
             block_cursor.setCharFormat(fmt)
+        # An empty line has no characters to restyle, so the style must go
+        # on the block and the caret too, or the text typed next is body.
+        QTextCursor(block).mergeBlockCharFormat(cfmt)
+        if cursor.block() == block and block.length() <= 1 \
+                and not self._in_key_edit:
+            self._edit.mergeCurrentCharFormat(cfmt)
         block_cursor.endEditBlock()
         self._apply_page_layout()
         self._on_text_changed()
@@ -3184,6 +3218,10 @@ class DocumentEditor(QWidget):
         # Qt can still deliver events while this widget is being torn down,
         # after _edit has gone; guard rather than raise from the override.
         edit = getattr(self, "_edit", None)
+        if (edit is not None and obj is edit
+                and event.type() == QEvent.Type.KeyPress
+                and self._keep_styles_across_key(event)):
+            return True
         if (edit is not None and (obj is edit or obj is edit.viewport())
                 and event.type() == QEvent.Type.MouseButtonDblClick):
             cursor = self._edit.cursorForPosition(event.position().toPoint())
@@ -3196,6 +3234,206 @@ class DocumentEditor(QWidget):
             if self._edit_math_at(cursor):
                 return True
         return super().eventFilter(obj, event)
+
+    # ----- Enter / Backspace / Delete keep block styles ----------------
+
+    def _keep_styles_across_key(self, event) -> bool:
+        """Run the key ourselves when it splits or joins text blocks, so
+        every line keeps a real style. Left to Qt, both produce a block
+        with no style (-1) whose font then decides, on save, whether it
+        is a heading — so Visual and LaTeX disagree.
+
+        Returns True if the key was handled."""
+        key = event.key()
+        if key not in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Backspace,
+                       Qt.Key_Delete):
+            return False
+        cursor = self._edit.textCursor()
+        block = cursor.block()
+        if _style_code(block.userState()) is None:
+            return False
+        self._in_key_edit = True
+        try:
+            return self._run_block_key(event, key, cursor, block)
+        finally:
+            self._in_key_edit = False
+
+    def _run_block_key(self, event, key, cursor, block) -> bool:
+        if key in (Qt.Key_Return, Qt.Key_Enter):
+            if event.modifiers() & Qt.ShiftModifier:
+                return False        # line break inside the block
+            state = block.userState()
+            at_end = (not cursor.hasSelection()
+                      and cursor.position() == block.position() + block.length() - 1)
+            cursor.beginEditBlock()
+            cursor.insertBlock()
+            # Word: Enter at the end of a heading starts body text; Enter
+            # inside one splits it into two lines of the same style.
+            self._restyle_block(cursor.block(),
+                                _STATE_PARAGRAPH if at_end else state)
+            self._restyle_block(cursor.block().previous(), state)
+            cursor.endEditBlock()
+            self._place_caret(cursor)
+        else:
+            if cursor.hasSelection():
+                first = self._edit.document().findBlock(cursor.selectionStart())
+                last = self._edit.document().findBlock(cursor.selectionEnd())
+                if first == last:
+                    return False
+                keep = first
+            elif block.length() == 2 and (
+                    (key == Qt.Key_Backspace and cursor.position() > block.position())
+                    or (key == Qt.Key_Delete and cursor.position() == block.position())):
+                # Emptying the line: Qt drops the caret's font with the
+                # last character, so retyped text would lose the style.
+                keep = block
+            elif key == Qt.Key_Backspace:
+                if cursor.position() != block.position():
+                    return False
+                keep = block.previous()
+            else:
+                if cursor.position() != block.position() + block.length() - 1:
+                    return False
+                keep = block
+            if not keep.isValid() or _style_code(keep.userState()) is None:
+                return False
+            state = keep.userState()
+            cursor.beginEditBlock()
+            if cursor.hasSelection():
+                cursor.removeSelectedText()
+            elif key == Qt.Key_Backspace:
+                cursor.deletePreviousChar()
+            else:
+                cursor.deleteChar()
+            # Like Word, the joined line takes the first line's style.
+            self._restyle_block(cursor.block(), state)
+            cursor.endEditBlock()
+            self._place_caret(cursor)
+        self._on_text_changed()
+        return True
+
+    def _restyle_block(self, block, state: int) -> None:
+        """Give *block* the style *state* and the matching fonts."""
+        code = _style_code(state)
+        if code is None or not block.isValid():
+            return
+        if code == 0:
+            self._restyle_as_body(block)
+            return
+        self.apply_heading(code, block)
+        block.setUserState(state)       # keeps a heading's starred form
+
+    def _place_caret(self, cursor: QTextCursor) -> None:
+        """Put the caret at *cursor*, typing in its line's style. Only
+        after the edit block closes: moving the caret inside one crashes
+        Qt."""
+        self._edit.setTextCursor(cursor)
+        block = cursor.block()
+        code = _style_code(block.userState())
+        if code is None:
+            return
+        if block.length() <= 1:
+            self._edit.setCurrentCharFormat(block.charFormat())
+        elif code != 0 and cursor.position() == block.position():
+            # Qt takes the caret's font from the character before it,
+            # which at the start of a line belongs to the previous line.
+            nxt = QTextCursor(cursor)
+            nxt.movePosition(QTextCursor.NextCharacter, QTextCursor.KeepAnchor)
+            self._edit.setCurrentCharFormat(nxt.charFormat())
+
+    def _restyle_unstyled(self, pos: int, _removed: int, added: int) -> None:
+        """Undo, redo and paste bring lines back with no stored style
+        (Qt's undo does not record it). Give each such line the style the
+        LaTeX would get for it, so the two never disagree."""
+        if self._building or self._in_key_edit:
+            return
+        doc = self._edit.document()
+        block = doc.findBlock(pos)
+        end = doc.findBlock(min(pos + added, doc.characterCount() - 1))
+        while block.isValid():
+            if (block.userState() == -1 and block.textList() is None
+                    and QTextCursor(block).currentTable() is None
+                    and block.text().strip("\ufffc\u2028 ")):
+                node = self._classify_text_block(block)
+                state = _STATE_PARAGRAPH
+                if isinstance(node, Section):
+                    state = (_STATE_CHAPTER if node.level == 0
+                             else node.level)
+                elif isinstance(node, Title):
+                    state = _STATE_TITLE
+                elif isinstance(node, Author):
+                    state = _STATE_AUTHOR
+                block.setUserState(state)
+            self._conform_fonts(block)
+            if block == end:
+                break
+            block = block.next()
+
+    def _conform_fonts(self, block) -> None:
+        """Text typed or restored into a line takes that line's size:
+        Qt otherwise hands it whatever font the caret last held (another
+        line's heading size, or none at all after an undo)."""
+        code = _style_code(block.userState())
+        if code is None or code < 0:
+            return
+        zoom = self._zoom_percent / 100 if self._zoom_percent else 1.0
+        body_pt = self._body_font_pt * zoom
+        want = body_pt if code == 0 else self._heading_fmt(code).fontPointSize()
+        spans = []
+        it = block.begin()
+        while not it.atEnd():
+            frag = it.fragment()
+            cf = frag.charFormat() if frag.isValid() else None
+            if (cf is not None and not cf.isImageFormat()
+                    and cf.property(_P_MATH) is None
+                    and abs(cf.fontPointSize() - want) > 0.01):
+                spans.append((frag.position(), frag.length(),
+                              cf.fontPointSize() > body_pt * 1.1))
+            it += 1
+        for pos, n, was_heading in spans:
+            fix = QTextCharFormat()
+            fix.setFontPointSize(want)
+            if code != 0:
+                fix.setFontWeight(QFont.Bold)
+            elif was_heading:
+                fix.setFontWeight(QFont.Normal)
+            fix.setFontFamilies([self._visual_font_family])
+            c = QTextCursor(self._edit.document())
+            c.setPosition(pos)
+            c.setPosition(pos + n, QTextCursor.KeepAnchor)
+            c.mergeCharFormat(fix)
+
+    def _restyle_as_body(self, block) -> None:
+        """Body style without flattening the paragraph: only text still
+        in another style's font (a heading's, say) is reset, so bold or
+        italic words the user set survive."""
+        block.setUserState(_STATE_PARAGRAPH)
+        QTextCursor(block).setBlockFormat(QTextBlockFormat())
+        zoom = self._zoom_percent / 100 if self._zoom_percent else 1.0
+        body_pt = self._body_font_pt * zoom
+        fmt = QTextCharFormat()
+        f = QFont(self._visual_font_family)
+        f.setPointSizeF(body_pt)
+        fmt.setFont(f)
+
+        def foreign(cf) -> bool:
+            return abs(cf.fontPointSize() - body_pt) > 0.01
+
+        it = block.begin()
+        spans = []
+        while not it.atEnd():
+            frag = it.fragment()
+            if frag.isValid() and not frag.charFormat().isImageFormat() \
+                    and foreign(frag.charFormat()):
+                spans.append((frag.position(), frag.length()))
+            it += 1
+        for pos, n in spans:
+            c = QTextCursor(self._edit.document())
+            c.setPosition(pos)
+            c.setPosition(pos + n, QTextCursor.KeepAnchor)
+            c.setCharFormat(fmt)
+        if foreign(block.charFormat()):
+            QTextCursor(block).setBlockCharFormat(fmt)
 
     # ----- double-click-to-re-edit equations --------------------------
 
