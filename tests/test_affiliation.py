@@ -122,3 +122,20 @@ def test_formatting_marks_are_display_only():
     e.set_show_formatting_marks(False)
     assert not (e._edit.document().defaultTextOption().flags()
                 & QTextOption.ShowTabsAndSpaces)
+
+
+def test_table_cell_given_as_list_does_not_crash_get_document():
+    import os
+    import pytest
+    pytest.importorskip("PySide6")
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from khervedoc.editor import DocumentEditor
+    from khervedoc.model import Table
+    QApplication.instance() or QApplication([])
+
+    e = DocumentEditor()
+    e.set_document(Document(meta=DocMeta(), children=[
+        Table(rows=[["a", ["b", "c"]], ["1", "2"]])]))
+    tables = [b for b in e.get_document().children if isinstance(b, Table)]
+    assert tables[0].rows[0][1] == "b c"

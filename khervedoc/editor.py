@@ -885,6 +885,16 @@ def _parse_column_spec(spec: str, ncols: int) -> tuple[list[str], list[bool]]:
 _CELL_ALIGN = {"l": Qt.AlignLeft, "c": Qt.AlignHCenter, "r": Qt.AlignRight}
 
 
+def _cell_text(value) -> str:
+    """A table cell as text, whatever produced it: tables built through
+    the assistant bridge can carry a cell as a list of runs."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)):
+        return " ".join(_cell_text(v) for v in value)
+    return "" if value is None else str(value)
+
+
 def _cell_display_text(raw: str) -> str:
     display = _re.sub(r"\\(?:textbf|textit|emph|texttt)\{([^}]*)\}", r"\1", raw)
     return display.strip()
@@ -1759,7 +1769,7 @@ class DocumentEditor(QWidget):
         for r, row in enumerate(table.rows):
             for c in range(ncols):
                 cell = qtable.cellAt(r, c)
-                raw = row[c] if c < len(row) else ""
+                raw = _cell_text(row[c]) if c < len(row) else ""
                 cf = cell.format()
                 cf.setProperty(_P_CELL_RAW, raw)
                 cell.setFormat(cf)
@@ -2452,6 +2462,8 @@ class DocumentEditor(QWidget):
                 cell = qtable.cellAt(r, c)
                 shown = cell.firstCursorPosition().block().text()
                 raw = cell.format().property(_P_CELL_RAW)
+                if raw is not None:
+                    raw = _cell_text(raw)
                 # Unchanged cell: return its original LaTeX, so \\textbf,
                 # math and macros survive; an edited cell takes the new text.
                 if raw is not None and _cell_display_text(raw) == shown.strip():
