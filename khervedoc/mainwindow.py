@@ -1179,7 +1179,7 @@ class MainWindow(QMainWindow):
                                shortcut=QKeySequence.New, triggered=self._new)
         self.act_new_window = QAction("New &window", self,
                                       shortcut=QKeySequence("Ctrl+Shift+N"),
-                                      triggered=self._new_window)
+                                      triggered=self._new_window_welcome)
         self.act_open = QAction(icons.file_open(), "&Open...", self,
                                 shortcut=QKeySequence.Open, triggered=self._open)
         self.act_open_in_new_window = QAction(
@@ -2090,6 +2090,12 @@ class MainWindow(QMainWindow):
         win.apply_layout_mode(self._settings.value("layout_mode", "side"))
         win.show()
         return win
+
+    def _new_window_welcome(self) -> None:
+        """File > New window starts where the app does: on the Welcome
+        page, so the user picks a template or recent file there."""
+        win = self._new_window()
+        QTimer.singleShot(0, win.show_welcome)
 
     def _open_in_new_window(self) -> None:
         path_s, _ = QFileDialog.getOpenFileName(
