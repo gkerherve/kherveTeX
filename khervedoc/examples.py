@@ -15,49 +15,13 @@ keystroke.
 from __future__ import annotations
 
 from .model import (
-    Abstract, Author, Citation, CrossRef, DEFAULT_PACKAGES, Document, DocMeta,
+    Abstract, Author, Citation, CrossRef, DEFAULT_PACKAGES, Document,
     Figure, Footnote, Frame, Keywords, Link, List as ListNode, ListItem,
     MathBlock, MathInline, Paragraph, RawLatex, Section, Table, Text, Title,
 )
 
 
-# ---------------------------------------------------------------- helpers
-
-def _meta(**overrides) -> DocMeta:
-    """Build a DocMeta with the KherveTeX defaults and let callers tweak
-    a few fields. Avoids each example repeating the same boilerplate."""
-    base = DocMeta(
-        title="", author="",
-        body_font_pt=11,
-        line_spacing=1.15,
-        paragraph_indent=False,
-    )
-    for k, v in overrides.items():
-        setattr(base, k, v)
-    return base
-
-
-def _p(*runs) -> Paragraph:
-    """Compact constructor: _p('hello ', ('world', ['bold']), '.')"""
-    children: list = []
-    for r in runs:
-        if isinstance(r, str):
-            children.append(Text(text=r))
-        elif isinstance(r, tuple) and len(r) == 2 and isinstance(r[0], str):
-            children.append(Text(text=r[0], marks=list(r[1])))
-        else:
-            children.append(r)
-    return Paragraph(children=children)
-
-
-def _items(*labels) -> ListNode:
-    return ListNode(ordered=False, items=[
-        ListItem(children=[Text(text=s)]) for s in labels])
-
-
-def _ord_items(*labels) -> ListNode:
-    return ListNode(ordered=True, items=[
-        ListItem(children=[Text(text=s)]) for s in labels])
+from .example_helpers import _items, _meta, _ord_items, _p  # noqa: F401
 
 
 # ---------------------------------------------------------------- welcome
@@ -4198,6 +4162,9 @@ def calendar() -> Document:
 
 # Order = display order in the Examples menu. The labels here are what
 # the user sees; the factories above produce the actual documents.
+# Kept beside the list it extends.
+from .science_examples import SCIENCE_EXAMPLES  # noqa: E402
+
 EXAMPLES: list[tuple[str, callable]] = [
     ("&Welcome tour",         welcome),
     ("&Blank document",       blank),
@@ -4222,6 +4189,7 @@ EXAMPLES: list[tuple[str, callable]] = [
     ("Wee&kly journal",       weekly_journal),
     ("Mo&nthly journal",      monthly_journal),
     ("Ca&lendar",             calendar),
+    *SCIENCE_EXAMPLES,
 ]
 
 # Journal and publisher templates — grouped by publisher so the Examples
