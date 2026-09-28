@@ -106,3 +106,45 @@ def test_pdf_can_live_in_its_own_window(window):
     window.apply_layout_mode("window")
     window.apply_layout_mode("visual")               # other modes re-dock
     assert window._pdf_window is None and window._side_tabs.isHidden()
+
+
+def _checked_layout(window):
+    return [a.text() for a in (window.act_visual_only, window.act_side_by_side,
+                               window.act_pdf_window) if a.isChecked()]
+
+
+def test_view_menu_layouts_are_one_choice(window):
+    window.show()
+    for mode, want in (("side", "PDF &side panel"),
+                       ("window", "PDF in its own &window"),
+                       ("visual", "&Visual only (like Word)"),
+                       ("page", "&Visual only (like Word)")):
+        window.apply_layout_mode(mode)
+        assert _checked_layout(window) == [want], mode
+    window.apply_layout_mode("window")
+    window._pdf_window.close()                 # docking back = side panel
+    assert _checked_layout(window) == ["PDF &side panel"]
+
+
+def test_ctrl4_toggles_between_side_panel_and_visual(window):
+    window.apply_layout_mode("side")
+    window.act_side_by_side.trigger()
+    assert window._side_tabs.isHidden() and window._auto_compile is False
+    window.act_side_by_side.trigger()
+    assert not window._side_tabs.isHidden() and window._auto_compile is True
+
+
+def test_examples_open_in_the_chosen_layout(window):
+    from khervedoc import examples
+    window.apply_layout_mode("window")
+    made = []
+    orig = window._new_window
+    window._new_window = lambda: made.append(orig()) or made[-1]
+    window._open_example(examples.EXAMPLES[0][1])
+    new = made[0]
+    try:
+        assert new._pdf_window is not None
+        assert new.act_pdf_window.isChecked()
+    finally:
+        new.close()
+        window.apply_layout_mode("side")

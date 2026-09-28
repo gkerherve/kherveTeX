@@ -1139,18 +1139,6 @@ class MainWindow(QMainWindow):
         # Apply the full named theme (tab styling, editor, latex view).
         self._apply_named_theme(self._theme_name, startup=True)
 
-        # Restore side-by-side panel state.  Only flip the checkbox and
-        # the flag here — do NOT call _toggle_side_by_side yet because it
-        # triggers _kick_compile(), and compiling before the event loop is
-        # running crashes QPdfView's OpenGL init on some Windows GPU
-        # drivers (STATUS_STACK_BUFFER_OVERRUN / 0xC0000409).
-        # Default on: with no PDF tab, the side panel is where the PDF is.
-        if self._settings.value("side_by_side", True, type=bool):
-            self.act_side_by_side.setChecked(True)
-            self._side_by_side = True
-            self._side_tabs.show()
-            self._update_zoom_visibility()
-
         # Restore fit-page-width state (default: on).
         fit_w = self._settings.value("fit_page_width", True, type=bool)
         self.act_fit_page_width.setChecked(fit_w)
@@ -1403,7 +1391,8 @@ class MainWindow(QMainWindow):
                                         triggered=lambda: self._show_side_tab(1))
         self.act_side_by_side = QAction("PDF &side panel", self,
                                         shortcut=QKeySequence("Ctrl+4"),
-                                        checkable=True, triggered=self._toggle_side_by_side)
+                                        checkable=True,
+                                        triggered=self._side_panel_shortcut)
         self.act_fit_page_width = QAction("&Fit page width", self,
                                           shortcut=QKeySequence("Ctrl+0"),
                                           checkable=True, checked=True,
@@ -1671,13 +1660,17 @@ class MainWindow(QMainWindow):
             "&Visual only (like Word)", self, checkable=True,
             statusTip="Hide the PDF and console and stop compiling "
                       "while you write",
-            triggered=lambda on: self.apply_layout_mode(
-                "visual" if on else "side"))
+            triggered=lambda: self.apply_layout_mode("visual"))
         self.act_pdf_window = QAction(
             "PDF in its own &window", self, checkable=True,
             statusTip="Show the PDF and console in a separate window, "
                       "e.g. on a second screen",
-            triggered=self.set_pdf_detached)
+            triggered=lambda: self.apply_layout_mode("window"))
+        # One choice, not three switches: where the PDF lives.
+        self._layout_group = QActionGroup(self)
+        for a in (self.act_visual_only, self.act_side_by_side,
+                  self.act_pdf_window):
+            self._layout_group.addAction(a)
         m_view.addAction(self.act_visual_only)
         m_view.addAction(self.act_side_by_side)
         m_view.addAction(self.act_pdf_window)
@@ -1775,7 +1768,8 @@ class MainWindow(QMainWindow):
         doc.meta = _apply_user_defaults(doc.meta)
         win = self._new_window()
         win._editor.set_document(doc)
-        win._kick_compile()
+        if win._auto_compile:
+            win._kick_compile()
 
     # ---- custom templates ----
 
@@ -1842,7 +1836,8 @@ class MainWindow(QMainWindow):
         doc.meta = _apply_user_defaults(doc.meta)
         win = self._new_window()
         win._editor.set_document(doc)
-        win._kick_compile()
+        if win._auto_compile:
+            win._kick_compile()
 
     def _delete_template(self, path: Path, name: str) -> None:
         r = QMessageBox.question(
@@ -2076,6 +2071,7 @@ class MainWindow(QMainWindow):
         new window so callers (Open in new window...) can route a
         document into it."""
         win = MainWindow()
+        win.apply_layout_mode(self._settings.value("layout_mode", "side"))
         win.show()
         return win
 
@@ -2103,7 +2099,6 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         self._settings.setValue("theme_name", self._theme_name)
         self._settings.setValue("theme_dark", self._is_dark)
-        self._settings.setValue("side_by_side", self._side_by_side)
         self._settings.setValue("fit_page_width", self._editor.fit_to_width())
         # Persist document-default preferences so new documents start
         # with the user's preferred font size, family, margins etc.
@@ -3305,8 +3300,7 @@ class MainWindow(QMainWindow):
 
     def _show_side_tab(self, index: int) -> None:
         if not self._side_by_side:
-            self.act_side_by_side.setChecked(True)
-            self._toggle_side_by_side(True)
+            self.apply_layout_mode("side")
         self._side_tabs.setCurrentIndex(index)
 
     def _toggle_side_by_side(self, checked: bool) -> None:
@@ -3316,7 +3310,12 @@ class MainWindow(QMainWindow):
         if checked:
             self._side_tabs.show()
             target.show()
-            self._kick_compile()
+            last = getattr(self, "_last_compile_result", None)
+            if last is not None and last.ok and last.pdf_path is not None:
+                self._pdf_side_panel.show_pdf(last.pdf_path)
+            # Deferred: compiling before the event loop runs crashes
+            # QPdfView's OpenGL init on some Windows GPU drivers.
+            QTimer.singleShot(0, self._kick_compile)
         else:
             target.hide()
         self._update_zoom_visibility()
@@ -3339,7 +3338,6 @@ class MainWindow(QMainWindow):
             self._pdf_window = win
             win.show()
             self._side_by_side = True
-            self.act_side_by_side.setChecked(True)
         else:
             win = self._pdf_window
             self._pdf_window = None
@@ -3347,12 +3345,19 @@ class MainWindow(QMainWindow):
             self._splitter.addWidget(self._side_tabs)
             self._side_tabs.setVisible(self._side_by_side)
             win.close_quietly()
-        self.act_pdf_window.setChecked(detached)
         self._update_zoom_visibility()
 
     def _reattach_pdf_from_window(self) -> None:
         """The PDF window's own close button docks the panel back."""
-        self.set_pdf_detached(False)
+        self.apply_layout_mode("side")
+
+    def _side_panel_shortcut(self) -> None:
+        """Ctrl+4 toggles: side panel on, or back to the visual editor
+        if it already is on."""
+        if self._side_by_side and self._pdf_window is None:
+            self.apply_layout_mode("visual")
+        else:
+            self.apply_layout_mode("side")
 
     def _toggle_fit_page_width(self, checked: bool) -> None:
         self._editor.set_fit_to_width(checked)
@@ -4572,13 +4577,14 @@ class MainWindow(QMainWindow):
         visual = mode in ("visual", "page")
         self.set_pdf_detached(mode == "window")
         self._project_dock.setVisible(mode != "page")
-        self.act_visual_only.setChecked(visual)
-        self.act_side_by_side.setChecked(not visual)
+        {"visual": self.act_visual_only, "page": self.act_visual_only,
+         "window": self.act_pdf_window}.get(
+            mode, self.act_side_by_side).setChecked(True)
         self.act_auto_compile.setChecked(not visual)
         self._auto_compile = not visual
-        self._toggle_side_by_side(not visual)   # kicks a compile if shown
         if visual:
             self._toggle_auto_compile(False)
+        self._toggle_side_by_side(not visual)
         self._settings.setValue("layout_mode", mode)
 
     def show_welcome(self) -> None:
