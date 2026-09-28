@@ -39,7 +39,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-Name: "fileassoc_ktexz"; Description: "Associate .ktexz files with {#MyAppName}"; GroupDescription: "File associations:"
+Name: "fileassoc_ktexz"; Description: "Associate .ktex and .ktexz files with {#MyAppName}"; GroupDescription: "File associations:"
 Name: "fileassoc_kdocz"; Description: "Associate .kdocz files with {#MyAppName}"; GroupDescription: "File associations:"
 
 [Files]
@@ -51,7 +51,8 @@ Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Registry]
-; .ktexz file association
+; .ktex / .ktexz file association
+Root: HKA; Subkey: "Software\Classes\.ktex"; ValueType: string; ValueData: "KherveTeX.Document"; Flags: uninsdeletevalue; Tasks: fileassoc_ktexz
 Root: HKA; Subkey: "Software\Classes\.ktexz"; ValueType: string; ValueData: "KherveTeX.Document"; Flags: uninsdeletevalue; Tasks: fileassoc_ktexz
 Root: HKA; Subkey: "Software\Classes\KherveTeX.Document"; ValueType: string; ValueData: "KherveTeX Document"; Flags: uninsdeletekey; Tasks: fileassoc_ktexz
 Root: HKA; Subkey: "Software\Classes\KherveTeX.Document\DefaultIcon"; ValueType: string; ValueData: "{app}\{#MyAppExeName},0"; Tasks: fileassoc_ktexz

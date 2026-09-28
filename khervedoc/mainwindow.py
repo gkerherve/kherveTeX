@@ -205,7 +205,7 @@ class _ProjectSidebar(QWidget):
     def _pick_existing(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(
             self, "Add existing documents", "",
-            "KherveTeX documents (*.ktexz *.ktex.json *.kdocz *.kdoc.json"
+            "KherveTeX documents (*.ktex *.ktexz *.ktex.json *.kdocz *.kdoc.json"
             " *.tex);;All files (*)")
         if paths:
             self.addExistingRequested.emit(paths)
@@ -213,7 +213,7 @@ class _ProjectSidebar(QWidget):
     @staticmethod
     def _addable(path: str) -> bool:
         low = path.lower()
-        return low.endswith((".ktexz", ".ktex.json", ".kdocz", ".kdoc.json",
+        return low.endswith((".ktex", ".ktexz", ".ktex.json", ".kdocz", ".kdoc.json",
                              ".tex")) and not low.endswith(".kdocproj.json")
 
     def _dropped_files(self, event) -> list[str]:
@@ -902,7 +902,7 @@ class MainWindow(QMainWindow):
     # menu can list every open document.
     _windows: list["MainWindow"] = []
 
-    _OPENABLE_SUFFIXES = {".ktexz", ".ktex.json", ".kdocz", ".kdoc.json",
+    _OPENABLE_SUFFIXES = {".ktex", ".ktexz", ".ktex.json", ".kdocz", ".kdoc.json",
                           ".kdocproj.json",
                           ".tex", ".md", ".markdown", ".docx", ".pdf", ".json"}
     _IMAGE_SUFFIXES = {
@@ -1254,6 +1254,9 @@ class MainWindow(QMainWindow):
         self.act_import_md = QAction("Import .&md...", self, triggered=self._import_md)
         self.act_export_tex = QAction("Export .&tex...", self, triggered=self._export_tex)
         self.act_export_docx = QAction("Export .&docx...", self, triggered=self._export_docx)
+        self.act_export_latex_zip = QAction(
+            "Export &LaTeX package (.zip)...", self,
+            triggered=self._export_latex_zip)
         self.act_export_pdf = QAction(icons.export_pdf(), "Export .&pdf...", self,
                                       triggered=self._export_pdf)
         self.act_show_in_explorer = QAction(
@@ -1629,6 +1632,7 @@ class MainWindow(QMainWindow):
         m_import.addAction(self.act_import_md)
         m_export = m_file.addMenu("&Export")
         m_export.addAction(self.act_export_tex)
+        m_export.addAction(self.act_export_latex_zip)
         m_export.addAction(self.act_export_docx)
         m_export.addAction(self.act_export_pdf)
         m_file.addSeparator()
@@ -2156,8 +2160,8 @@ class MainWindow(QMainWindow):
     def _open_in_new_window(self) -> None:
         path_s, _ = QFileDialog.getOpenFileName(
             self, "Open document in new window", "",
-            "All supported (*.ktexz *.ktex.json *.kdocz *.kdoc.json *.tex *.md *.markdown);;"
-            "Bundled (*.ktexz *.kdocz);;JSON (*.ktex.json *.kdoc.json);;LaTeX (*.tex);;"
+            "All supported (*.ktex *.ktexz *.ktex.json *.kdocz *.kdoc.json *.tex *.md *.markdown);;"
+            "KherveTeX (*.ktex *.ktexz *.kdocz);;JSON (*.ktex.json *.kdoc.json);;LaTeX (*.tex);;"
             "Markdown (*.md *.markdown);;All files (*)")
         if not path_s:
             return
@@ -2239,9 +2243,9 @@ class MainWindow(QMainWindow):
     def _open(self) -> None:
         path_s, _ = QFileDialog.getOpenFileName(
             self, "Open document", "",
-            "All supported (*.ktexz *.ktex.json *.kdocz *.kdoc.json *.kdocproj.json *.tex *.md *.markdown *.docx *.pdf);;"
+            "All supported (*.ktex *.ktexz *.ktex.json *.kdocz *.kdoc.json *.kdocproj.json *.tex *.md *.markdown *.docx *.pdf);;"
             "Project (*.kdocproj.json);;"
-            "Bundled (*.ktexz *.kdocz);;JSON (*.ktex.json *.kdoc.json);;LaTeX (*.tex);;"
+            "KherveTeX (*.ktex *.ktexz *.kdocz);;JSON (*.ktex.json *.kdoc.json);;LaTeX (*.tex);;"
             "Markdown (*.md *.markdown);;Word (*.docx);;PDF (*.pdf);;All files (*)")
         if path_s:
             self._open_path(Path(path_s))
@@ -2405,8 +2409,8 @@ class MainWindow(QMainWindow):
 
     def _save_as(self) -> None:
         path_s, selected_filter = QFileDialog.getSaveFileName(
-            self, "Save document", "document.ktexz",
-            "Bundled KherveTeX (*.ktexz);;JSON KherveTeX (*.ktex.json)")
+            self, "Save document", "document.ktex",
+            "KherveTeX document (*.ktex);;JSON KherveTeX (*.ktex.json)")
         if not path_s: return
         path = Path(path_s)
         # If the user didn't type an extension, infer it from the chosen
@@ -2416,7 +2420,7 @@ class MainWindow(QMainWindow):
             if "ktex.json" in selected_filter:
                 path = path.with_name(path.stem + ".ktex.json")
             else:
-                path = path.with_suffix(".ktexz")
+                path = path.with_suffix(kdocz.NATIVE_SUFFIX)
         self._current_path = path
         self._editor.set_document_dir(path.parent)
         self._update_title()
@@ -2426,7 +2430,7 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _has_native_suffix(path: Path) -> bool:
         name = path.name.lower()
-        return (name.endswith(".ktexz") or name.endswith(".ktex.json")
+        return (name.endswith((".ktex", ".ktexz")) or name.endswith(".ktex.json")
                 or name.endswith(".kdocz") or name.endswith(".kdoc.json"))
 
     @staticmethod
@@ -2443,6 +2447,14 @@ class MainWindow(QMainWindow):
         self._io_label.repaint()
         doc = self._editor.get_document()
         self._editor.cleanup_orphaned_equations(doc)
+        if kdocz.is_legacy_bundle(path) and path == self._current_path:
+            # Old .ktexz / .kdocz bundles become .ktex on their next save;
+            # the old file is left in place untouched.
+            path = path.with_suffix(kdocz.NATIVE_SUFFIX)
+            self._current_path = path
+            self._update_title()
+            self._remember_recent(path)
+            self._status.showMessage(f"Saved as {path.name} (new format)", 6000)
         # Dispatch on the file extension: .kdocz is the bundled ZIP container,
         # .kdoc.json is the plain JSON model. The .tex export sits alongside
         # in both cases so users can inspect the source without unzipping.
@@ -3179,6 +3191,21 @@ class MainWindow(QMainWindow):
             if path_s:
                 Path(path_s).write_text(
                     serialize_document(self._editor.get_document()), encoding="utf-8")
+
+    def _export_latex_zip(self) -> None:
+        stem = self._doc_stem(self._current_path) if self._current_path \
+            else "document"
+        path_s, _ = QFileDialog.getSaveFileName(
+            self, "Export LaTeX package", f"{stem}.zip", "Zip archive (*.zip)")
+        if not path_s:
+            return
+        path = Path(path_s)
+        if path.suffix.lower() != ".zip":
+            path = path.with_suffix(".zip")
+        kdocz.export_latex_zip(self._editor.get_document(), path,
+                               self._resolved_source_dir() or Path.cwd(),
+                               main_name=stem)
+        self._status.showMessage(f"Exported {path}", 4000)
 
     def _export_docx(self) -> None:
         path_s, _ = QFileDialog.getSaveFileName(
@@ -4389,8 +4416,10 @@ class MainWindow(QMainWindow):
             "<h3>Saving</h3>"
             "<p>KherveTeX saves in two native formats:</p>"
             "<ul>"
-            "<li><b>.ktexz</b> &mdash; a ZIP archive containing the document "
-            "model and all embedded images. Portable and self-contained.</li>"
+            "<li><b>.ktex</b> &mdash; a ZIP archive containing the document "
+            "model, its LaTeX and all embedded figures. Portable and "
+            "self-contained. Older <b>.ktexz</b> files open and are saved "
+            "as .ktex.</li>"
             "<li><b>.ktex.json</b> &mdash; plain-text JSON. Good for version "
             "control diffs.</li>"
             "</ul>"

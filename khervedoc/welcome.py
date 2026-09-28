@@ -70,7 +70,7 @@ class WelcomeDialog(QDialog):
         for label, tip, choice in (
                 ("\U0001F4C4  New document", "A blank page", ("new",)),
                 ("\U0001F4C2  Open…", "Open or import a document "
-                 "(.ktexz, .tex, .docx, .md, .pdf)", ("open",)),
+                 "(.ktex, .tex, .docx, .md, .pdf)", ("open",)),
                 ("\U0001F4DA  New project (thesis, book)…",
                  "Several documents compiled into one PDF", ("project",)),
                 ("→  Continue with the tour",

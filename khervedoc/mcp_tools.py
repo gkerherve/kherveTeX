@@ -143,11 +143,11 @@ TOOLS: list[dict] = [
     {"name": "save_document",
      "description": "Save the document. Without `path` it saves in "
                     "place (the document must already have a file). A "
-                    "new `path` (.ktexz or .ktex.json) needs Full "
+                    "new `path` (.ktex or .ktex.json) needs Full "
                     "access.",
      "input_schema": _obj({"path": _STR})},
     {"name": "open_document",
-     "description": "Open or import a file (.ktexz, .ktex.json, .tex, "
+     "description": "Open or import a file (.ktex, .ktex.json, .tex, "
                     ".md, .docx, .pdf). Refuses to discard unsaved "
                     "changes unless discard_unsaved_changes is true — "
                     "prefer saving first. Needs Full access.",
@@ -565,7 +565,7 @@ class ToolExecutor:
         if path:
             p = Path(path).expanduser()
             if not mw._has_native_suffix(p):
-                raise ToolError("Save as .ktexz or .ktex.json; use "
+                raise ToolError("Save as .ktex or .ktex.json; use "
                                 "export_pdf for PDF output.")
             mw._current_path = p
             mw._editor.set_document_dir(p.parent)

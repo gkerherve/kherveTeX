@@ -1,12 +1,16 @@
-"""Single-file `.kdocz` container — a ZIP holding the document JSON plus
-every image the document references.
+"""Single-file `.ktex` container — a ZIP holding the document JSON plus
+every image the document references. `.ktexz` / `.kdocz` are the same
+container under its older names and still open.
 
 Layout inside the archive:
 
     manifest.json   - schema version + producing app
     document.json   - the KherveTeX document model, image paths rewritten
-                      to point at the bundled files (e.g. "images/figure_001.png")
-    images/         - the bundled image files referenced by Figure nodes
+                      to point at the bundled files ("figures/figure_001.png")
+    document.tex    - the generated LaTeX, for readers without KherveTeX
+    figures/        - the bundled image files referenced by Figure nodes
+                      (older archives used images/; paths in document.json
+                      say which)
 
 Saving: copies every Figure-referenced file into the archive and rewrites
 the in-archive document's paths to those bundled locations, so reopening
@@ -31,23 +35,28 @@ from .model import Document, Figure, from_json, to_json
 SCHEMA_VERSION = 1
 MANIFEST_BASENAME = "manifest.json"
 DOC_BASENAME = "document.json"
-IMAGES_DIR = "images"
+TEX_BASENAME = "document.tex"
+IMAGES_DIR = "figures"
+EQUATIONS_DIR = "equations"
+NATIVE_SUFFIX = ".ktex"
 
 
 def is_kdocz_path(path: Path | str) -> bool:
     s = str(path).lower()
-    return s.endswith(".kdocz") or s.endswith(".ktexz")
+    return s.endswith((".ktex", ".kdocz", ".ktexz"))
 
 
-def save_kdocz(doc: Document, out_path: Path) -> None:
-    """Write `doc` and all its referenced images to `out_path`.
+def is_legacy_bundle(path: Path | str) -> bool:
+    """A bundle under a pre-.ktex name; saving converts it to .ktex."""
+    return str(path).lower().endswith((".kdocz", ".ktexz"))
 
-    Figure nodes whose `path` resolves to a real file on disk are copied
-    into the archive and have their stored path rewritten to point inside
-    the archive. Missing files are kept as-is so the user can re-link them
-    later without losing the rest of the document.
-    """
-    out_path = Path(out_path)
+
+def _bundle_figures(doc: Document, base_dir: Path
+                    ) -> tuple[Document, list[tuple[Path, str]]]:
+    """A copy of *doc* whose Figure paths point at figures/…, plus the
+    (source file, archive name) pairs to store. Figures whose file is
+    missing keep their path so the user can re-link them later."""
+    base_dir = Path(base_dir)
     rewritten_children: list = []
     images_to_bundle: list[tuple[Path, str]] = []  # (source, arcname)
     by_source: dict[str, str] = {}                 # de-dupe identical paths
@@ -64,7 +73,7 @@ def save_kdocz(doc: Document, out_path: Path) -> None:
                 # references — this is the common case for .docx-imported
                 # documents that haven't been saved yet.
                 if not src_path.is_absolute() and not src_path.exists():
-                    candidate = out_path.parent / src
+                    candidate = base_dir / src
                     if candidate.exists():
                         src_path = candidate
                 if src_path.exists():
@@ -88,16 +97,48 @@ def save_kdocz(doc: Document, out_path: Path) -> None:
         else:
             rewritten_children.append(block)
 
-    archive_doc = Document(meta=doc.meta, children=rewritten_children)
+    return (Document(meta=doc.meta, children=rewritten_children),
+            images_to_bundle)
 
+
+def save_kdocz(doc: Document, out_path: Path) -> None:
+    """Write `doc` and all its referenced images to `out_path`, with the
+    generated LaTeX alongside so the archive is readable on its own."""
+    from .serializer import serialize_document
+    out_path = Path(out_path)
+    archive_doc, images = _bundle_figures(doc, out_path.parent)
     with zipfile.ZipFile(out_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr(MANIFEST_BASENAME, json.dumps(
-            {"format": "kdocz", "schema_version": SCHEMA_VERSION,
+            {"format": "ktex", "schema_version": SCHEMA_VERSION,
              "app": "KherveTeX"},
             indent=2))
         zf.writestr(DOC_BASENAME, to_json(archive_doc))
-        for src_path, arc_name in images_to_bundle:
+        zf.writestr(TEX_BASENAME, serialize_document(archive_doc))
+        for src_path, arc_name in images:
             zf.write(src_path, arcname=arc_name)
+
+
+def export_latex_zip(doc: Document, out_path: Path, base_dir: Path,
+                     main_name: str = "main") -> None:
+    """A ready-to-compile LaTeX package (Overleaf, journal upload):
+    main.tex, figures/ and equations/ — one .tex per display equation, so
+    they can be reused or submitted separately."""
+    from .model import MathBlock
+    from .serializer import serialize_document
+    tex_doc, images = _bundle_figures(doc, base_dir)
+    with zipfile.ZipFile(out_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(f"{main_name}.tex", serialize_document(tex_doc))
+        for src_path, arc_name in images:
+            zf.write(src_path, arcname=arc_name)
+        n = 0
+        for block in doc.children:
+            if isinstance(block, MathBlock) and block.latex.strip():
+                n += 1
+                env = "equation" if block.numbered else "equation*"
+                label = f"\\label{{{block.label}}}\n" if block.label else ""
+                zf.writestr(f"{EQUATIONS_DIR}/eq_{n:03d}.tex",
+                            f"\\begin{{{env}}}\n{label}{block.latex.strip()}"
+                            f"\n\\end{{{env}}}\n")
 
 
 def load_kdocz(path: Path, extract_to: Path | None = None) -> tuple[Document, Path]:

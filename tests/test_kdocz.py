@@ -59,10 +59,10 @@ def test_roundtrip_bundles_referenced_image(tmp_path: Path):
     out = tmp_path / "with-image.kdocz"
     save_kdocz(doc, out)
 
-    # Archive should now contain the image under images/figure_001.png.
+    # Archive should now contain the image under figures/figure_001.png.
     with zipfile.ZipFile(out) as zf:
         names = zf.namelist()
-    image_entries = [n for n in names if n.startswith("images/")]
+    image_entries = [n for n in names if n.startswith("figures/")]
     assert len(image_entries) == 1
     assert image_entries[0].endswith(".png")
 
@@ -81,7 +81,7 @@ def test_missing_image_keeps_original_path(tmp_path: Path):
     out = tmp_path / "missing.kdocz"
     save_kdocz(doc, out)
     with zipfile.ZipFile(out) as zf:
-        assert not any(n.startswith("images/") for n in zf.namelist())
+        assert not any(n.startswith("figures/") for n in zf.namelist())
     loaded, _ = load_kdocz(out, extract_to=tmp_path / "extract2")
     figs = [c for c in loaded.children if isinstance(c, Figure)]
     assert figs[0].path == "not-on-disk.png"
@@ -100,7 +100,7 @@ def test_duplicate_image_paths_bundled_once(tmp_path: Path):
     out = tmp_path / "dedupe.kdocz"
     save_kdocz(doc, out)
     with zipfile.ZipFile(out) as zf:
-        image_entries = [n for n in zf.namelist() if n.startswith("images/")]
+        image_entries = [n for n in zf.namelist() if n.startswith("figures/")]
     assert len(image_entries) == 1
 
 
@@ -113,3 +113,70 @@ def test_schema_version_too_new_rejected(tmp_path: Path):
         zf.writestr(DOC_BASENAME, '{"type":"Document","meta":{},"children":[]}')
     with pytest.raises(ValueError, match="newer KherveTeX"):
         load_kdocz(out, extract_to=tmp_path / "extract3")
+
+
+# ------------------------------------------------------------- .ktex format
+
+def test_ktex_is_a_bundle_and_old_names_are_legacy():
+    from khervedoc import kdocz
+    assert kdocz.is_kdocz_path("paper.ktex")
+    assert not kdocz.is_kdocz_path("paper.ktex.json")
+    assert kdocz.is_legacy_bundle("paper.ktexz")
+    assert not kdocz.is_legacy_bundle("paper.ktex")
+
+
+def test_ktex_holds_json_tex_and_figures(tmp_path):
+    import zipfile
+    from khervedoc import kdocz
+    from khervedoc.model import Document, Figure, Paragraph, Text
+    img = tmp_path / "plot.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n")
+    doc = Document(children=[Paragraph(children=[Text("hello")]),
+                             Figure(path=str(img), caption="A plot")])
+    out = tmp_path / "paper.ktex"
+    kdocz.save_kdocz(doc, out)
+    names = zipfile.ZipFile(out).namelist()
+    assert {"manifest.json", "document.json", "document.tex"} <= set(names)
+    assert "figures/figure_001.png" in names
+    tex = zipfile.ZipFile(out).read("document.tex").decode()
+    assert "figures/figure_001.png" in tex and "hello" in tex
+    loaded, _ = kdocz.load_kdocz(out, tmp_path / "x")
+    assert loaded.children[1].path.endswith("figures/figure_001.png")
+
+
+def test_latex_zip_export_has_main_figures_and_equations(tmp_path):
+    import zipfile
+    from khervedoc import kdocz
+    from khervedoc.model import Document, Figure, MathBlock
+    img = tmp_path / "plot.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n")
+    doc = Document(children=[
+        Figure(path="plot.png", caption="A plot"),
+        MathBlock(latex="E = mc^2", numbered=True, label="eq:e"),
+        MathBlock(latex="a^2+b^2=c^2")])
+    out = tmp_path / "pkg.zip"
+    kdocz.export_latex_zip(doc, out, tmp_path, main_name="paper")
+    z = zipfile.ZipFile(out)
+    assert set(z.namelist()) == {"paper.tex", "figures/figure_001.png",
+                                 "equations/eq_001.tex",
+                                 "equations/eq_002.tex"}
+    eq1 = z.read("equations/eq_001.tex").decode()
+    assert "\\begin{equation}" in eq1 and "\\label{eq:e}" in eq1
+    assert "\\begin{equation*}" in z.read("equations/eq_002.tex").decode()
+    assert "figures/figure_001.png" in z.read("paper.tex").decode()
+
+
+def test_old_archive_with_images_dir_still_loads(tmp_path):
+    import json
+    import zipfile
+    from khervedoc import kdocz
+    from khervedoc.model import Document, Figure, to_json
+    old = tmp_path / "old.ktexz"
+    with zipfile.ZipFile(old, "w") as zf:
+        zf.writestr("manifest.json", json.dumps(
+            {"format": "kdocz", "schema_version": 1}))
+        zf.writestr("document.json", to_json(Document(children=[
+            Figure(path="images/figure_001.png")])))
+        zf.writestr("images/figure_001.png", b"\x89PNG\r\n\x1a\n")
+    doc, _ = kdocz.load_kdocz(old, tmp_path / "x")
+    assert doc.children[0].path.endswith("images/figure_001.png")

@@ -63,7 +63,7 @@ _IMAGE_SUFFIXES = {
     ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff", ".webp", ".svg",
 }
 _DOCUMENT_SUFFIXES = {
-    ".kdocz", ".ktexz", ".tex", ".md", ".markdown", ".docx",
+    ".ktex", ".kdocz", ".ktexz", ".tex", ".md", ".markdown", ".docx",
 }
 
 
