@@ -2146,6 +2146,7 @@ class MainWindow(QMainWindow):
     # ----- file actions -----
 
     def _new(self) -> None:
+        self._leave_project()
         self._current_path = None
         self._import_source_dir = None
         self._editor.set_document(_blank_document())
@@ -2276,6 +2277,7 @@ class MainWindow(QMainWindow):
                 and kdocz.read_project_json(path) is not None):
             self._open_project_from_path(path)
             return
+        self._leave_project()
         suffix = path.suffix.lower()
         is_import_ext = suffix in (".tex", ".md", ".markdown", ".docx", ".pdf")
         self._io_start("Importing\u2026" if is_import_ext else "Opening\u2026")
@@ -2558,6 +2560,7 @@ class MainWindow(QMainWindow):
         self._open_project_from_path(Path(path_s))
 
     def _open_project_from_path(self, path: Path) -> None:
+        self._leave_project()
         try:
             proj = project_store.read_project(path)
             if proj is None:
@@ -2657,13 +2660,20 @@ class MainWindow(QMainWindow):
             ".kherve/legacy", 8000)
 
     def _close_project(self) -> None:
-        if self._project is not None:
-            self._flush_current_chapter()
+        self._new()
+
+    def _leave_project(self) -> None:
+        """Save the open project document and drop the project, before the
+        editor shows anything else. Staying in project mode made the next
+        save write the new text over whichever document was open."""
+        if self._project is None:
+            return
+        self._flush_current_chapter()
         self._project = None
         self._project_path = None
         self._project_chapter_idx = -1
         self._project_chapter_docs.clear()
-        self._new()
+        self._project_sidebar.set_active_index(-1)
 
     def _flush_current_chapter(self) -> None:
         """Save the editor's current document back to the chapter file."""
@@ -2916,6 +2926,13 @@ class MainWindow(QMainWindow):
                 block.path = str((src.parent / block.path).resolve())
         dest = project_store.unique_path(proj_dir, stem)
         project_store.write_doc(doc, dest)
+        if src.parent.resolve() == proj_dir.resolve():
+            # The .ktex replaces it; keep the folder to .ktex files only.
+            legacy = project_store.work_dir(proj_dir) / "legacy"
+            legacy.mkdir(exist_ok=True)
+            for old in (src, src.with_name(f"{stem}.tex")):
+                if old.exists():
+                    _shutil.move(str(old), str(legacy / old.name))
         return dest.name
 
     def _add_chapter_to_project(self) -> None:

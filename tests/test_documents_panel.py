@@ -375,3 +375,40 @@ def test_saving_a_project_clears_modified(window, tmp_path, monkeypatch):
     window._editor.text_edit.document().setModified(True)
     window._save_project()
     assert not window._editor.text_edit.document().isModified()
+
+
+def test_opening_another_file_never_overwrites_a_project_document(
+        window, tmp_path, monkeypatch):
+    """Regression: with a project document open, opening a single file
+    (or File > New) and saving wrote that text over the document."""
+    from khervedoc import project_store
+    from khervedoc.model import to_json
+    proj = _three_docs(window, tmp_path, monkeypatch)
+    window._switch_chapter(2)
+    results = tmp_path / proj.chapters[2].path
+    before = to_json(project_store.read_doc(results))
+    other = tmp_path / "elsewhere.kdoc.json"
+    other.write_text(to_json(Document(children=[
+        Paragraph(children=[Text("unrelated text")])])), encoding="utf-8")
+    window._open_path(other)
+    assert window._project is None
+    window._save()
+    assert to_json(project_store.read_doc(results)) == before
+    window._open_path(tmp_path / "thesis.ktex")      # back into the project
+    window._switch_chapter(2)
+    window._new()
+    monkeypatch.setattr(window, "_save_as", lambda: None)
+    window._save()
+    assert to_json(project_store.read_doc(results)) == before
+
+
+def test_converted_kdoc_json_moves_out_of_the_folder(window, tmp_path,
+                                                     monkeypatch):
+    from khervedoc.model import to_json
+    _three_docs(window, tmp_path, monkeypatch)
+    src = tmp_path / "old.kdoc.json"
+    src.write_text(to_json(Document(children=[])), encoding="utf-8")
+    window._add_existing_documents([str(src)])
+    assert not src.exists()
+    assert (tmp_path / "old.ktex").exists()
+    assert (tmp_path / ".kherve" / "legacy" / "old.kdoc.json").exists()
