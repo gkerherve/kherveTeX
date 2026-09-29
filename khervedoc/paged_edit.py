@@ -282,6 +282,9 @@ class PagedTextEdit(QTextEdit):
         # has finished — resolving at set_page_anchors() time would
         # return y=0 for every anchor before the editor is shown.
         self._page_anchors: list[tuple[int, str]] = []
+        # Printed number of the first sheet: a project document continues
+        # from the pages of the documents before it.
+        self._first_page = 1
         self._images_dir: Path | None = None
         self._image_counter = 0
         self._overlay = _PageBreakOverlay(self)
@@ -684,6 +687,12 @@ class PagedTextEdit(QTextEdit):
         self._paint_heading_numbers()
         self._paint_image_handles()
 
+    def set_first_page_number(self, n: int) -> None:
+        n = max(1, int(n or 1))
+        if n != self._first_page:
+            self._first_page = n
+            self.viewport().update()
+
     def _sheet_labels(self, sheets: int) -> list[str]:
         """Footer label per sheet. After a compile each sheet is named
         for the PDF page it shows; a sheet that only exists because the
@@ -693,8 +702,8 @@ class PagedTextEdit(QTextEdit):
         anchors = (self.page_anchor_positions()
                    if self._page_anchors and self._columns <= 1 else [])
         if not anchors:
-            return [str(k + 1) for k in range(sheets)]
-        starts = {0: 1}
+            return [str(k + self._first_page) for k in range(sheets)]
+        starts = {0: self._first_page}
         for page_no, y in anchors:
             starts.setdefault(int(y // H), page_no)
         labels, current = [], 1

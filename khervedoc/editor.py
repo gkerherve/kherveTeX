@@ -4067,6 +4067,10 @@ class DocumentEditor(QWidget):
         if block.userState() == _STATE_MATH_BLOCK:
             self._math_refresh.start()
 
+    def set_first_page_number(self, n: int) -> None:
+        """Footer number of the first page (continues across a project)."""
+        self._edit.set_first_page_number(n)
+
     def set_heading_offset(self, counters: list[int] | None) -> None:
         """Numbered headings already used by earlier documents of a
         project, per level (index 0 = chapter). LaTeX keeps counting

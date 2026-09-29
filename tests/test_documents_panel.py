@@ -412,3 +412,71 @@ def test_converted_kdoc_json_moves_out_of_the_folder(window, tmp_path,
     assert not src.exists()
     assert (tmp_path / "old.ktex").exists()
     assert (tmp_path / ".kherve" / "legacy" / "old.kdoc.json").exists()
+
+
+def _file_drop(path):
+    from PySide6.QtCore import QMimeData, QPoint, QUrl, Qt
+    from PySide6.QtGui import QDropEvent
+    mime = QMimeData()
+    mime.setUrls([QUrl.fromLocalFile(str(path))])
+    return QDropEvent(QPoint(5, 5), Qt.CopyAction, mime, Qt.LeftButton,
+                      Qt.NoModifier), mime
+
+
+def test_drop_on_panel_adds_and_keeps_the_open_document(window, tmp_path,
+                                                        monkeypatch, qapp):
+    from PySide6.QtWidgets import QApplication
+    from khervedoc.model import to_json
+    proj = _three_docs(window, tmp_path, monkeypatch)
+    window._switch_chapter(1)
+    open_text = window._editor.text_edit.toPlainText()
+    extra = tmp_path / "outside" / "extra.kdoc.json"
+    extra.parent.mkdir()
+    extra.write_text(to_json(Document(children=[
+        Paragraph(children=[Text("extra words")])])), encoding="utf-8")
+    # Anywhere on the panel, not only on the list rows.
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtGui import QDragEnterEvent
+    panel = window._project_sidebar
+    window.show(); window._project_dock.show(); qapp.processEvents()
+    ev, mime = _file_drop(extra)
+    enter = QDragEnterEvent(QPoint(5, 5), Qt.CopyAction, mime,
+                            Qt.LeftButton, Qt.NoModifier)
+    QApplication.sendEvent(panel, enter)
+    assert enter.isAccepted()
+    QApplication.sendEvent(panel, ev)
+    from PySide6.QtTest import QTest
+    QTest.qWait(50)
+    assert [c.path for c in proj.chapters][-1] == "extra.ktex"
+    assert window._project is proj
+    assert window._project_chapter_idx == 1
+    assert window._editor.text_edit.toPlainText() == open_text
+
+
+def test_drop_on_the_page_opens_only_that_file(window, tmp_path,
+                                               monkeypatch, qapp):
+    from khervedoc.model import to_json
+    _three_docs(window, tmp_path, monkeypatch)
+    solo = tmp_path / "outside.kdoc.json"
+    solo.write_text(to_json(Document(children=[
+        Paragraph(children=[Text("solo words")])])), encoding="utf-8")
+    window._editor.documentDropped.emit(str(solo))
+    qapp.processEvents()
+    assert window._project is None
+    assert "solo words" in window._editor.text_edit.toPlainText()
+
+
+def test_visual_page_number_continues_from_earlier_documents(
+        window, tmp_path, monkeypatch):
+    proj = _three_docs(window, tmp_path, monkeypatch)
+    proj.auto_page_numbers = True
+    for ch, pages in zip(proj.chapters, (2, 1, 1)):
+        ch.last_known_pages = pages
+    window._project_sidebar.recompute_auto_pages()
+    window._switch_chapter(2)
+    edit = window._editor.text_edit
+    assert edit._sheet_labels(2) == ["4", "5"]
+    window._switch_chapter(0)
+    assert edit._sheet_labels(1) == ["1"]
+    window._new()                      # a lone document starts at 1
+    assert edit._sheet_labels(1) == ["1"]

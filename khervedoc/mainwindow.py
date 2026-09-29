@@ -121,6 +121,9 @@ class _ProjectSidebar(QWidget):
         self._list.customContextMenuRequested.connect(self._on_context_menu)
         # InternalMove refuses drops from Finder; catch file drops first.
         self._list.viewport().installEventFilter(self)
+        # The rest of the panel (title, buttons, empty space) adds files
+        # too; only a drop on the page itself opens a file on its own.
+        self.setAcceptDrops(True)
         layout.addWidget(self._list, 1)
 
         # Move up / down buttons
@@ -232,16 +235,33 @@ class _ProjectSidebar(QWidget):
         return [u.toLocalFile() for u in mime.urls()
                 if u.isLocalFile() and self._addable(u.toLocalFile())]
 
+    def _accept_file_drag(self, event) -> bool:
+        files = self._dropped_files(event)
+        if not files:
+            return False
+        event.setDropAction(Qt.CopyAction)
+        event.accept()
+        if event.type() == QEvent.Drop:
+            QTimer.singleShot(
+                0, lambda f=files: self.addExistingRequested.emit(f))
+        return True
+
+    def dragEnterEvent(self, event) -> None:
+        if not self._accept_file_drag(event):
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:
+        if not self._accept_file_drag(event):
+            event.ignore()
+
+    def dropEvent(self, event) -> None:
+        if not self._accept_file_drag(event):
+            event.ignore()
+
     def eventFilter(self, obj, event) -> bool:
         if obj is self._list.viewport() and event.type() in (
                 QEvent.DragEnter, QEvent.DragMove, QEvent.Drop):
-            files = self._dropped_files(event)
-            if files:
-                event.setDropAction(Qt.CopyAction)
-                event.accept()
-                if event.type() == QEvent.Drop:
-                    QTimer.singleShot(
-                        0, lambda f=files: self.addExistingRequested.emit(f))
+            if self._accept_file_drag(event):
                 return True
         return super().eventFilter(obj, event)
 
@@ -2113,6 +2133,7 @@ class MainWindow(QMainWindow):
             return
         name = self._current_path.name if self._current_path else "Untitled"
         self._editor.set_heading_offset(None)
+        self._editor.set_first_page_number(1)
         self._project_sidebar.set_single(
             self._doc_stem(self._current_path) if self._current_path
             else "Untitled")
@@ -2356,6 +2377,14 @@ class MainWindow(QMainWindow):
         """Show a link cursor (not "copy") when dragging openable files
         over any child widget, and handle the drop itself."""
         etype = event.type()
+        if etype in (QEvent.DragEnter, QEvent.DragMove, QEvent.Drop) \
+                and isinstance(obj, QWidget) and (
+                    obj.window() is not self      # another window's drop
+                    or obj is self._project_sidebar
+                    or self._project_sidebar.isAncestorOf(obj)):
+            # The Documents panel adds dropped files to the project;
+            # opening them here would replace the project instead.
+            return False
         if etype in (QEvent.DragEnter, QEvent.DragMove):
             mime = event.mimeData()
             if mime.hasUrls():
@@ -2712,8 +2741,19 @@ class MainWindow(QMainWindow):
         self._project_sidebar.set_active_index(idx)
         self._import_source_dir = ch_path.parent
         self._editor.set_heading_offset(self._heading_offset_before(idx))
+        self._sync_first_page_number()
         self._editor.set_document(doc)
         self._update_title()
+
+    def _sync_first_page_number(self) -> None:
+        """The Visual tab's footer continues from the previous documents'
+        pages, as the compiled PDF does."""
+        start = 1
+        if self._project is not None \
+                and 0 <= self._project_chapter_idx < len(self._project.chapters):
+            start = self._project.chapters[
+                self._project_chapter_idx].start_page or 1
+        self._editor.set_first_page_number(start)
 
     def _heading_offset_before(self, idx: int) -> list[int]:
         """Heading counters after all enabled documents before *idx*,
@@ -3086,6 +3126,7 @@ class MainWindow(QMainWindow):
             end = marks[k + 1][2] if k + 1 < len(marks) else total
             chapters[i].last_known_pages = max(1, end - shipped)
         self._project_sidebar.recompute_auto_pages()
+        self._sync_first_page_number()
         return True
 
     def _update_chapter_page_counts(self, pdf_path: Path) -> None:
@@ -3144,6 +3185,7 @@ class MainWindow(QMainWindow):
         except Exception:
             return
         self._project_sidebar.recompute_auto_pages()
+        self._sync_first_page_number()
 
     def _show_in_explorer(self) -> None:
         if self._current_path is None:
