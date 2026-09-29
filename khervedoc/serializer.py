@@ -565,38 +565,9 @@ def serialize_document(doc: Document) -> str:
         packages += "\n" + review_preamble
 
     # Pull title / author content out of the body (or fall back to meta).
-    inline_title: str | None = None
-    has_title_block = False
-    author_parts: list[str] = []
-    affiliation_parts: list[str] = []
-    correspondence_parts: list[str] = []
-    for block in doc.children:
-        if isinstance(block, Title) and inline_title is None:
-            inline_title = serialize_inlines(block.children)
-            has_title_block = True
-        elif isinstance(block, Author):
-            part = serialize_inlines(block.children)
-            if part:
-                author_parts.append(part)
-        elif isinstance(block, Affiliation):
-            part = serialize_inlines(block.children)
-            if part:
-                affiliation_parts.append(part)
-                # Elsevier classes take affiliations as their own
-                # \address{}; everywhere else they sit under the names.
-                if not is_elsarticle:
-                    author_parts.append(f"{{\\small\\itshape {part}}}")
-        elif isinstance(block, Correspondence):
-            part = serialize_inlines(block.children)
-            if part:
-                correspondence_parts.append(part)
-    if correspondence_parts:
-        note = " ".join(correspondence_parts)
-        mark = "\\corref{cor1}" if is_elsarticle else f"\\thanks{{{note}}}"
-        if author_parts:
-            author_parts[0] += mark
-        elif not is_elsarticle:
-            author_parts.append(mark)
+    (inline_title, author_parts, affiliation_parts,
+     correspondence_parts) = _title_block_parts(doc.children, is_elsarticle)
+    has_title_block = inline_title is not None
     title_text = inline_title if inline_title is not None else (
         escape_text((doc.meta.title or "").strip()))
     # Join multiple Author blocks with \\ so they wrap in the PDF.
@@ -914,6 +885,42 @@ def _chapter_stem(ch: ChapterEntry) -> str:
     return re.sub(r"[^A-Za-z0-9_-]+", "_", stem).strip("_") or "chapter"
 
 
+def _title_block_parts(children: list, is_elsarticle: bool = False):
+    """(title, author lines, affiliations, correspondence) from a
+    document's Title / Author / Affiliation / Correspondence blocks."""
+    inline_title: str | None = None
+    author_parts: list[str] = []
+    affiliation_parts: list[str] = []
+    correspondence_parts: list[str] = []
+    for block in children:
+        if isinstance(block, Title) and inline_title is None:
+            inline_title = serialize_inlines(block.children)
+        elif isinstance(block, Author):
+            part = serialize_inlines(block.children)
+            if part:
+                author_parts.append(part)
+        elif isinstance(block, Affiliation):
+            part = serialize_inlines(block.children)
+            if part:
+                affiliation_parts.append(part)
+                # Elsevier classes take affiliations as their own
+                # \address{}; everywhere else they sit under the names.
+                if not is_elsarticle:
+                    author_parts.append(f"{{\\small\\itshape {part}}}")
+        elif isinstance(block, Correspondence):
+            part = serialize_inlines(block.children)
+            if part:
+                correspondence_parts.append(part)
+    if correspondence_parts:
+        note = " ".join(correspondence_parts)
+        mark = "\\corref{cor1}" if is_elsarticle else f"\\thanks{{{note}}}"
+        if author_parts:
+            author_parts[0] += mark
+        elif not is_elsarticle:
+            author_parts.append(mark)
+    return inline_title, author_parts, affiliation_parts, correspondence_parts
+
+
 def serialize_project_master(proj: Project,
                              chapter_docs: list[Document] | None = None) -> str:
     """Generate the master .tex for a multi-chapter project.
@@ -980,12 +987,24 @@ def serialize_project_master(proj: Project,
                 packages += "\n" + line
     packages += "\n" + _KSTROKE_PROVIDE
 
-    # Title / author in the preamble
+    # The title comes from the documents' own Title / Author blocks, as
+    # for a single document. The project's name is only a fallback for
+    # books; in an article it printed the file name and a date on a page
+    # of its own.
+    has_chapter = _class_supports_chapter(m.documentclass or "")
     preamble_meta = ""
-    if m.title and m.title != "Untitled":
-        preamble_meta += f"\\title{{{escape_text(m.title)}}}\n"
-    if m.author:
-        preamble_meta += f"\\author{{{escape_author(m.author)}}}\n"
+    for cdoc in chapter_docs or []:
+        title, authors, _aff, _corr = _title_block_parts(cdoc.children)
+        if title is not None:
+            preamble_meta += f"\\title{{{title or '~'}}}\n"
+            if authors:
+                preamble_meta += "\\author{" + " \\\\\n".join(authors) + "}\n"
+            break
+    else:
+        if has_chapter and m.title and m.title != "Untitled":
+            preamble_meta += f"\\title{{{escape_text(m.title)}}}\n"
+            if m.author:
+                preamble_meta += f"\\author{{{escape_author(m.author)}}}\n"
 
     # Bibliography
     bib_lines = ""
@@ -1024,7 +1043,6 @@ def serialize_project_master(proj: Project,
     # them for an article project stopped it compiling.
     klass = (m.documentclass or "").lower()
     has_matter = klass in ("book", "memoir", "scrbook", "amsbook")
-    has_chapter = _class_supports_chapter(m.documentclass or "")
     for ch in proj.chapters:
         cmds: list[str] = []
         ctype = getattr(ch, "chapter_type", "chapter")
@@ -1077,7 +1095,10 @@ def serialize_project_master(proj: Project,
         if cmds:
             body_parts.append("\n".join(cmds) + "\n")
         stem = _chapter_stem(ch)
-        body_parts.append(f"\\include{{{stem}}}\n")
+        # \include starts a new page — right for chapters, wrong for the
+        # parts of an article, which should run on.
+        cmd = "include" if has_chapter else "input"
+        body_parts.append(f"\\{cmd}{{{stem}}}\n")
 
     body = "\n".join(body_parts)
 

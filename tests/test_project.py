@@ -237,4 +237,28 @@ def test_article_project_has_no_book_only_commands():
     master = serialize_project_master(proj)
     assert "\\mainmatter" not in master
     assert "\\setcounter{chapter}" not in master
-    assert "\\include{a}" in master and "\\include{b}" in master
+    # Article parts run on (\\input), they don't each start a page.
+    assert "\\input{a}" in master and "\\input{b}" in master
+    assert "\\include{" not in master
+
+
+def test_article_project_title_comes_from_the_documents():
+    """Regression: an article project printed its file name and today's
+    date on a title page of its own instead of the paper's title."""
+    from khervedoc.model import (Author, ChapterEntry, Document, Paragraph,
+                                 Project, Text, Title)
+    proj = Project()
+    proj.meta.title = "Paper_AutoTuning"
+    proj.meta.documentclass = "article"
+    proj.chapters = [ChapterEntry(path="a.ktex"), ChapterEntry(path="b.ktex")]
+    main = Document(children=[Title(children=[Text("Tuning offsets")]),
+                              Author(children=[Text("G. Kerherve")]),
+                              Paragraph(children=[Text("body")])])
+    master = serialize_project_master(proj, [main, Document()])
+    assert "\\title{Tuning offsets}" in master
+    assert "\\author{G. Kerherve}" in master
+    assert "Paper\\_AutoTuning" not in master
+    assert master.count("\\maketitle") == 1
+    # No Title block anywhere: an article gets no title at all.
+    untitled = serialize_project_master(proj, [Document(), Document()])
+    assert "\\maketitle" not in untitled and "\\title" not in untitled

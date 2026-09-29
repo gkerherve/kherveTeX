@@ -67,7 +67,7 @@ def test_adding_a_document_shows_both(window, tmp_path, monkeypatch):
     work = tmp_path / ".kherve"
     master = (work / "thesis-master.tex").read_text()
     assert "\\begin{document}" in master           # not a chapter body
-    assert "\\include{thesis}" in master and "\\include{methods}" in master
+    assert "\\input{thesis}" in master and "\\input{methods}" in master
     assert "Original words." in (work / "thesis.tex").read_text()
 
 
@@ -127,7 +127,7 @@ def _first_number(window):
 
 def _includes(tmp_path):
     import re
-    return re.findall(r"\\include\{([^}]+)\}",
+    return re.findall(r"\\(?:include|input)\{([^}]+)\}",
                       (tmp_path / ".kherve" / "thesis-master.tex").read_text())
 
 
