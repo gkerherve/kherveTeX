@@ -569,7 +569,9 @@ class EquationEditorDialog(QDialog):
 
     _TITLE = "Equation editor"
 
-    def __init__(self, parent=None, initial_latex: str = ""):
+    def __init__(self, parent=None, initial_latex: str = "",
+                 show_layout: bool | None = None, display: bool = True,
+                 numbered: bool = True):
         super().__init__(parent)
         self.setObjectName("EquationEditor")
         self.setWindowTitle(self._TITLE)
@@ -640,13 +642,21 @@ class EquationEditorDialog(QDialog):
         self._latex_toggle.setCheckable(True)
         self._latex_toggle.toggled.connect(self._toggle_source)
         bar.addWidget(self._latex_toggle)
-        self._display_cb = QCheckBox("Display on its own line (numbered)")
-        self._display_cb.setChecked(True)
+        self._display_cb = QCheckBox("Display on its own line")
+        self._display_cb.setChecked(display)
         self._display_cb.setToolTip(
-            "Checked: a numbered display equation on its own line.\n"
+            "Checked: a display equation on its own line.\n"
             "Unchecked: inline math inside the current paragraph.")
         self._display_cb.toggled.connect(self._math.set_display)
         bar.addWidget(self._display_cb)
+        self._numbered_cb = QCheckBox("Numbered")
+        self._numbered_cb.setChecked(numbered)
+        self._numbered_cb.setEnabled(display)
+        self._numbered_cb.setToolTip(
+            "Give the display equation a number, e.g. (1).")
+        self._display_cb.toggled.connect(self._numbered_cb.setEnabled)
+        bar.addWidget(self._numbered_cb)
+        self._math.set_display(display)
         self._ph_hint = QLabel()
         self._ph_hint.setObjectName("SlotHint")
         bar.addWidget(self._ph_hint)
@@ -664,10 +674,14 @@ class EquationEditorDialog(QDialog):
         self._math.changed.connect(self._on_math_changed)
         self._edit.textChanged.connect(self._on_source_changed)
 
-        if self._initial:
+        if show_layout is None:
             # Double-click re-edit replaces the equation in place, so
             # whether it is inline or display is already decided.
+            show_layout = not self._initial
+        if not show_layout:
             self._display_cb.hide()
+            self._numbered_cb.hide()
+        if self._initial:
             self._syncing = True
             self._math.set_latex(self._initial)
             self._edit.setPlainText(
@@ -869,6 +883,9 @@ class EquationEditorDialog(QDialog):
 
     def is_display(self) -> bool:
         return self._display_cb.isChecked()
+
+    def is_numbered(self) -> bool:
+        return self.is_display() and self._numbered_cb.isChecked()
 
 
 def _flow_grid(page: QWidget) -> QHBoxLayout:

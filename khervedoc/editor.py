@@ -3584,18 +3584,49 @@ class DocumentEditor(QWidget):
             return
         text = c.selection().toPlainText()
         latex, number = convert(text)
-        dlg = EquationEditorDialog(self, initial_latex=latex)
+        whole = self._selection_is_whole_lines(c)
+        dlg = EquationEditorDialog(
+            self, initial_latex=latex, show_layout=True, display=whole,
+            numbered=number is not None or whole)
         if dlg.exec() != QDialog.Accepted or not dlg.latex().strip():
             return
-        self.replace_selection_with_math(dlg.latex(), numbered=number is not None)
+        self.replace_selection_with_math(
+            dlg.latex(), numbered=dlg.is_numbered(), display=dlg.is_display())
 
-    def replace_selection_with_math(self, latex: str, numbered: bool) -> None:
-        c = self._edit.textCursor()
+    def _selection_is_whole_lines(self, c: QTextCursor) -> bool:
         doc = self._edit.document()
         first = doc.findBlock(c.selectionStart())
         last = doc.findBlock(c.selectionEnd())
-        whole = (first == last and c.selectedText().strip()
-                 == first.text().strip()) or first != last
+        return (first == last and c.selectedText().strip()
+                == first.text().strip()) or first != last
+
+    def open_equation_editor(self, display: bool) -> None:
+        """Toolbar entry point: build an equation in the equation editor,
+        preset to inline or display (numbered) layout."""
+        from .equation_editor import EquationEditorDialog
+        dlg = EquationEditorDialog(self, show_layout=True, display=display)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        latex = dlg.latex().strip()
+        if not latex:
+            return
+        if dlg.is_display() or "\\begin{" in latex:
+            self.insert_math_block_with(latex, numbered=dlg.is_numbered())
+        else:
+            self.insert_inline_math_with(latex)
+
+    def set_math_block_numbered(self, block, numbered: bool) -> None:
+        c = QTextCursor(block)
+        bfmt = block.blockFormat()
+        bfmt.setProperty(_P_MATH_NUMBERED, numbered)
+        c.setBlockFormat(bfmt)
+        self._edit.document().setModified(True)
+
+    def replace_selection_with_math(self, latex: str, numbered: bool,
+                                    display: bool | None = None) -> None:
+        c = self._edit.textCursor()
+        whole = self._selection_is_whole_lines(c) if display is None \
+            else display
         if not whole:
             c.beginEditBlock()
             c.removeSelectedText()
@@ -3825,6 +3856,15 @@ class DocumentEditor(QWidget):
             act.triggered.connect(
                 lambda _=False, c=math_cursor: self._edit_math_at(c))
             menu.insertAction(first, act)
+            mblock = math_cursor.block()
+            if mblock.userState() == _STATE_MATH_BLOCK:
+                num = QAction("Numbered equation", menu)
+                num.setCheckable(True)
+                num.setChecked(bool(
+                    mblock.blockFormat().property(_P_MATH_NUMBERED)))
+                num.toggled.connect(
+                    lambda on, b=mblock: self.set_math_block_numbered(b, on))
+                menu.insertAction(first, num)
             if first is not None:
                 menu.insertSeparator(first)
         sel = self._edit.textCursor()

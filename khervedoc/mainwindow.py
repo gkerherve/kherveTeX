@@ -1396,10 +1396,10 @@ class MainWindow(QMainWindow):
         # Insert
         self.act_math_inline = QAction(icons.math_inline(), "Inline &math", self,
                                        shortcut=QKeySequence("Ctrl+M"),
-                                       triggered=e.insert_inline_math)
+                                       triggered=lambda: e.open_equation_editor(False))
         self.act_math_block = QAction(icons.math_block(), "Math &block", self,
                                       shortcut=QKeySequence("Ctrl+Shift+M"),
-                                      triggered=e.insert_math_block)
+                                      triggered=lambda: e.open_equation_editor(True))
         self.act_bullet = QAction(icons.bullet_list(), "Bullet &list", self,
                                   triggered=e.insert_bullet_list)
         self.act_numbered = QAction(icons.numbered_list(), "&Numbered list", self,
@@ -3917,7 +3917,8 @@ class MainWindow(QMainWindow):
             if dlg.is_display():
                 # \begin{equation} (numbered) unless the template already
                 # carries its own environment (align, cases, ...).
-                self._editor.insert_math_block_with(latex, numbered=True)
+                self._editor.insert_math_block_with(
+                    latex, numbered=dlg.is_numbered())
             else:
                 self._apply_equation_template(latex)
 
