@@ -362,7 +362,7 @@ _STATE_RAW = 102
 # Re-export from model so existing imports (tests, etc.) keep working.
 from .model import CHAPTER_CLASSES, class_supports_chapter  # noqa: F401
 from .references import ReferenceResolver
-from .paged_edit import HEADING_NUMBER_PROPERTY
+from .paged_edit import EQUATION_NUMBER_PROPERTY, HEADING_NUMBER_PROPERTY
 
 
 # ---- char-format custom property ids ----
@@ -2749,6 +2749,7 @@ class DocumentEditor(QWidget):
             offset = self._heading_offset
             has_chapters = self._has_chapter_blocks() or offset[0] > 0
             counters = list(offset)
+            eq = 0
             block = doc.firstBlock()
             while block.isValid():
                 if QTextCursor(block).currentTable() is not None:
@@ -2766,6 +2767,8 @@ class DocumentEditor(QWidget):
                 level = 0 if state == _STATE_CHAPTER else (
                     state if 1 <= state <= 5 else None)
                 if level is not None:
+                    if level == 0:
+                        eq = 0
                     counters[level] += 1
                     for i in range(level + 1, len(counters)):
                         counters[i] = 0
@@ -2778,6 +2781,16 @@ class DocumentEditor(QWidget):
                     any_level = state - _STATE_HEADING_STAR_BASE
                 elif state == _STATE_CHAPTER_STAR:
                     any_level = 0
+                eq_number = ""
+                if state == _STATE_MATH_BLOCK \
+                        and bfmt.property(_P_MATH_NUMBERED):
+                    eq += 1
+                    eq_number = (f"({counters[0]}.{eq})" if has_chapters
+                                 else f"({eq})")
+                if eq_number:
+                    bfmt.setProperty(EQUATION_NUMBER_PROPERTY, eq_number)
+                elif bfmt.hasProperty(EQUATION_NUMBER_PROPERTY):
+                    bfmt.clearProperty(EQUATION_NUMBER_PROPERTY)
                 if state == _STATE_MATH_BLOCK:
                     # \abovedisplayskip / \belowdisplayskip: 12pt at 12pt.
                     bfmt.setTopMargin(0.8 * em_px)
@@ -3621,6 +3634,7 @@ class DocumentEditor(QWidget):
         bfmt.setProperty(_P_MATH_NUMBERED, numbered)
         c.setBlockFormat(bfmt)
         self._edit.document().setModified(True)
+        self._apply_page_layout()
 
     def replace_selection_with_math(self, latex: str, numbered: bool,
                                     display: bool | None = None) -> None:

@@ -82,6 +82,7 @@ _SHEET_EDGE = QColor("#b8bcc1")
 # The number is painted, never stored as text, so it can't leak into the
 # model or the LaTeX (which numbers headings itself).
 HEADING_NUMBER_PROPERTY = QTextFormat.UserProperty + 40
+EQUATION_NUMBER_PROPERTY = QTextFormat.UserProperty + 41
 
 
 
@@ -685,6 +686,7 @@ class PagedTextEdit(QTextEdit):
             super().paintEvent(ev)
         self._paint_sheets()
         self._paint_heading_numbers()
+        self._paint_equation_numbers()
         self._paint_image_handles()
 
     def set_first_page_number(self, n: int) -> None:
@@ -789,6 +791,38 @@ class PagedTextEdit(QTextEdit):
                                        else self.palette().text().color())
                     painter.drawText(QPointF(at.x(), at.y() + line.ascent()),
                                      str(number))
+            block = block.next()
+        if painter is not None:
+            painter.end()
+
+    def _paint_equation_numbers(self) -> None:
+        """Right-align "(n)" against the text margin, vertically centred
+        on the equation, as LaTeX places \\begin{equation} numbers."""
+        doc = self.document()
+        layout = doc.documentLayout()
+        right = doc.textWidth() - doc.rootFrame().frameFormat().rightMargin()
+        visible = self.viewport().rect()
+        painter = None
+        block = doc.firstBlock()
+        while block.isValid():
+            number = block.blockFormat().property(EQUATION_NUMBER_PROPERTY)
+            if number:
+                raw = layout.blockBoundingRect(block)
+                bf = block.blockFormat()
+                top = raw.top() + bf.topMargin()
+                height = raw.height() - bf.topMargin() - bf.bottomMargin()
+                at = self.doc_to_view(0, top)
+                if at.y() + height >= visible.top() \
+                        and at.y() <= visible.bottom():
+                    if painter is None:
+                        painter = QPainter(self.viewport())
+                        painter.setFont(self.document().defaultFont())
+                        painter.setPen(self.palette().text().color())
+                    fm = painter.fontMetrics()
+                    x = self.doc_to_view(
+                        right - fm.horizontalAdvance(number), top).x()
+                    y = at.y() + (height + fm.ascent() - fm.descent()) / 2
+                    painter.drawText(QPointF(x, y), str(number))
             block = block.next()
         if painter is not None:
             painter.end()
