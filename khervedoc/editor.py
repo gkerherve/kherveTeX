@@ -608,7 +608,8 @@ def _title_block_format() -> QTextBlockFormat:
 
 # Title-block line sizes relative to body text, matching \maketitle's
 # \large author and \small affiliation so the page looks like the PDF.
-_TITLE_BLOCK_SCALE = {-2: 1.2, -7: 0.9, -8: 0.8}
+# The abstract and keywords are \small too (10.95pt under 12pt body).
+_TITLE_BLOCK_SCALE = {-2: 1.2, -3: 0.9, -4: 0.9, -7: 0.9, -8: 0.8}
 
 
 def _author_char_format(body_pt: float = 12,
@@ -647,10 +648,11 @@ def _affiliation_block_format() -> QTextBlockFormat:
     return bfmt
 
 
-def _abstract_char_format() -> QTextCharFormat:
+def _abstract_char_format(body_pt: float = 12,
+                          family: str | None = None) -> QTextCharFormat:
     fmt = QTextCharFormat()
-    f = QFont()
-    f.setPointSize(11)
+    f = QFont(family) if family else QFont()
+    f.setPointSizeF(body_pt * _TITLE_BLOCK_SCALE[-3])
     fmt.setFont(f)
     return fmt
 
@@ -666,10 +668,11 @@ def _abstract_block_format() -> QTextBlockFormat:
     return bfmt
 
 
-def _keywords_char_format() -> QTextCharFormat:
+def _keywords_char_format(body_pt: float = 12,
+                          family: str | None = None) -> QTextCharFormat:
     fmt = QTextCharFormat()
-    f = QFont()
-    f.setItalic(True); f.setPointSize(11)
+    f = QFont(family) if family else QFont()
+    f.setItalic(True); f.setPointSizeF(body_pt * _TITLE_BLOCK_SCALE[-4])
     fmt.setFont(f)
     fmt.setForeground(QColor("#444"))
     return fmt
@@ -1596,13 +1599,13 @@ class DocumentEditor(QWidget):
             cursor.setBlockFormat(_abstract_block_format())
             cursor.block().setUserState(_STATE_ABSTRACT)
             for inline in block.children:
-                self._insert_inline(cursor, inline, base_format=_abstract_char_format())
+                self._insert_inline(cursor, inline, base_format=self._title_block_fmt(-3))
             return
         if isinstance(block, Keywords):
             cursor.setBlockFormat(_keywords_block_format())
             cursor.block().setUserState(_STATE_KEYWORDS)
             for inline in block.children:
-                self._insert_inline(cursor, inline, base_format=_keywords_char_format())
+                self._insert_inline(cursor, inline, base_format=self._title_block_fmt(-4))
             return
         if isinstance(block, Frame):
             cursor.block().setUserState(_STATE_FRAME)
@@ -2512,12 +2515,12 @@ class DocumentEditor(QWidget):
         elif level == -3:
             block.setUserState(_STATE_ABSTRACT)
             QTextCursor(block).setBlockFormat(_abstract_block_format())
-            cfmt = _abstract_char_format()
+            cfmt = self._title_block_fmt(-3)
             block_cursor.setCharFormat(cfmt)
         elif level == -4:
             block.setUserState(_STATE_KEYWORDS)
             QTextCursor(block).setBlockFormat(_keywords_block_format())
-            cfmt = _keywords_char_format()
+            cfmt = self._title_block_fmt(-4)
             block_cursor.setCharFormat(cfmt)
         elif level == -5:
             block.setUserState(_STATE_CHAPTER)
@@ -2692,6 +2695,10 @@ class DocumentEditor(QWidget):
         body = self._body_font_pt * zoom
         if code == -2:
             return _author_char_format(body, self._visual_font_family)
+        if code == -3:
+            return _abstract_char_format(body, self._visual_font_family)
+        if code == -4:
+            return _keywords_char_format(body, self._visual_font_family)
         return _affiliation_char_format(code == -8, body,
                                         self._visual_font_family)
 
@@ -3526,7 +3533,9 @@ class DocumentEditor(QWidget):
             fix = QTextCharFormat()
             fix.setFontPointSize(want_pt)
             fix.setFontFamilies(want.fontFamilies())
-            fix.setFontItalic(want.fontItalic())
+            if code != -3:
+                # The abstract keeps the user's own italics.
+                fix.setFontItalic(want.fontItalic())
             c = QTextCursor(self._edit.document())
             c.setPosition(pos)
             c.setPosition(pos + n, QTextCursor.KeepAnchor)
