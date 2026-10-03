@@ -489,7 +489,7 @@ class _ProjectSidebar(QWidget):
 # ---------- background compile ----------
 
 class _PdfWindow(QWidget):
-    """Top-level window holding the PDF / console panel when detached."""
+    """Top-level window holding the PDF panel when detached."""
 
     def __init__(self, on_close, parent=None):
         super().__init__(parent, Qt.Window)
@@ -930,6 +930,15 @@ class MainWindow(QMainWindow):
     # moment the local reference falls out of scope, and so the Window
     # menu can list every open document.
     _windows: list["MainWindow"] = []
+    _updater = None
+
+    @classmethod
+    def updater(cls):
+        """The app's single auto-updater, shared by every window."""
+        if cls._updater is None:
+            from .updater import Updater
+            cls._updater = Updater()
+        return cls._updater
 
     _OPENABLE_SUFFIXES = {".ktex", ".ktexz", ".ktex.json", ".kdocz", ".kdoc.json",
                           ".kdocproj.json",
@@ -1002,19 +1011,19 @@ class MainWindow(QMainWindow):
         self._tabs = QTabWidget(self)
         self._tabs.addTab(self._editor, "Visual")
         self._tabs.addTab(self._latex_view, "Code")
-        # The PDF and compiler log live only in the right-hand side panel;
-        # _preview / _console stay as off-screen mirrors so existing
-        # update paths keep working.
+        # The compiler log sits beside the LaTeX it came from, so it stays
+        # reachable when the PDF panel is hidden or in its own window. The
+        # PDF lives only in the side panel; _preview is an off-screen
+        # mirror so existing update paths keep working.
+        self._tabs.addTab(self._console, "Console")
         self._tabs.currentChanged.connect(self._on_tab_changed)
 
         # Splitter: left = tabs, right = side panel (hidden until toggled).
         self._splitter = QSplitter(Qt.Horizontal, self)
         self._splitter.addWidget(self._tabs)
         self._pdf_side_panel = PdfPreview(self)
-        self._console_side = self._make_console()
         self._side_tabs = QTabWidget(self)
         self._side_tabs.addTab(self._pdf_side_panel, "PDF")
-        self._side_tabs.addTab(self._console_side, "Console")
         self._side_tabs.hide()
         self._splitter.addWidget(self._side_tabs)
         self._pdf_window: _PdfWindow | None = None
@@ -1288,6 +1297,15 @@ class MainWindow(QMainWindow):
             triggered=self._export_latex_zip)
         self.act_export_pdf = QAction(icons.export_pdf(), "Export .&pdf...", self,
                                       triggered=self._export_pdf)
+        self.act_print = QAction(icons.printer(), "&Print…", self,
+                                 shortcut=QKeySequence.Print,
+                                 statusTip="Print the compiled PDF",
+                                 triggered=self._print)
+        self.act_print_preview = QAction(
+            icons.print_preview(), "Print pre&view…", self,
+            shortcut=QKeySequence("Ctrl+Shift+P"),
+            statusTip="See the pages exactly as they will print",
+            triggered=self._print_preview)
         self.act_show_in_explorer = QAction(
             "Show in file e&xplorer", self,
             triggered=self._show_in_explorer)
@@ -1419,7 +1437,11 @@ class MainWindow(QMainWindow):
                                  triggered=e.insert_table)
         self.act_drawing = QAction(icons.drawing(), "&Drawing…", self,
                                    triggered=e.insert_drawing)
-        self.act_raw = QAction("Raw LaTeX...", self, triggered=e.insert_raw_latex)
+        self.act_flowchart = QAction(
+            icons.flowchart_builder(), "Fl&owchart builder…", self,
+            shortcut=QKeySequence("Ctrl+Shift+F"),
+            triggered=e.insert_flowchart)
+        self.act_raw =QAction("Raw LaTeX...", self, triggered=e.insert_raw_latex)
         self.act_compile_start = QAction(
             "Compile start marker", self,
             statusTip="Insert a compile-range start marker",
@@ -1482,7 +1504,7 @@ class MainWindow(QMainWindow):
                                     triggered=lambda: self._show_side_tab(0))
         self.act_view_console = QAction("Show Co&nsole", self,
                                         shortcut=QKeySequence("Ctrl+6"),
-                                        triggered=lambda: self._show_side_tab(1))
+                                        triggered=lambda: self._tabs.setCurrentWidget(self._console))
         self.act_side_by_side = QAction("PDF &side panel", self,
                                         shortcut=QKeySequence("Ctrl+4"),
                                         checkable=True,
@@ -1665,6 +1687,9 @@ class MainWindow(QMainWindow):
         m_export.addAction(self.act_export_docx)
         m_export.addAction(self.act_export_pdf)
         m_file.addSeparator()
+        m_file.addAction(self.act_print_preview)
+        m_file.addAction(self.act_print)
+        m_file.addSeparator()
         m_file.addAction(self.act_show_in_explorer)
         m_file.addAction(self.act_doc_props)
         m_file.addAction(self.act_manage_styles)
@@ -1739,6 +1764,7 @@ class MainWindow(QMainWindow):
         m_insert.addSeparator()
         m_insert.addAction(self.act_figure); m_insert.addAction(self.act_table)
         m_insert.addAction(self.act_drawing)
+        m_insert.addAction(self.act_flowchart)
         m_insert.addSeparator()
         m_insert.addAction(self.act_pagebreak); m_insert.addAction(self.act_hrule)
         m_insert.addAction(self.act_multicol)
@@ -1760,12 +1786,12 @@ class MainWindow(QMainWindow):
         m_view.addSeparator()
         self.act_visual_only = QAction(
             "&Visual only (like Word)", self, checkable=True,
-            statusTip="Hide the PDF and console and stop compiling "
+            statusTip="Hide the PDF and stop compiling "
                       "while you write",
             triggered=lambda: self.apply_layout_mode("visual"))
         self.act_pdf_window = QAction(
             "PDF in its own &window", self, checkable=True,
-            statusTip="Show the PDF and console in a separate window, "
+            statusTip="Show the PDF in a separate window, "
                       "e.g. on a second screen",
             triggered=lambda: self.apply_layout_mode("window"))
         # One choice, not three switches: where the PDF lives.
@@ -1859,6 +1885,8 @@ class MainWindow(QMainWindow):
                                  triggered=self.show_welcome))
         m_help.addAction(self.act_help_guide)
         m_help.addAction(self.act_shortcuts)
+        m_help.addSeparator()
+        MainWindow.updater().add_menu_actions(m_help)
         m_help.addSeparator()
         m_help.addAction(self.act_about)
 
@@ -1980,6 +2008,7 @@ class MainWindow(QMainWindow):
 
         tb.addAction(self.act_new); tb.addAction(self.act_open)
         tb.addAction(self.act_save); tb.addAction(self.act_export_pdf)
+        tb.addAction(self.act_print)
         tb.addAction(self.act_open_project)
         tb.addSeparator()
         tb.addAction(self.act_undo); tb.addAction(self.act_redo)
@@ -2107,6 +2136,7 @@ class MainWindow(QMainWindow):
         self._side_tb.addAction(self.act_figure)
         self._side_tb.addAction(self.act_table)
         self._side_tb.addAction(self.act_drawing)
+        self._side_tb.addAction(self.act_flowchart)
         self._side_tb.addSeparator()
         self._side_tb.addAction(self.act_cols_1)
         self._side_tb.addAction(self.act_cols_2)
@@ -2265,6 +2295,8 @@ class MainWindow(QMainWindow):
             MainWindow._windows.remove(self)
         except ValueError:
             pass
+        if not MainWindow._windows and MainWindow._updater is not None:
+            MainWindow._updater.wait(3000)
         # Refresh the Window menu on all surviving windows so this
         # document no longer appears in the list.
         for w in MainWindow._windows:
@@ -2385,60 +2417,80 @@ class MainWindow(QMainWindow):
             # The Documents panel adds dropped files to the project;
             # opening them here would replace the project instead.
             return False
-        if etype in (QEvent.DragEnter, QEvent.DragMove):
-            mime = event.mimeData()
-            if mime.hasUrls():
-                for url in mime.urls():
-                    if url.isLocalFile():
-                        suffix = Path(url.toLocalFile()).suffix.lower()
-                        if suffix in self._OPENABLE_SUFFIXES | self._IMAGE_SUFFIXES:
-                            event.setDropAction(Qt.LinkAction)
-                            event.accept()
-                            return True
-        if etype == QEvent.Drop:
-            mime = event.mimeData()
-            if mime.hasUrls():
-                for url in mime.urls():
-                    if url.isLocalFile():
-                        path = Path(url.toLocalFile())
-                        suffix = path.suffix.lower()
-                        if suffix in self._OPENABLE_SUFFIXES:
-                            event.accept()
-                            self._open_path(path)
-                            return True
-                        if suffix in self._IMAGE_SUFFIXES:
-                            event.accept()
-                            self._editor.drop_image_file(path)
-                            return True
+        if etype in (QEvent.DragEnter, QEvent.DragMove, QEvent.Drop):
+            paths = self._droppable_paths(event.mimeData())
+            if paths:
+                event.setDropAction(Qt.LinkAction)
+                event.accept()
+                if etype == QEvent.Drop:
+                    # After the drop returns, so no dialog opens mid-drag
+                    # (macOS leaves the Finder drag hanging otherwise).
+                    QTimer.singleShot(0, lambda: self.open_dropped(paths))
+                return True
         return super().eventFilter(obj, event)
 
+    def _droppable_paths(self, mime) -> list[Path]:
+        """Every dropped local file KherveTeX can open or insert."""
+        if mime is None or not mime.hasUrls():
+            return []
+        ok = self._OPENABLE_SUFFIXES | self._IMAGE_SUFFIXES
+        return [Path(u.toLocalFile()) for u in mime.urls()
+                if u.isLocalFile()
+                and Path(u.toLocalFile()).suffix.lower() in ok]
+
+    def open_dropped(self, paths: list[Path]) -> None:
+        """Pictures go into the document as figures, in the order dropped.
+        The first document replaces this one (after offering to save it);
+        any further documents open in windows of their own."""
+        docs = [p for p in paths if p.suffix.lower() in self._OPENABLE_SUFFIXES
+                and p.suffix.lower() not in self._IMAGE_SUFFIXES]
+        for path in paths:
+            if path not in docs:
+                self._editor.drop_image_file(path)
+        if not docs:
+            return
+        first, rest = docs[0], docs[1:]
+        if self.offer_save_before(f"opening {first.name}"):
+            self._open_path(first)
+        for path in rest:
+            self._new_window()._open_path(path)
+
     def dragEnterEvent(self, event) -> None:
-        if event.mimeData().hasUrls():
-            for url in event.mimeData().urls():
-                if url.isLocalFile():
-                    suffix = Path(url.toLocalFile()).suffix.lower()
-                    if suffix in self._OPENABLE_SUFFIXES | self._IMAGE_SUFFIXES:
-                        event.setDropAction(Qt.LinkAction)
-                        event.accept()
-                        return
+        if self._droppable_paths(event.mimeData()):
+            event.setDropAction(Qt.LinkAction)
+            event.accept()
+            return
         super().dragEnterEvent(event)
 
     def dropEvent(self, event) -> None:
-        for url in event.mimeData().urls():
-            if url.isLocalFile():
-                path = Path(url.toLocalFile())
-                suffix = path.suffix.lower()
-                if suffix in self._OPENABLE_SUFFIXES:
-                    self._open_path(path)
-                    event.setDropAction(Qt.LinkAction)
-                    event.accept()
-                    return
-                if suffix in self._IMAGE_SUFFIXES:
-                    self._editor.drop_image_file(path)
-                    event.setDropAction(Qt.LinkAction)
-                    event.accept()
-                    return
+        paths = self._droppable_paths(event.mimeData())
+        if paths:
+            event.setDropAction(Qt.LinkAction)
+            event.accept()
+            QTimer.singleShot(0, lambda: self.open_dropped(paths))
+            return
         super().dropEvent(event)
+
+    def offer_save_before(self, reason: str) -> bool:
+        """Ask to save unsaved edits before e.g. restarting into an
+        update. False means the user cancelled."""
+        if not self._editor.text_edit.document().isModified():
+            return True
+        self.raise_()
+        self.activateWindow()
+        name = self._current_path.name if self._current_path else "Untitled"
+        answer = QMessageBox.question(
+            self, "Unsaved changes",
+            f"Save the changes to {name} before {reason}?",
+            QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+            QMessageBox.Save)
+        if answer == QMessageBox.Cancel:
+            return False
+        if answer == QMessageBox.Save:
+            self._save()
+            # Save As can be cancelled; restarting then would lose the edits.
+            return not self._editor.text_edit.document().isModified()
+        return True
 
     def _save(self) -> None:
         if self._project is not None:
@@ -3027,8 +3079,7 @@ class MainWindow(QMainWindow):
         if failed:
             msg = "Could not write chapter(s): " + "; ".join(failed)
             self._status.showMessage("\u26a0 " + msg, 15000)
-            for console in (self._console, self._console_side):
-                console.appendPlainText(msg)
+            self._console.appendPlainText(msg)
         return docs
 
     def _compile_project(self) -> None:
@@ -3379,34 +3430,90 @@ class MainWindow(QMainWindow):
         dlg.setValue(dlg.maximum())
         self._status.showMessage(f"Exported {path_s}", 4000)
 
-    def _export_pdf(self) -> None:
+    def _full_compile_fn(self, purpose: str):
+        """(source, compile function) for a complete, unabridged compile,
+        or None after telling the user the engine is missing."""
         doc = self._editor.get_document()
-        source_dir = self._resolved_source_dir()
         if self._compiler == "typst":
             if not typst_available():
                 QMessageBox.warning(self, "typst missing",
-                                    "Install typst to export PDF.")
-                return
+                                    f"Install typst to {purpose}.")
+                return None
             from .typst_serializer import serialize_document as serialize_typst
-            source = serialize_typst(doc)
-            compile_fn = compile_typst
-        else:
-            if not tectonic_available():
-                QMessageBox.warning(self, "tectonic missing",
-                                    "Install tectonic to export PDF.")
-                return
-            source = serialize_document(doc)
-            compile_fn = compile_tex
+            return serialize_typst(doc), compile_typst
+        if not tectonic_available():
+            QMessageBox.warning(self, "tectonic missing",
+                                f"Install tectonic to {purpose}.")
+            return None
+        return serialize_document(doc), compile_tex
+
+    def _export_pdf(self) -> None:
+        job = self._full_compile_fn("export PDF")
+        if job is None:
+            return
+        source, compile_fn = job
         path_s, _ = QFileDialog.getSaveFileName(
             self, "Export PDF", "document.pdf", "PDF (*.pdf)")
         if not path_s: return
-        result = compile_fn(source, self._build_dir, source_dir=source_dir)
+        result = compile_fn(source, self._build_dir,
+                            source_dir=self._resolved_source_dir())
         if result.ok and result.pdf_path is not None:
             Path(path_s).write_bytes(result.pdf_path.read_bytes())
             self._status.showMessage(f"Exported {path_s}", 4000)
         else:
             QMessageBox.critical(self, "Compile failed",
                                  result.error or "Unknown error")
+
+    def _pdf_for_printing(self) -> Path | None:
+        """A complete PDF of what is on screen. The live preview may skip
+        images or cover only the compile range, so print compiles afresh;
+        a project prints its last whole-project compile."""
+        if self._project is not None:
+            last = getattr(self, "_last_compile_result", None)
+            if last is not None and last.ok and last.pdf_path is not None \
+                    and last.pdf_path.exists():
+                return last.pdf_path
+            QMessageBox.information(
+                self, "Print", "Compile the project first (Compiler > "
+                "Compile PDF), then print.")
+            return None
+        job = self._full_compile_fn("print")
+        if job is None:
+            return None
+        source, compile_fn = job
+        self._status.showMessage("Preparing the pages to print…")
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            result = compile_fn(source, self._build_dir / "print",
+                                source_dir=self._resolved_source_dir())
+        finally:
+            QApplication.restoreOverrideCursor()
+            self._status.clearMessage()
+        if not result.ok or result.pdf_path is None:
+            QMessageBox.critical(self, "Compile failed",
+                                 result.error or "Unknown error")
+            return None
+        name = self._current_path.name.split(".")[0] \
+            if self._current_path else "document"
+        # The preview window's title and the print job carry this name.
+        named = result.pdf_path.with_name(f"{name}.pdf")
+        if named != result.pdf_path:
+            named.write_bytes(result.pdf_path.read_bytes())
+        return named
+
+    def _print(self) -> None:
+        pdf = self._pdf_for_printing()
+        if pdf is not None:
+            from .printing import print_pdf
+            if print_pdf(self, pdf):
+                self._status.showMessage(f"Sent {pdf.name} to the printer",
+                                         4000)
+
+    def _print_preview(self) -> None:
+        pdf = self._pdf_for_printing()
+        if pdf is not None:
+            from .printing import PdfPrintPreview
+            PdfPrintPreview(pdf, self).exec()
 
     def _edit_props(self) -> None:
         dlg = DocPropertiesDialog(self._editor.meta(), self)
@@ -3542,10 +3649,8 @@ class MainWindow(QMainWindow):
 
     def _update_zoom_visibility(self) -> None:
         tab = self._tabs.currentIndex()
-        on_formatted = tab == 0
-        on_pdf_tab = tab == 2
-        show_editor_zoom = on_formatted
-        show_pdf_zoom = on_pdf_tab or self._side_by_side
+        show_editor_zoom = tab == 0
+        show_pdf_zoom = self._side_by_side
         self._zoom_out_btn.setVisible(show_editor_zoom)
         self._zoom_slider.setVisible(show_editor_zoom)
         self._zoom_in_btn.setVisible(show_editor_zoom)
@@ -3711,7 +3816,7 @@ class MainWindow(QMainWindow):
         self._update_zoom_visibility()
 
     def set_pdf_detached(self, detached: bool) -> None:
-        """Move the PDF / console panel into its own window (e.g. for a
+        """Move the PDF panel into its own window (e.g. for a
         second screen) or dock it back beside the editor."""
         if detached == (self._pdf_window is not None):
             return
@@ -3774,6 +3879,8 @@ class MainWindow(QMainWindow):
         self.act_open.setIcon(icons.file_open())
         self.act_save.setIcon(icons.file_save())
         self.act_export_pdf.setIcon(icons.export_pdf())
+        self.act_print.setIcon(icons.printer())
+        self.act_print_preview.setIcon(icons.print_preview())
         self.act_open_project.setIcon(icons.project_open())
         self.act_undo.setIcon(icons.undo())
         self.act_redo.setIcon(icons.redo())
@@ -3806,6 +3913,7 @@ class MainWindow(QMainWindow):
         self.act_equation_builder.setIcon(icons.equation_builder())
         self.act_chemistry.setIcon(icons.chemistry())
         self.act_chemfig.setIcon(icons.chemfig_structure())
+        self.act_flowchart.setIcon(icons.flowchart_builder())
         self.act_pagebreak.setIcon(icons.page_break())
         self.act_hrule.setIcon(icons.horizontal_rule())
         self.act_commit_now.setIcon(icons.commit())
@@ -4392,7 +4500,13 @@ class MainWindow(QMainWindow):
             f"<h2 style='margin:0'>KherveTeX</h2>"
             f"<p style='color:#888;margin:3px 0 0 0'>{version_string()}</p>"
             f"<p style='margin:8px 0 0 0'>A WYSIWYG LaTeX document editor "
-            f"with built-in Git version history.</p>", dlg)
+            f"with built-in Git version history.</p>"
+            f"<p style='margin:6px 0 0 0'>Press <b>F1</b> for the User "
+            f"Guide.</p>"
+            f"<p style='margin:6px 0 0 0'>&copy; 2026 Gwilherm "
+            f"Kerherv&eacute; &middot; GPL-3.0<br>"
+            f"<a href='https://github.com/gkerherve/kherveTeX'>"
+            f"github.com/gkerherve/kherveTeX</a></p>", dlg)
         heading.setWordWrap(True)
         heading.setOpenExternalLinks(True)
         header = QHBoxLayout()
@@ -4432,17 +4546,17 @@ class MainWindow(QMainWindow):
             "Every document is stored as a structured model and can be "
             "compiled to PDF in real time.</p>"
 
-            "<h3>The three tabs</h3>"
+            "<h3>The tabs</h3>"
             "<ul>"
             "<li><b>Visual</b> &mdash; WYSIWYG editor. Type, format text, "
             "insert figures and equations just like in a word processor.</li>"
             "<li><b>Code</b> &mdash; Raw LaTeX source with syntax highlighting "
             "and autocomplete. Edits here are parsed back into the Visual "
             "tab automatically.</li>"
+            "<li><b>Console</b> &mdash; Full compiler output log, after "
+            "the Code tab. Its name turns red when compilation fails.</li>"
             "<li><b>PDF</b> &mdash; Live preview of the compiled document "
-            "(requires <i>tectonic</i>).</li>"
-            "<li><b>Console</b> &mdash; Full compiler output log. "
-            "Switches here automatically when compilation fails.</li>"
+            "in the side panel (requires <i>tectonic</i>).</li>"
             "</ul>"
 
             "<h3>Side-by-side mode</h3>"
@@ -4548,6 +4662,40 @@ class MainWindow(QMainWindow):
             "Visual tab to reopen the drawing dialog with all original "
             "shapes intact for further editing.</p>"
 
+            "<h3>Flowchart builder</h3>"
+            "<p><b>Insert &gt; Flowchart builder</b> "
+            "(<code>Ctrl+Shift+F</code>, or the flowchart button on the "
+            "left toolbar) builds a LaTeX (TikZ) flowchart by clicking:</p>"
+            "<ul>"
+            "<li><b>Click a shape</b> in the palette &mdash; start / end, "
+            "process, decision, input / output, document, data, "
+            "sub-process, connector, note &mdash; to add it after the "
+            "selected box, joined by an arrow</li>"
+            "<li><b>Drag</b> boxes to move them (they snap to a grid); "
+            "<b>Ctrl/&#8984;-click</b> another box to draw an arrow to it; "
+            "<b>Delete</b> removes the selection</li>"
+            "<li><b>Edit</b> a box's text or an arrow's label (<i>Yes</i>, "
+            "<i>No</i>&hellip;) in the panel on the right; LaTeX maths is "
+            "welcome and <code>\\\\</code> starts a new line</li>"
+            "<li><b>Arrow</b>, <b>Curve</b> and <b>Line</b> tools: click "
+            "the box a link starts from, then the box it goes to; click "
+            "empty space to stop</li>"
+            "<li>Select a link to choose its <b>Arrowheads</b>, its "
+            "<b>Route</b> (automatic, straight, elbow, curved, with a "
+            "<b>Bend</b>), the sides it <b>Leaves from</b> / <b>Arrives "
+            "at</b>, or to dash or reverse it</li>"
+            "<li><b>Direction</b> (top to bottom or left to right), "
+            "<b>Colours</b>, text size, <b>Tidy up</b> (automatic layout) "
+            "and <b>Start from</b> (ready-made charts) are on the top "
+            "bar</li>"
+            "</ul>"
+            "<p>The preview is compiled with LaTeX; <b>Show LaTeX</b> gives "
+            "the TikZ code. The chart goes into the document as a vector "
+            "figure. Its source (<code>flowchart_001.flow.json</code>) and "
+            "TikZ (<code>flowchart_001.tikz</code>, reusable in any LaTeX "
+            "document) are kept beside it; double-click the figure in the "
+            "Visual tab to edit it again.</p>"
+
             "<h3>References</h3>"
             "<p><b>Hyperlink</b> (<code>Ctrl+K</code>): attach a URL to "
             "selected text.</p>"
@@ -4596,6 +4744,34 @@ class MainWindow(QMainWindow):
             "LaTeX compiler.</li>"
             "<li><b>.pdf</b> &mdash; compiled via tectonic.</li>"
             "</ul>"
+
+            "<h3>Printing</h3>"
+            "<p><b>File &gt; Print preview</b> (<code>Ctrl+Shift+P</code>) "
+            "shows the compiled pages exactly as they will come out of the "
+            "printer: zoom, one or two pages side by side, portrait or "
+            "landscape, and Print from there. <b>File &gt; Print</b> "
+            "(<code>Ctrl+P</code>) goes straight to the print dialog, "
+            "where you can pick a page range. What prints is the full "
+            "typeset PDF (images included, whatever the compile range), "
+            "on the paper size of the document.</p>"
+
+            "<h3>Drag and drop</h3>"
+            "<p>Drop files from your file manager anywhere on the window. "
+            "Pictures (.png, .jpg, .svg&hellip;) go into the document as "
+            "figures. A document (.ktex, .tex, .md, .docx, .pdf) opens in "
+            "place of the current one, which you are offered to save "
+            "first. Drop several at once and each is handled: every "
+            "picture is inserted, and documents after the first open in "
+            "windows of their own. Dropped on the <b>Documents</b> panel, "
+            "files are added to the project instead.</p>"
+
+            "<h3>Updates</h3>"
+            "<p>A few seconds after start-up, and every half hour, "
+            "KherveTeX checks GitHub for a newer version. When it can "
+            "update safely (no local edits to its own files) it does so, "
+            "lists what changed and offers to restart. <b>Help &gt; Check "
+            "for updates</b> checks now; untick <b>Help &gt; Update "
+            "automatically</b> to stop the background check.</p>"
 
             "<h3>Document properties</h3>"
             "<p>Open <b>File &gt; Document properties</b> to change:</p>"
@@ -4720,6 +4896,8 @@ class MainWindow(QMainWindow):
                 ("Ctrl+O", "Open"),
                 ("Ctrl+S", "Save"),
                 ("Ctrl+Shift+S", "Save as"),
+                ("Ctrl+P", "Print"),
+                ("Ctrl+Shift+P", "Print preview"),
             ]),
             ("Edit", [
                 ("Ctrl+Z", "Undo"),
@@ -4740,6 +4918,7 @@ class MainWindow(QMainWindow):
                 ("Ctrl+Shift+E", "Equation builder"),
                 ("Ctrl+Shift+R", "Chemical reaction"),
                 ("Ctrl+Shift+T", "Chemical structure"),
+                ("Ctrl+Shift+F", "Flowchart builder"),
             ]),
             ("View", [
                 ("Ctrl+1", "Visual tab"),
@@ -4964,7 +5143,7 @@ class MainWindow(QMainWindow):
     def apply_layout_mode(self, mode: str) -> None:
         """"side": visual editor with the live PDF beside it.
         "window": the same, with the PDF in its own window.
-        "visual": no PDF / console panel and no background compiles.
+        "visual": no PDF panel and no background compiles.
         "page": as "visual", with the Documents list hidden as well —
         just the page, like Word."""
         visual = mode in ("visual", "page")
@@ -5151,19 +5330,16 @@ class MainWindow(QMainWindow):
             header = f"[{timestamp}] {compiler} — ERROR: {result.error}"
         body = result.log or ""
         text = f"{header}\n{'─' * 60}\n{body}"
-        for console in (self._console, self._console_side):
-            console.setPlainText(text)
-            # Scroll to the first error line if compilation failed
-            if not result.ok:
-                cursor = console.textCursor()
-                cursor.movePosition(QTextCursor.Start)
-                console.setTextCursor(cursor)
+        self._console.setPlainText(text)
+        if not result.ok:
+            cursor = self._console.textCursor()
+            cursor.movePosition(QTextCursor.Start)
+            self._console.setTextCursor(cursor)
         # Signal the error without stealing focus from the Visual tab,
         # so the user can fix the LaTeX without losing their place.
-        if not result.ok:
-            self._side_tabs.tabBar().setTabTextColor(1, QColor("#c0392b"))
-        else:
-            self._side_tabs.tabBar().setTabTextColor(1, QColor())
+        self._tabs.tabBar().setTabTextColor(
+            self._tabs.indexOf(self._console),
+            QColor("#c0392b") if not result.ok else QColor())
 
     # ----- cross-tab "Show in …" navigation -----
 

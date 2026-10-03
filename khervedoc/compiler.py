@@ -329,6 +329,10 @@ Hello $E=mc^2$.
          r"\begin{tikzpicture}\draw(0,0)--(1,1);\end{tikzpicture}"
          r"\end{document}" "\n"),
     ]
+    # The flowchart builder's TikZ shape libraries and fonts.
+    from . import flowchart
+    _CLASS_DOCS.append(("flowchart", flowchart.standalone_doc(
+        flowchart.template_algorithm())))
 
     all_log: list[str] = []
     failed: list[str] = []

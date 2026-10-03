@@ -135,11 +135,11 @@ class WelcomeDialog(QDialog):
                  "Edit on the left and watch the compiled LaTeX PDF on "
                  "the right, updated as you type."),
                 (LAYOUT_WINDOW, "Visual + PDF in its own window",
-                 "The PDF and console in a separate window you can put "
+                 "The PDF in a separate window you can put "
                  "on a second screen; close it to dock it back."),
                 (LAYOUT_VISUAL, "Visual only",
                  "The page with the Documents list beside it. The PDF "
-                 "and console are hidden and nothing compiles while you "
+                 "is hidden and nothing compiles while you "
                  "write."),
                 (LAYOUT_PAGE, "Page only — like Word",
                  "Just the page: the Documents list is hidden too. "

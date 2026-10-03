@@ -500,6 +500,46 @@ def export_pdf() -> QIcon:
     return QIcon(px)
 
 
+def _draw_printer(p) -> None:
+    paper = QColor("#2d2d2d") if _dark else Qt.white
+    p.setPen(QPen(_fg(), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+    p.setBrush(QBrush(paper))
+    p.drawRect(QRectF(7, 3, 10, 6))                      # paper in
+    p.setBrush(QBrush(_fg()))
+    p.drawRoundedRect(QRectF(3, 9, 18, 8), 2, 2)         # body
+    p.setBrush(QBrush(paper))
+    p.drawRect(QRectF(7, 14, 10, 7))                     # page out
+    p.setPen(QPen(_accent(), 1.4))
+    p.drawLine(QPointF(9, 17), QPointF(15, 17))
+    p.drawLine(QPointF(9, 19), QPointF(13, 19))
+
+
+def printer() -> QIcon:
+    px, p = _new_canvas()
+    _draw_printer(p)
+    p.end()
+    return QIcon(px)
+
+
+def print_preview() -> QIcon:
+    """A printed page under a magnifying glass."""
+    px, p = _new_canvas()
+    paper = QColor("#2d2d2d") if _dark else Qt.white
+    p.setPen(QPen(_fg(), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+    p.setBrush(QBrush(paper))
+    p.drawPolygon([QPointF(4, 3), QPointF(13, 3), QPointF(17, 7),
+                   QPointF(17, 21), QPointF(4, 21)])
+    p.setPen(QPen(_fg(), 1.0))
+    for y in (8, 11, 14):
+        p.drawLine(QPointF(7, y), QPointF(13, y))
+    p.setPen(QPen(_accent(), 2.0, Qt.SolidLine, Qt.RoundCap))
+    p.setBrush(QBrush(paper))
+    p.drawEllipse(QRectF(10, 11, 7, 7))
+    p.drawLine(QPointF(16.5, 17.5), QPointF(20.5, 21.5))
+    p.end()
+    return QIcon(px)
+
+
 def history() -> QIcon:
     px, p = _new_canvas()
     p.setPen(QPen(_fg(), 2, Qt.SolidLine, Qt.RoundCap)); p.setBrush(Qt.NoBrush)
@@ -724,6 +764,30 @@ def chemfig_structure() -> QIcon:
     # inner aromatic ring
     p.setPen(QPen(_accent(), 1.4))
     p.drawEllipse(QPointF(cx, cy), r * 0.5, r * 0.5)
+    p.end()
+    return QIcon(px)
+
+
+def flowchart_builder() -> QIcon:
+    """A tiny flowchart: a rounded start box, an arrow, a decision diamond,
+    an arrow, a process box — the flowchart builder."""
+    px, p = _new_canvas()
+    p.setPen(QPen(_fg(), 1.3, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+    p.setBrush(QBrush(_accent()))
+    p.drawRoundedRect(QRectF(7, 1.5, 10, 4.5), 2.2, 2.2)
+    p.drawLine(QPointF(12, 6), QPointF(12, 8))
+    p.setBrush(Qt.NoBrush)
+    p.drawPolygon(QPolygonF([QPointF(12, 8), QPointF(17, 11.5),
+                             QPointF(12, 15), QPointF(7, 11.5)]))
+    p.drawLine(QPointF(12, 15), QPointF(12, 17.5))
+    p.drawLine(QPointF(17, 11.5), QPointF(21, 11.5))
+    p.drawLine(QPointF(21, 11.5), QPointF(21, 19.5))
+    p.setBrush(QBrush(_accent2()))
+    p.drawRect(QRectF(7, 17.5, 10, 4.5))
+    p.setBrush(QBrush(_fg()))
+    p.setPen(Qt.NoPen)
+    p.drawPolygon(QPolygonF([QPointF(12, 17.5), QPointF(10.6, 15.9),
+                             QPointF(13.4, 15.9)]))
     p.end()
     return QIcon(px)
 

@@ -12,7 +12,7 @@ The title bar shows `kherveDOC v<major>.<minor>.<commits>+<sha7>`.
 - Paragraph-style picker: Body text · Title · Heading 1-5.
 - Inline marks: bold, italic, underline, strikethrough, code, smallcaps, subscript, superscript.
 - Inserts: inline math, math block (LaTeX-typed), bullet / numbered lists, hyperlinks, footnotes, citations (cite / citep / citet), cross-references (ref / eqref / pageref), figures (with caption + label), tables, page break, horizontal rule, raw LaTeX escape hatch.
-- Three tabs: **Formatted** (WYSIWYG), **LaTeX** (live read-only syntax-highlighted source), **PDF** (live preview).
+- Tabs: **Visual** (WYSIWYG), **Code** (syntax-highlighted LaTeX source), **Console** (the compiler log); the live **PDF** preview sits in a side panel or its own window.
 
 **File**
 - Native format: `.ktex`, a ZIP archive holding the document model (`document.json`), its generated LaTeX (`document.tex`) and every figure (`figures/`). Working files (the generated `.tex`, equation previews, pasted figures) go in a hidden `.kherve/` folder, so the document folder shows only `.ktex` files; Git still tracks the `.tex` there so history stays readable.
@@ -20,6 +20,9 @@ The title bar shows `kherveDOC v<major>.<minor>.<commits>+<sha7>`.
 - File > Export > LaTeX package (.zip): `main.tex`, `figures/` and `equations/` (one `.tex` per display equation), ready for Overleaf or a journal.
 - Import: `.tex` (regex-based subset parser, falls back to RawLatex), `.docx` (uses python-docx, **embedded images are extracted** into a sibling folder and inserted as Figure nodes).
 - Export: `.tex`, `.pdf`.
+- Print and Print preview of the typeset PDF (File menu, Ctrl+P / Ctrl+Shift+P).
+- Drag and drop: drop pictures to insert them as figures, documents to open them — several at once.
+- Auto-update: a source checkout fast-forwards itself from GitHub when it is safe to (Help > Check for updates).
 - Document properties dialog: title, author, document class, package list.
 
 **Git**
@@ -73,6 +76,8 @@ khervedoc/
   preview.py      # PDF page renderer
   mainwindow.py   # app shell, menus, toolbar
   icons.py        # toolbar icons drawn at runtime with QPainter
+  printing.py     # Print / Print preview of the compiled PDF
+  updater.py      # auto-update from GitHub
   __main__.py     # entry point (forces light Fusion palette)
 tests/
   test_model.py

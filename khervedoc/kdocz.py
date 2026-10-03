@@ -54,6 +54,10 @@ def is_legacy_bundle(path: Path | str) -> bool:
     return str(path).lower().endswith((".kdocz", ".ktexz"))
 
 
+_FIGURE_SIBLINGS = {"drawing": (".svg", ".pdf"),
+                    "flowchart": (".pdf", ".flow.json", ".tikz")}
+
+
 def _bundle_figures(doc: Document, base_dir: Path
                     ) -> tuple[Document, list[tuple[Path, str]]]:
     """A copy of *doc* whose Figure paths point at figures/…, plus the
@@ -84,10 +88,12 @@ def _bundle_figures(doc: Document, base_dir: Path
                     arc_name = f"{IMAGES_DIR}/figure_{counter:03d}{ext}"
                     counter += 1
                     images_to_bundle.append((src_path, arc_name))
-                    if block.source == "drawing":
-                        # The editable SVG and the PDF LaTeX includes live
-                        # beside the PNG preview; keep them paired by stem.
-                        for sib_ext in (".svg", ".pdf"):
+                    sib_exts = _FIGURE_SIBLINGS.get(block.source, ())
+                    if sib_exts:
+                        # The editable source and the PDF LaTeX includes
+                        # live beside the PNG preview; keep them paired by
+                        # stem.
+                        for sib_ext in sib_exts:
                             sib = src_path.with_suffix(sib_ext)
                             if sib.exists():
                                 images_to_bundle.append(

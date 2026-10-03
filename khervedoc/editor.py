@@ -3260,6 +3260,60 @@ class DocumentEditor(QWidget):
         if dlg.handoff_to_khervepaint:
             self.edit_in_khervepaint(path)
 
+    def insert_flowchart(self) -> None:
+        """Open the flowchart builder. On Insert, the chart becomes a
+        Figure like a drawing: PNG preview in the Visual tab, vector PDF
+        for LaTeX, its .flow.json source (reopened on double-click) and
+        .tikz beside it."""
+        from . import flowchart_builder as FB
+        dlg = FB.FlowchartBuilderDialog(self)
+        if dlg.exec() != QDialog.Accepted or dlg.result_pdf is None:
+            return
+        path = FB.next_flowchart_path(self._images_dir)
+        if not FB.save_flowchart(path, dlg.result_chart, dlg.result_pdf,
+                                 dlg.result_tikz):
+            QMessageBox.warning(self, "Flowchart",
+                                "The flowchart preview could not be made.")
+            return
+        cdlg = _InsertFigureDialog(self, path_value=str(path),
+                                   path_readonly=True,
+                                   title="Flowchart details")
+        if cdlg.exec() != QDialog.Accepted:
+            return
+        from .serializer import escape_text
+        fig = Figure(path=str(path), caption=escape_text(cdlg.caption()),
+                     label=cdlg.label() or None,
+                     width=FB.natural_width(dlg.result_pdf),
+                     source="flowchart")
+        self._insert_figure_widget(self._edit.textCursor(), fig)
+        self._on_text_changed()
+
+    def _edit_existing_flowchart(self, qtable: QTextTable,
+                                 png_path: Path) -> None:
+        from . import flowchart as F
+        from . import flowchart_builder as FB
+        src = FB.flowchart_source_for(png_path)
+        try:
+            chart = F.Flowchart.from_json(src.read_text(encoding="utf-8"))
+        except (AttributeError, OSError, ValueError, TypeError):
+            QMessageBox.information(
+                self, "Cannot re-edit",
+                "This flowchart's source (.flow.json) is missing or "
+                "unreadable.")
+            return
+        dlg = FB.FlowchartBuilderDialog(self, chart)
+        if dlg.exec() != QDialog.Accepted or dlg.result_pdf is None:
+            return
+        if not FB.save_flowchart(png_path, dlg.result_chart, dlg.result_pdf,
+                                 dlg.result_tikz):
+            QMessageBox.warning(self, "Flowchart",
+                                "The flowchart preview could not be made.")
+            return
+        tfmt = qtable.format()
+        tfmt.setProperty(_P_FIGURE_SOURCE, "flowchart")
+        qtable.setFormat(tfmt)
+        self._refresh_figure_image(qtable, png_path)
+
     # ----- KhervePaint hand-off -----------------------------------------
 
     def khervepaint_link(self):
@@ -3787,14 +3841,21 @@ class DocumentEditor(QWidget):
         self._on_text_changed()
 
     def _edit_existing_figure(self, qtable: QTextTable) -> None:
-        """Re-open the drawing dialog for a figure made with it (an SVG
-        source beside the PNG, or a legacy JSON sidecar)."""
+        """Re-open the editor that made a figure: the flowchart builder
+        (a .flow.json source beside the PNG) or the drawing dialog (an SVG
+        source, or a legacy JSON sidecar)."""
         from .drawing_dialog import DrawingDialog, drawing_source_for
+        from .flowchart_builder import flowchart_source_for
 
         tfmt = qtable.format()
         img_path_str = tfmt.property(_P_FIGURE_PATH) or ""
         resolved = self._resolve_image_path(img_path_str)
         if resolved is None:
+            return
+
+        if (tfmt.property(_P_FIGURE_SOURCE) == "flowchart"
+                or flowchart_source_for(resolved) is not None):
+            self._edit_existing_flowchart(qtable, resolved)
             return
 
         if drawing_source_for(resolved) is None:
@@ -3903,9 +3964,15 @@ class DocumentEditor(QWidget):
         if fig_table is not None and fig_table.format().property(
                 _P_FIGURE_PATH) is not None:
             from .drawing_dialog import drawing_source_for
+            from .flowchart_builder import flowchart_source_for
             resolved = self._resolve_image_path(
                 fig_table.format().property(_P_FIGURE_PATH) or "")
-            if resolved is not None and drawing_source_for(resolved) \
+            if resolved is not None and flowchart_source_for(resolved):
+                menu.addSeparator()
+                menu.addAction(
+                    "Edit flowchart…",
+                    lambda t=fig_table: self._edit_existing_figure(t))
+            elif resolved is not None and drawing_source_for(resolved) \
                     and resolved.with_suffix(".svg").exists():
                 menu.addSeparator()
                 menu.addAction(

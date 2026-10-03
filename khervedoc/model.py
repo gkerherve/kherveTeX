@@ -154,6 +154,8 @@ class Figure:
     width: str = "0.8\\textwidth"
     # "drawing" = made in the drawing dialog: `path` is the PNG preview and
     # sibling .svg (editable source) and .pdf (vector, for LaTeX) exist.
+    # "flowchart" = made in the flowchart builder: `path` is the PNG
+    # preview, beside .pdf (for LaTeX), .flow.json (source) and .tikz.
     source: str = ""
     type: str = "Figure"
 

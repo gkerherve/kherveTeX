@@ -180,12 +180,18 @@ _SECTION_COMMANDS = {
 }
 
 
+# Vector siblings each figure source keeps beside its PNG preview. A
+# flowchart has no SVG, so Typst gets its PNG.
+_VECTOR_SIBLINGS = {"drawing": (".pdf", ".svg"), "flowchart": (".pdf",)}
+
+
 def figure_output_path(node: Figure, vector_ext: str) -> str:
-    """Path to emit for a figure, forward-slashed. Drawings keep a PNG
-    preview in `path` but the engines get the vector sibling instead
-    (tectonic cannot include SVG, Typst prefers it)."""
+    """Path to emit for a figure, forward-slashed. Drawings and flowcharts
+    keep a PNG preview in `path` but the engines get the vector sibling
+    instead (tectonic cannot include SVG, Typst prefers it)."""
     path = node.path.replace("\\", "/")
-    if node.source == "drawing" and path.lower().endswith(".png"):
+    if (vector_ext in _VECTOR_SIBLINGS.get(node.source, ())
+            and path.lower().endswith(".png")):
         path = path[:-4] + vector_ext
     return path
 

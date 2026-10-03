@@ -116,6 +116,7 @@ def main() -> int:
     splash.step("Ready")
     splash.finish(win)
     win.start_mcp_if_enabled()
+    MainWindow.updater().schedule()
     # Open a file passed on the command line (e.g. double-click association).
     args = [a for a in sys.argv[1:] if not a.startswith("-")]
     opened = False
