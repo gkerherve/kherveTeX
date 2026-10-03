@@ -1,17 +1,18 @@
 ; Inno Setup script for KherveTeX
 ; Produces a single Setup_KherveTeX.exe installer.
 ;
-; Build steps:
-;   1. pyinstaller KherveTeX.spec --noconfirm
-;   2. Copy dist\, icon.ico, and this file to a short path (e.g. C:\tmp\kt_build)
-;      to avoid Windows MAX_PATH issues with the OneDrive project path.
-;   3. Run: ISCC.exe KherveTeX_setup.iss
+; Build: python packaging/build_installer.py (PyInstaller, zip, then
+;   ISCC.exe /DMyAppVersion=<__version__> KherveTeX_setup.iss).
+; Building by hand from the OneDrive path can hit MAX_PATH: copy dist\,
+; khervedoc\icon.ico and this file to a short path first.
 
 #define MyAppName "KherveTeX"
 #define MyAppPublisher "Gwilherm Kerherve"
 #define MyAppURL "https://github.com/gkerherve/kherveDOC"
 #define MyAppExeName "KherveTeX.exe"
-#define MyAppVersion "0.147"
+#ifndef MyAppVersion
+  #define MyAppVersion "0.0"
+#endif
 
 [Setup]
 AppId={{B8A3F2E1-7C4D-4E5F-9A1B-3D6E8F0C2A47}
@@ -25,9 +26,9 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=dialog
-OutputDir=installer
+OutputDir=dist
 OutputBaseFilename=Setup_KherveTeX_{#MyAppVersion}
-SetupIconFile=icon.ico
+SetupIconFile=khervedoc\icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2/ultra64
 SolidCompression=yes

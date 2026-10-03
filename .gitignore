@@ -21,3 +21,6 @@ khervedoc/tectonic_cache/
 *.log
 *.synctex.gz
 *.out
+
+# tectonic binary fetched by packaging/fetch_tectonic.py
+packaging/bin/

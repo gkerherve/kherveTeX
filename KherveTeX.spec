@@ -29,25 +29,39 @@ block_cipher = None
 
 # Project root is the directory containing this spec file.
 ROOT = Path(SPECPATH)
+IS_MAC = sys.platform == "darwin"
+sys.path.insert(0, str(ROOT))
+from khervedoc import __version__ as APP_VERSION  # noqa: E402
+
+
+def _tectonic_binary():
+    """packaging/bin (fetch_tectonic.py, used by CI) first, then ~/bin."""
+    name = "tectonic.exe" if sys.platform == "win32" else "tectonic"
+    for cand in (ROOT / "packaging" / "bin" / name, Path.home() / "bin" / name):
+        if cand.is_file():
+            return [(str(cand), ".")]
+    print("WARNING: no tectonic binary found - the build will not compile PDFs")
+    return []
+
+
+# Optional: built by `python packaging/fetch_tectonic.py --warm`.
+_CACHE = ROOT / "khervedoc" / "tectonic_cache"
+_CACHE_DATAS = [(str(_CACHE), "khervedoc/tectonic_cache")] if _CACHE.is_dir() else []
 
 # ---- Analysis: discover all imports ------------------------------------
 
 a = Analysis(
     [str(ROOT / "kherveDOC.py")],
     pathex=[str(ROOT)],
-    binaries=[
-        # Bundle the tectonic LaTeX engine so PDF export works out of the box.
-        (str(Path.home() / "bin" / "tectonic.exe"), "."),
-    ],
+    # Bundle the tectonic LaTeX engine so PDF export works out of the box.
+    binaries=_tectonic_binary(),
     datas=[
         # Bundled LaTeX style files — available to the compiler via TEXINPUTS.
         (str(ROOT / "khervedoc" / "styles"), "khervedoc/styles"),
         # pyspellchecker dictionary files (en.json.gz etc.) — not collected automatically.
         (os.path.join(sysconfig.get_path("purelib"), "spellchecker", "resources"),
          "spellchecker/resources"),
-        # Pre-cached tectonic TeX packages so all templates work offline.
-        (str(ROOT / "khervedoc" / "tectonic_cache"), "khervedoc/tectonic_cache"),
-    ],
+    ] + _CACHE_DATAS,  # pre-cached tectonic TeX packages, offline templates
     hiddenimports=[
         # Lazy imports that Analysis can't see statically.
         # Drawing symbol libraries load by name (drawing_dialog.py).
@@ -114,14 +128,15 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=not IS_MAC,
     console=False,      # GUI app — no console window
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=str(ROOT / "khervedoc" / "icon.ico"),
+    icon=str(ROOT / "build" / "KherveTeX.icns") if IS_MAC
+         else str(ROOT / "khervedoc" / "icon.ico"),
 )
 
 # ---- COLLECT: gather everything into the output folder -----------------
@@ -132,7 +147,33 @@ coll = COLLECT(
     a.zipfiles,
     a.datas,
     strip=False,
-    upx=True,
+    upx=not IS_MAC,
     upx_exclude=[],
     name="KherveTeX",
 )
+
+# ---- BUNDLE: macOS .app (packaging/build_macos.py) ---------------------
+
+if IS_MAC:
+    app = BUNDLE(
+        coll,
+        name="KherveTeX.app",
+        icon=str(ROOT / "build" / "KherveTeX.icns"),
+        bundle_identifier="com.kherve.khervetex",
+        version=APP_VERSION,
+        info_plist={
+            "CFBundleName": "KherveTeX",
+            "CFBundleDisplayName": "KherveTeX",
+            "CFBundleShortVersionString": APP_VERSION,
+            "CFBundleVersion": APP_VERSION,
+            "LSMinimumSystemVersion": "11.0",
+            "NSHighResolutionCapable": True,
+            "NSRequiresAquaSystemAppearance": False,
+            "CFBundleDocumentTypes": [{
+                "CFBundleTypeName": "KherveTeX Document",
+                "CFBundleTypeRole": "Editor",
+                "LSHandlerRank": "Owner",
+                "CFBundleTypeExtensions": ["ktex", "ktexz", "kdocz"],
+            }],
+        },
+    )
