@@ -45,7 +45,8 @@ jobs:
       - name: Run the test suite
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest tests/ -q
+        # one process per file: see packaging/run_tests.py for why
+        run: python packaging/run_tests.py
 
       - name: Fetch tectonic and warm the offline TeX cache
         run: python packaging/fetch_tectonic.py --warm
