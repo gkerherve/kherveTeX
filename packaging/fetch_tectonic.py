@@ -71,7 +71,8 @@ def warm(tectonic: Path) -> None:
     sys.path.insert(0, str(_ROOT))
     from khervedoc import compiler, examples
     from khervedoc.serializer import serialize_document
-    assert compiler._find_tectonic() == str(tectonic), compiler._find_tectonic()
+    found = compiler._find_tectonic()
+    assert found and os.path.normcase(found) == os.path.normcase(str(tectonic)), found
 
     ok, _log = compiler.download_tectonic_bundle(
         on_output=lambda line: print("  " + line, flush=True))
