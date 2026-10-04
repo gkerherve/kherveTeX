@@ -155,6 +155,9 @@ _cancelled = False
 
 def _run_tracked(cmd: list[str], timeout: float, **kw):
     """subprocess.run() whose process `cancel_running()` can kill."""
+    # stdin closed: a TeX error that asks for input must fail, not wait
+    # for an answer that never comes (it hung the Windows CI run).
+    kw.setdefault("stdin", subprocess.DEVNULL)
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, **kw)
     _RUNNING.add(proc)

@@ -130,13 +130,19 @@ def offline_compiles(tec: Path, cache: Path, work: Path, env: dict):
         d.mkdir()
         (d / "d.tex").write_text(source, encoding="utf-8")
         t0 = time.monotonic()
+        print(f"  offline {name}: compiling", flush=True)
+        proc = subprocess.Popen([str(tec), "--only-cached", "-Z", "continue-on-errors",
+                                 "--keep-logs", "d.tex"], cwd=d, env=oenv,
+                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True,
+                                encoding="utf-8", errors="replace")
         try:
-            out = subprocess.run([str(tec), "--only-cached", "-Z", "continue-on-errors",
-                                  "--keep-logs", "d.tex"], cwd=d, env=oenv,
-                                 capture_output=True, text=True, timeout=180)
-        except subprocess.TimeoutExpired as exc:
-            _fail(f"{name}: tectonic --only-cached hung for 180 s:\n"
-                  + str(exc.stdout or "")[-1500:])
+            log, _ = proc.communicate(timeout=180)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            log = (proc.communicate()[0] or "")[-1500:]
+            _fail(f"{name}: tectonic --only-cached hung for 180 s:\n{log}")
+        out = subprocess.CompletedProcess(proc.args, proc.returncode, log, "")
         log = out.stdout + out.stderr
         print(f"  offline {name}: {time.monotonic() - t0:.0f} s", flush=True)
         if not (d / "d.pdf").is_file() or "not found" in log or "not loadable" in log:
