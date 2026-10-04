@@ -346,7 +346,9 @@ class McpServer:
         args = params.get("arguments") or {}
         result = self._bridge.request(
             "call_tool", {"name": name, "input": args})
-        is_error = isinstance(result, dict) and "error" in result
+        # Tools such as compile_document always report an `error` field,
+        # None on success, so only a real message marks the call as failed.
+        is_error = isinstance(result, dict) and bool(result.get("error"))
         content = []
         if isinstance(result, dict) and result.get("image_png_base64"):
             # A rendered page travels as a real image block, not as a

@@ -91,6 +91,14 @@ def test_tool_error_is_flagged():
     assert res["isError"] is True
 
 
+def test_successful_compile_is_not_flagged():
+    srv = McpServer(_FakeBridge({"ok": True, "error": None, "pages": 4,
+                                 "log_tail": ""}))
+    res = srv.handle({"id": 5, "method": "tools/call",
+                      "params": {"name": "compile_document"}})["result"]
+    assert res["isError"] is False
+
+
 def test_missing_app_explains_how_to_fix(tmp_path):
     srv = McpServer(BridgeClient(str(tmp_path / "none.json")))
     reply = srv.handle({"id": 5, "method": "tools/list"})
