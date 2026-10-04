@@ -14,7 +14,12 @@ code that imports it runs. So this:
 * speaks MCP to it through ``<exe> --mcp-server`` (the path Claude takes):
   ``get_document_info``, then ``compile_document`` on the starter
   document, which must succeed with at least one page — i.e. the bundled
-  tectonic, the serializer and PyMuPDF all work inside the freeze.
+  tectonic, the serializer and PyMuPDF all work inside the freeze;
+* runs the app on an EMPTY tectonic cache (a brand-new PC) and checks it
+  seeds the bundled packages, then compiles every example and a 12 pt
+  two-column document with \\url using ``--only-cached`` — no network —
+  so a package or font missing from the bundle fails the build instead
+  of failing on a user's machine.
 
 Meant for CI runners: it changes the app's settings (MCP on, Full access).
 Exits non-zero on the first failure.
@@ -103,6 +108,37 @@ def find_tectonic(exe: Path) -> Path:
     return hits[0]
 
 
+def offline_compiles(tec: Path, cache: Path, work: Path, env: dict):
+    files = [p for p in cache.rglob("*") if p.is_file()] if cache.is_dir() else []
+    if len(files) < 50:
+        _fail(f"the app did not seed the empty tectonic cache ({len(files)} files)")
+    print(f"seeded the empty cache with {len(files)} files", flush=True)
+    from khervedoc import examples
+    from khervedoc.serializer import serialize_document
+    docs = {f"example{i}": serialize_document(f())
+            for i, (_label, f) in enumerate(examples.EXAMPLES)}
+    docs["fonts12"] = (
+        r"\documentclass[12pt,twocolumn]{article}"
+        r"\usepackage[a4paper]{geometry}\usepackage{amsmath,amssymb,graphicx,"
+        r"multicol,float,setspace,xurl}\begin{document}\section{A}Text "
+        r"\textbf{b} \emph{i} \texttt{t} \textsf{s} \url{https://x.org} "
+        r"$x^2$\footnote{n}\end{document}")
+    styles = _ROOT / "khervedoc" / "styles"
+    oenv = dict(env, TEXINPUTS=str(styles) + os.pathsep)
+    for name, source in docs.items():
+        d = work / name
+        d.mkdir()
+        (d / "d.tex").write_text(source, encoding="utf-8")
+        out = subprocess.run([str(tec), "--only-cached", "-Z", "continue-on-errors",
+                              "--keep-logs", "d.tex"], cwd=d, env=oenv,
+                             capture_output=True, text=True, timeout=300)
+        log = out.stdout + out.stderr
+        if not (d / "d.pdf").is_file() or "not found" in log or "not loadable" in log:
+            _fail(f"{name} does not compile offline from the seeded cache:\n"
+                  + log[-2000:])
+    print(f"{len(docs)} documents compile offline from the seeded cache", flush=True)
+
+
 def enable_bridge():
     from PySide6.QtCore import QSettings
     s = QSettings("kherveDOC", "kherveDOC")
@@ -130,7 +166,11 @@ def main():
     enable_bridge()
     endpoint = Path(endpoint_path())
     endpoint.unlink(missing_ok=True)
-    env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
+    import tempfile
+    work = Path(tempfile.mkdtemp(prefix="ktex_smoke_"))
+    cache = work / "tectonic-cache"          # empty: a brand-new machine
+    env = dict(os.environ, QT_QPA_PLATFORM="offscreen",
+               TECTONIC_CACHE_DIR=str(cache))
     log = open(Path(os.environ.get("RUNNER_TEMP", ".")) / "khervetex-smoke.log", "wb")
     app = subprocess.Popen([str(exe)], env=env, stdout=log, stderr=subprocess.STDOUT,
                            stdin=subprocess.DEVNULL)
@@ -165,6 +205,7 @@ def main():
             print(res.get("log_tail", ""), flush=True)
             _fail("compile_document did not produce a PDF")
         mcp.close()
+        offline_compiles(tec, cache, work, env)
     finally:
         app.terminate()
         try:

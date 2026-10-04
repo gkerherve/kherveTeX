@@ -90,3 +90,42 @@ it.
 - Auto-commits from the app (`git_backend.py`) read the user's git
   identity from their git config so they look identical to CLI commits
   — do not regress that.
+
+## Building a release: tectonic and its package cache are REQUIRED
+
+Every installer (Windows and macOS) must ship **both** the tectonic binary
+and a warmed tectonic package cache. Without the cache, a brand-new PC
+starts with an empty tectonic cache: every compile has to go online, a
+slow or filtered network fails with "Offline, and … not in the local TeX
+cache yet", and a missing font prints blank text. That is what broke the
+Windows 0.214 installs.
+
+- `KherveTeX.spec` enforces it: it fetches the pinned tectonic release
+  into `packaging/bin/` (`packaging/fetch_tectonic.py`, `TECTONIC_VERSION`),
+  builds `khervedoc/tectonic_cache/` with `fetch_tectonic.warm()` when it is
+  missing, and **stops the build** if the cache has fewer than 500 files.
+  Never weaken that back into a warning, and never bundle `~/bin/tectonic`
+  or a Homebrew tectonic — the cache must come from the binary that ships.
+- To rebuild the cache by hand (e.g. after adding a template or a
+  package): `python packaging/fetch_tectonic.py --warm`. It runs
+  `compiler.download_tectonic_bundle` (every document class, a
+  kitchen-sink package document, and 10/11/12 pt font-coverage documents:
+  headings, bold/italic/sans/typewriter, `\url`, footnotes, math) and every
+  starter example, then copies tectonic's cache. **Add any new template's
+  packages or fonts to `download_tectonic_bundle`.**
+- At start-up the frozen app copies the bundled cache into the user's
+  tectonic cache (`__main__._seed_tectonic_cache`, missing files only).
+- `packaging/smoke_test.py` (CI, Windows and macOS, and on the *installed*
+  Windows app) runs the app on an **empty** tectonic cache, checks it is
+  seeded, then compiles every example plus a 12 pt two-column `\url`
+  document with `--only-cached`. A package or font missing from the
+  bundle fails the build instead of a user's compile. Run it on any local
+  build before publishing:
+  `python packaging/smoke_test.py dist/KherveTeX/KherveTeX.exe`.
+- `compiler.compile_tex` is cache-first; a missing file **or font**
+  (`_MISSING_FILE_RE`, `_MISSING_FONT_RE`) triggers one online retry with
+  a 15-minute limit. Compiler ▸ Compiler status shows the engine, the
+  cache and whether a document compiles offline.
+- On a Mac with python.org Python, downloads may fail with
+  CERTIFICATE_VERIFY_FAILED: prefix the command with
+  `SSL_CERT_FILE=/etc/ssl/cert.pem`.

@@ -18,6 +18,7 @@ import os
 import platform
 import shutil
 import stat
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -47,6 +48,15 @@ def fetch() -> Path:
     url = ("https://github.com/tectonic-typesetting/tectonic/releases/download/"
            f"tectonic%40{TECTONIC_VERSION}/{name}")
     exe_name = "tectonic.exe" if sys.platform == "win32" else "tectonic"
+    have = _BIN / exe_name
+    if have.is_file():
+        try:
+            v = subprocess.run([str(have), "--version"], capture_output=True,
+                               text=True, timeout=30).stdout
+        except OSError:
+            v = ""
+        if TECTONIC_VERSION in v:
+            return have
     print(f"Downloading {url}", flush=True)
     data = urllib.request.urlopen(url, timeout=120).read()
     _BIN.mkdir(parents=True, exist_ok=True)

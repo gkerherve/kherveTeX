@@ -133,6 +133,13 @@ _NETWORK_ERROR_RE = re.compile(
     r"timed out|failed to lookup address", re.IGNORECASE)
 # A TeX input missing from the local cache (only-cached mode).
 _MISSING_FILE_RE = re.compile(r"File `([^']+)' not found")
+# A font tectonic has not cached yet: continue-on-errors still writes a PDF,
+# with that text blank (nullfont), so it must count as missing too — or the
+# compile never goes online for it and the document silently loses glyphs.
+_MISSING_FONT_RE = re.compile(
+    r"Font [^=\s]+=\[?([^\]:;\s]+)[^\n]* not loadable: Metric \(TFM\) file"
+    r"|Could not locate a virtual/physical font named ([^\s.]+)"
+    r"|Cannot proceed without \.vf or \"physical\" font for (\S+)")
 
 
 def _is_offline_failure(log: str) -> bool:
@@ -336,6 +343,33 @@ Hello $E=mc^2$.
 
     all_log: list[str] = []
     failed: list[str] = []
+    # Font coverage: real documents use 11 and 12 pt, headings, footnotes,
+    # bold / italic / sans / typewriter and \url — each a separate font
+    # file at its own design size. The class documents above only typeset
+    # one line at 10 pt, so a shipped cache without these made ordinary
+    # documents go online (and fail on a slow network) for a font.
+    _FONT_BODY = (
+        r"\begin{document}\section{Heading}\subsection{Sub}\paragraph{P}"
+        r"Text \textbf{bold} \emph{italic} \textit{\textbf{bi}} \textsc{Caps} "
+        r"\textsf{sans \textbf{bold} \emph{it}} \texttt{mono \textbf{bold}} "
+        r"\url{https://example.org} $x^2_i \int_0^1 \alpha\,dx \mathbf{v} "
+        r"\mathrm{d}\mathcal{L}\sum_{n}\frac{a}{b}$\footnote{A note.}"
+        r"\[ \left(\frac{\partial f}{\partial x}\right)^{2} \]"
+        r"{\tiny t}{\scriptsize s}{\footnotesize f}{\small s}{\large l}"
+        r"{\Large L}{\LARGE L}{\huge h}{\Huge H}"
+        r"\begin{itemize}\item one\end{itemize}"
+        r"\begin{tabular}{ll}a&b\\\end{tabular}\end{document}" "\n")
+    for _pt in ("10pt", "11pt", "12pt"):
+        _CLASS_DOCS.append((f"fonts {_pt}",
+                            rf"\documentclass[{_pt}]{{article}}" "\n"
+                            r"\usepackage{amsmath,amssymb,xurl,hyperref}" "\n"
+                            + _FONT_BODY))
+        _CLASS_DOCS.append((f"fonts {_pt} twocolumn",
+                            rf"\documentclass[{_pt},twocolumn]{{article}}" "\n"
+                            r"\usepackage[a4paper]{geometry}"
+                            r"\usepackage{amsmath,amssymb,graphicx,multicol,"
+                            r"float,setspace,xurl}" "\n" + _FONT_BODY))
+
     total = len(_CLASS_DOCS)
 
     for idx, (name, source) in enumerate(_CLASS_DOCS, 1):
@@ -578,7 +612,10 @@ def compile_tex(
                         env=env)
         if sys.platform == "win32":
             kw["creationflags"] = subprocess.CREATE_NO_WINDOW
-        proc = _run_tracked(cmd, 120, **kw)
+        # Cache-only takes seconds; a run that may download needs room to
+        # fetch the format and many packages on a slow line (a fresh
+        # install, a new package) — two minutes was not enough.
+        proc = _run_tracked(cmd, 120 if only_cached else 900, **kw)
         return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
     pdf_path = workdir / f"{basename}.pdf"
@@ -587,7 +624,9 @@ def compile_tex(
     # planes). Only go online when the cache is genuinely missing a file.
     try:
         code, log = _run(only_cached=True)
-        missing = _MISSING_FILE_RE.findall(log)
+        missing = _MISSING_FILE_RE.findall(log) + [
+            next(g for g in m if g)
+            for m in _MISSING_FONT_RE.findall(log.replace("\n", ""))]
         # continue-on-errors still yields a PDF when a package is missing
         # from the cache, so a clean exit alone doesn't mean success.
         cached_ok = code == 0 and pdf_path.exists() and not missing
@@ -604,7 +643,10 @@ def compile_tex(
                           f"cache yet. Connect once to compile this "
                           f"document (or run Download offline bundle).")
     except subprocess.TimeoutExpired:
-        return CompileResult(False, None, "", "tectonic timed out after 120s")
+        return CompileResult(False, None, "",
+                             "tectonic timed out (a package download took "
+                             "over 15 minutes — check the connection, or run "
+                             "Compiler \u25b8 Download offline bundle)")
 
     if code == 0 and pdf_path.exists():
         return CompileResult(True, pdf_path, log, None)

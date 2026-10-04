@@ -34,19 +34,29 @@ sys.path.insert(0, str(ROOT))
 from khervedoc import __version__ as APP_VERSION  # noqa: E402
 
 
-def _tectonic_binary():
-    """packaging/bin (fetch_tectonic.py, used by CI) first, then ~/bin."""
-    name = "tectonic.exe" if sys.platform == "win32" else "tectonic"
-    for cand in (ROOT / "packaging" / "bin" / name, Path.home() / "bin" / name):
-        if cand.is_file():
-            return [(str(cand), ".")]
-    print("WARNING: no tectonic binary found - the build will not compile PDFs")
-    return []
+# ---- tectonic and its package cache: REQUIRED ---------------------------
+# Without both, the installed app cannot compile on a new PC: the empty
+# tectonic cache makes every compile go online (and fail on a slow or
+# filtered network), and missing fonts print blank text. Earlier builds only
+# WARNED when either was missing, and Windows installers shipped without
+# them. So the spec now fetches the pinned tectonic release into
+# packaging/bin, builds khervedoc/tectonic_cache if it is absent, and stops
+# the build if either is still missing. Never bundle ~/bin/tectonic or a
+# Homebrew one: the cache must come from the same binary that ships.
+sys.path.insert(0, str(ROOT / "packaging"))
+import fetch_tectonic  # noqa: E402
 
-
-# Optional: built by `python packaging/fetch_tectonic.py --warm`.
+_TECTONIC = fetch_tectonic.fetch()                 # packaging/bin/<name>
 _CACHE = ROOT / "khervedoc" / "tectonic_cache"
-_CACHE_DATAS = [(str(_CACHE), "khervedoc/tectonic_cache")] if _CACHE.is_dir() else []
+if not (_CACHE.is_dir() and any(_CACHE.rglob("*.otf"))):
+    print("tectonic_cache missing - warming it now (needs internet)")
+    fetch_tectonic.warm(_TECTONIC)
+_n = sum(1 for p in _CACHE.rglob("*") if p.is_file()) if _CACHE.is_dir() else 0
+if _n < 500:
+    raise SystemExit(f"khervedoc/tectonic_cache has only {_n} files - run "
+                     "python packaging/fetch_tectonic.py --warm")
+print(f"bundling tectonic {_TECTONIC} and tectonic_cache ({_n} files)")
+_CACHE_DATAS = [(str(_CACHE), "khervedoc/tectonic_cache")]
 
 # ---- Analysis: discover all imports ------------------------------------
 
@@ -54,7 +64,7 @@ a = Analysis(
     [str(ROOT / "kherveDOC.py")],
     pathex=[str(ROOT)],
     # Bundle the tectonic LaTeX engine so PDF export works out of the box.
-    binaries=_tectonic_binary(),
+    binaries=[(str(_TECTONIC), ".")],
     datas=[
         # Bundled LaTeX style files — available to the compiler via TEXINPUTS.
         (str(ROOT / "khervedoc" / "styles"), "khervedoc/styles"),

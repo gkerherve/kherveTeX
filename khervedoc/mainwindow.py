@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 import tempfile
 from datetime import datetime
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, Qt, QSettings, QSize, QThread, QTimer, Signal
@@ -1839,7 +1840,14 @@ class MainWindow(QMainWindow):
             "&Download offline bundle\u2026", self,
             triggered=self._download_tectonic_bundle)
         self._update_bundle_action_label()
+        m_compiler.addAction(QAction(
+            "Compiler &status\u2026", self,
+            triggered=self.show_compiler_status))
         m_compiler.addAction(self._act_download_bundle)
+        m_compiler.addAction(QAction(
+            "&Open the package cache folder", self,
+            triggered=self._open_tectonic_cache))
+        m_compiler.aboutToShow.connect(self._update_bundle_action_label)
 
         m_git = mb.addMenu("&Git")
         m_git.addAction(self.act_commit_now)
@@ -5056,6 +5064,87 @@ class MainWindow(QMainWindow):
             self._act_download_bundle.setStatusTip(
                 "Pre-download commonly used TeX packages so compilation "
                 "works without an internet connection")
+
+    def compiler_status(self) -> dict:
+        """What Compiler > Compiler status shows: where tectonic is, its
+        version, the package cache, and whether a document compiles from
+        the cache alone (no network)."""
+        import subprocess
+        import tempfile
+        from . import compiler as _c
+        st = {"path": _c._find_tectonic(), "bundled": False, "version": "",
+              "cache": None, "cache_mb": 0.0, "offline": False}
+        if st["path"] is None:
+            return st
+        st["bundled"] = bool(getattr(sys, "frozen", False)) and \
+            Path(st["path"]).parent == Path(getattr(sys, "_MEIPASS", ""))
+        kw: dict = dict(capture_output=True, text=True, timeout=120)
+        if sys.platform == "win32":
+            kw["creationflags"] = subprocess.CREATE_NO_WINDOW
+        try:
+            st["version"] = subprocess.run(
+                [st["path"], "--version"], **kw).stdout.strip()
+        except Exception:
+            st["version"] = "(did not run)"
+        st["cache"] = _c.query_tectonic_cache_dir(st["path"])
+        st["cache_mb"] = tectonic_cache_size_mb()
+        d = Path(tempfile.mkdtemp(prefix="khervetex-probe-"))
+        (d / "p.tex").write_text(
+            "\\documentclass[12pt]{article}\\usepackage{amsmath,amssymb,"
+            "graphicx,xurl}\\begin{document}\\section{A}Hi \\textbf{b} "
+            "\\emph{i} \\texttt{t} $x^2$\\end{document}", encoding="utf-8")
+        try:
+            r = subprocess.run([st["path"], "--only-cached", "p.tex"],
+                               cwd=d, **kw)
+            st["offline"] = r.returncode == 0 and (d / "p.pdf").is_file()
+        except Exception:
+            pass
+        return st
+
+    def show_compiler_status(self) -> None:
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            st = self.compiler_status()
+        finally:
+            QApplication.restoreOverrideCursor()
+        if st["path"] is None:
+            rows = [("Engine", "<b style='color:#b91c1c'>tectonic not found"
+                     "</b> \u2014 reinstall KherveTeX, or install tectonic "
+                     "and put it on the PATH.")]
+        else:
+            ok = ("<b style='color:#15803d'>Yes</b> \u2014 documents "
+                  "compile without internet") if st["offline"] else (
+                  "<b style='color:#b45309'>Not yet</b> \u2014 click "
+                  "Download offline bundle (needs internet once)")
+            rows = [("Engine", st["version"] or "tectonic"),
+                    ("Location", "bundled with KherveTeX" if st["bundled"]
+                     else st["path"]),
+                    ("Package cache", str(st["cache"] or "\u2014")),
+                    ("Cache size", f"{st['cache_mb']:.0f} MB"),
+                    ("Offline ready", ok)]
+        box = QMessageBox(self)
+        box.setWindowTitle("Compiler status")
+        box.setTextFormat(Qt.RichText)
+        box.setText("<table cellspacing=6>" + "".join(
+            f"<tr><td><b>{k}</b></td><td>{v}</td></tr>" for k, v in rows)
+            + "</table>")
+        dl = box.addButton("Download offline bundle\u2026",
+                           QMessageBox.ActionRole)
+        box.addButton(QMessageBox.Close)
+        dl.setEnabled(st["path"] is not None)
+        box.exec()
+        if box.clickedButton() is dl:
+            self._download_tectonic_bundle()
+
+    def _open_tectonic_cache(self) -> None:
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+        from . import compiler as _c
+        tec = _c._find_tectonic()
+        d = (_c.query_tectonic_cache_dir(tec) if tec else None) \
+            or _c.default_tectonic_cache_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(d)))
 
     def _download_tectonic_bundle(self) -> None:
         """Download the full TeX Live bundle for offline compilation."""
