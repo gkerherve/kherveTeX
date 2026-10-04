@@ -110,7 +110,15 @@ def main() -> int:
     splash.step("Building the window")
     win = MainWindow(theme_name=theme_name)
     # Before the event loop runs, so "Visual only" never starts a compile.
-    win.apply_layout_mode(settings.value("layout_mode", "side"))
+    # The PDF now opens in its own window by default, so the Visual tab has
+    # the whole main window. Move everyone to it once (side by side was the
+    # old default and was saved as everyone's choice); a choice made after
+    # that is kept.
+    from .welcome import LAYOUT_WINDOW
+    if not settings.value("layout_window_default_v1", False, type=bool):
+        settings.setValue("layout_mode", LAYOUT_WINDOW)
+        settings.setValue("layout_window_default_v1", True)
+    win.apply_layout_mode(settings.value("layout_mode", LAYOUT_WINDOW))
     splash.step("Opening the document")
     win.show()
     splash.step("Ready")
