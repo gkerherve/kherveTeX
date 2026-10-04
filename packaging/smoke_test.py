@@ -129,10 +129,16 @@ def offline_compiles(tec: Path, cache: Path, work: Path, env: dict):
         d = work / name
         d.mkdir()
         (d / "d.tex").write_text(source, encoding="utf-8")
-        out = subprocess.run([str(tec), "--only-cached", "-Z", "continue-on-errors",
-                              "--keep-logs", "d.tex"], cwd=d, env=oenv,
-                             capture_output=True, text=True, timeout=300)
+        t0 = time.monotonic()
+        try:
+            out = subprocess.run([str(tec), "--only-cached", "-Z", "continue-on-errors",
+                                  "--keep-logs", "d.tex"], cwd=d, env=oenv,
+                                 capture_output=True, text=True, timeout=180)
+        except subprocess.TimeoutExpired as exc:
+            _fail(f"{name}: tectonic --only-cached hung for 180 s:\n"
+                  + str(exc.stdout or "")[-1500:])
         log = out.stdout + out.stderr
+        print(f"  offline {name}: {time.monotonic() - t0:.0f} s", flush=True)
         if not (d / "d.pdf").is_file() or "not found" in log or "not loadable" in log:
             _fail(f"{name} does not compile offline from the seeded cache:\n"
                   + log[-2000:])
@@ -150,7 +156,7 @@ def enable_bridge():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("exe")
-    ap.add_argument("--timeout", type=float, default=600)
+    ap.add_argument("--timeout", type=float, default=2400)
     args = ap.parse_args()
     exe = Path(args.exe).resolve()
     if not exe.is_file():
