@@ -1,5 +1,7 @@
 """The Documents panel: always visible, lists a single document, and
 turns it into a project the moment a second document is added."""
+
+from pathlib import Path
 import os
 
 import pytest
@@ -323,7 +325,8 @@ def test_dropping_files_on_the_list_adds_them(window, tmp_path, monkeypatch,
     vp = window._project_sidebar._list.viewport()
     assert window._project_sidebar.eventFilter(vp, ev)
     qapp.processEvents()
-    assert got == [[str(f)]]
+    # Qt hands back forward slashes on Windows too: compare as paths.
+    assert [[Path(p) for p in g] for g in got] == [[f]]
 
 
 def test_saving_a_document_leaves_only_the_ktex_visible(window, tmp_path):

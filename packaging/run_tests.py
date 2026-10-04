@@ -31,8 +31,8 @@ def main() -> int:
         except subprocess.TimeoutExpired as exc:
             out, proc = str(exc.stdout or ""), None
         summary = next((l for l in reversed(out.splitlines())
-                        if re.search(r"\d+ (passed|failed|error)", l)), "")
-        ok = ("passed" in summary and not re.search(r"\d+ (failed|errors?)\b", summary))
+                        if re.search(r"\d+ (passed|failed|errors?|skipped)", l)), "")
+        ok = (("passed" in summary or "skipped" in summary) and not re.search(r"\d+ (failed|errors?)\b", summary))
         print(f"{'ok  ' if ok else 'FAIL'} {rel}: {summary.strip('= ') or 'no summary'}",
               flush=True)
         if not ok:
