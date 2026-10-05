@@ -138,3 +138,32 @@ def test_cancel_running_kills_a_live_compile(tmp_path):
     t.join(10)
     assert not t.is_alive()
     assert done["r"].returncode != 0
+
+
+def test_compile_goes_online_when_cache_misses_a_bibtex_style(monkeypatch, tmp_path):
+    from khervedoc import compiler
+    calls = []
+
+    def fake_run(cmd, timeout=None, **kw):
+        cached = "--only-cached" in cmd
+        calls.append(cached)
+        (tmp_path / "document.pdf").write_bytes(b"%PDF")
+        if cached:     # BibTeX names the missing .bst only in the .blg
+            (tmp_path / "document.blg").write_text(
+                "I couldn't open style file plainnat.bst\n")
+            return _FakeProc(0, "warning: errors were issued by BibTeX")
+        (tmp_path / "document.blg").write_text("Database file #1: k.bib\n")
+        return _FakeProc(0, "ok")
+
+    monkeypatch.setattr(compiler, "_find_tectonic", lambda: "tectonic")
+    monkeypatch.setattr(compiler, "_run_tracked", fake_run)
+    (tmp_path / "document.blg").write_text("I couldn't open style file old.bst\n")
+    r = compiler.compile_tex("x", tmp_path)
+    assert r.ok and calls == [True, False]
+
+
+def test_stale_blg_does_not_force_an_online_run(monkeypatch, tmp_path):
+    from khervedoc.compiler import compile_tex
+    (tmp_path / "document.blg").write_text("I couldn't open style file old.bst\n")
+    calls = _fake_tectonic(monkeypatch, tmp_path, {True: (0, "ok", True)})
+    assert compile_tex("x", tmp_path).ok and calls == [True]

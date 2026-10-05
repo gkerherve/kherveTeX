@@ -342,6 +342,12 @@ class DocMeta:
     # numbers, syntax-colour keywordstyle/commentstyle/stringstyle),
     # \definecolor, \hypersetup, \newcommand, \theoremstyle, etc.
     preamble_extras: str = ""
+    # KherveRef library this document cites from (its folder). Empty when
+    # the document's bibliography is not managed through KherveRef.
+    ref_library: str = ""
+    # \bibliographystyle for KherveRef-managed citations (natbib styles
+    # also give \citep / \citet their author-year form).
+    bib_style: str = "plainnat"
 
 
 @dataclass
@@ -482,6 +488,8 @@ def _build_document(d: dict) -> Document:
             2 if bool(meta_d.get("two_column", False)) else 1)),
         frontmatter_extras=str(meta_d.get("frontmatter_extras", "")),
         preamble_extras=str(meta_d.get("preamble_extras", "")),
+        ref_library=str(meta_d.get("ref_library", "")),
+        bib_style=str(meta_d.get("bib_style", "plainnat")),
     )
     return Document(
         children=[_build_block(b) for b in d.get("children", [])],

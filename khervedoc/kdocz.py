@@ -10,6 +10,8 @@ Layout inside the archive:
     document.tex    - the generated LaTeX, for readers without KherveTeX
     project.json    - only in a project's main document: the list and
                       order of the project's other .ktex files
+    kherveref.bib   - the cited entries of a document whose citations
+                      come from a KherveRef library
     figures/        - the bundled image files referenced by Figure nodes
                       (older archives used images/; paths in document.json
                       say which)
@@ -42,6 +44,7 @@ PROJECT_BASENAME = "project.json"
 IMAGES_DIR = "figures"
 EQUATIONS_DIR = "equations"
 NATIVE_SUFFIX = ".ktex"
+BIB_BASENAME = "kherveref.bib"
 
 
 def is_kdocz_path(path: Path | str) -> bool:
@@ -110,9 +113,11 @@ def _bundle_figures(doc: Document, base_dir: Path
             images_to_bundle)
 
 
-def save_kdocz(doc: Document, out_path: Path) -> None:
+def save_kdocz(doc: Document, out_path: Path, bib_text: str = "") -> None:
     """Write `doc` and all its referenced images to `out_path`, with the
-    generated LaTeX alongside so the archive is readable on its own."""
+    generated LaTeX alongside so the archive is readable on its own.
+    `bib_text` (the cited KherveRef entries) is bundled as kherveref.bib
+    so the document compiles on machines without the library."""
     from .serializer import serialize_document
     out_path = Path(out_path)
     archive_doc, images = _bundle_figures(doc, out_path.parent)
@@ -130,6 +135,8 @@ def save_kdocz(doc: Document, out_path: Path) -> None:
         zf.writestr(TEX_BASENAME, serialize_document(archive_doc))
         for src_path, arc_name in images:
             zf.write(src_path, arcname=arc_name)
+        if bib_text:
+            zf.writestr(BIB_BASENAME, bib_text)
 
 
 def read_project_json(path: Path) -> str | None:
@@ -222,3 +229,14 @@ def load_kdocz(path: Path, extract_to: Path | None = None) -> tuple[Document, Pa
                 block.path = str(candidate.resolve()).replace("\\", "/")
 
     return doc, extract_to
+
+
+def read_bundled_bib(path: Path) -> str:
+    """The kherveref.bib bundled in a .ktex, or ""."""
+    try:
+        with zipfile.ZipFile(path, "r") as zf:
+            if BIB_BASENAME in zf.namelist():
+                return zf.read(BIB_BASENAME).decode("utf-8", errors="replace")
+    except (OSError, zipfile.BadZipFile):
+        pass
+    return ""

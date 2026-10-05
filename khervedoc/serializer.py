@@ -489,6 +489,43 @@ def _split_keyword_inlines(blocks: list) -> list[str]:
     return out
 
 
+_NATBIB_STYLES = {"plainnat", "abbrvnat", "unsrtnat"}
+
+
+def _with_kherveref_bibliography(doc: Document, body: str) -> tuple[str, bool]:
+    """Point the document at kherveref.bib when its citations come from a
+    KherveRef library. Returns (body, whether natbib must be loaded).
+
+    A document that already has its own \\bibliography{...} keeps it,
+    with kherveref added to the list; one using biblatex or a literal
+    thebibliography is left alone."""
+    from .kherveref_link import BIB_NAME, cited_keys
+    m = doc.meta
+    if not m.ref_library or not cited_keys(doc):
+        return body, False
+    existing = re.search(r"\\bibliography\{([^}]*)\}", body)
+    if existing:
+        names = [n.strip() for n in existing.group(1).split(",")]
+        if BIB_NAME not in names:
+            body = (body[:existing.start()] + "\\bibliography{"
+                    + ",".join(names + [BIB_NAME]) + "}" + body[existing.end():])
+        return body, False
+    if "\\printbibliography" in body or "{thebibliography}" in body:
+        return body, False
+    style = m.bib_style or "plainnat"
+    body = (body.rstrip("\n") + f"\n\n\\bibliographystyle{{{style}}}\n"
+            f"\\bibliography{{{BIB_NAME}}}\n")
+    return body, style in _NATBIB_STYLES
+
+
+def _with_natbib(packages: str, m) -> str:
+    if ("{natbib}" in packages or "{natbib}" in (m.preamble_extras or "")
+            or "usenatbib" in (m.class_options or "")
+            or (m.documentclass or "").lower().startswith("elsarticle")):
+        return packages
+    return packages + "\n\\usepackage{natbib}"
+
+
 def _uses_booktabs(doc: Document) -> bool:
     def walk(blocks):
         for b in blocks:
@@ -651,6 +688,9 @@ def serialize_document(doc: Document) -> str:
         if getattr(m, "column_count", 1) >= 3:
             body = _wrap_multicols(body, m.column_count)
 
+        body, natbib = _with_kherveref_bibliography(doc, body)
+        if natbib:
+            packages = _with_natbib(packages, m)
         packages = _with_url_breaking(packages, packages, frontmatter, body)
         return (
             f"{_documentclass_line(m)}\n"
@@ -786,6 +826,9 @@ def serialize_document(doc: Document) -> str:
     if getattr(m, "column_count", 1) >= 3:
         body = _wrap_multicols(body, m.column_count)
 
+    body, natbib = _with_kherveref_bibliography(doc, body)
+    if natbib:
+        packages = _with_natbib(packages, m)
     packages = _with_url_breaking(packages, packages, preamble_meta, body)
     return (
         f"{_documentclass_line(m)}\n"

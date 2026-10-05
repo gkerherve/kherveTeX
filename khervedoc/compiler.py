@@ -133,6 +133,9 @@ _NETWORK_ERROR_RE = re.compile(
     r"timed out|failed to lookup address", re.IGNORECASE)
 # A TeX input missing from the local cache (only-cached mode).
 _MISSING_FILE_RE = re.compile(r"File `([^']+)' not found")
+# BibTeX reports a .bst the cache lacks only in its .blg; tectonic's own
+# log merely says BibTeX "issued errors".
+_MISSING_BST_RE = re.compile(r"I couldn't open style file (\S+)")
 # A font tectonic has not cached yet: continue-on-errors still writes a PDF,
 # with that text blank (nullfont), so it must count as missing too — or the
 # compile never goes online for it and the document silently loses glyphs.
@@ -373,6 +376,22 @@ Hello $E=mc^2$.
                             r"\usepackage{amsmath,amssymb,graphicx,multicol,"
                             r"float,setspace,xurl}" "\n" + _FONT_BODY))
 
+    # KherveRef citations: natbib + bibtex with each style offered, so
+    # the .bst files and bibtex itself are cached for offline compiles.
+    (workdir / "kherveref.bib").write_text(
+        "@article{a2020, author={Smith, Jane and M{\\\"u}ller, Anna},"
+        " title={{XPS} of {TiO2}}, journal={J. Test}, year={2020},"
+        " volume={1}, pages={1--2}, doi={10.1/x}}\n"
+        "@book{b2019, author={Doe, John}, title={A Book},"
+        " publisher={Pub}, year={2019}}\n", encoding="utf-8")
+    for _style in ("plainnat", "unsrtnat", "abbrvnat", "plain", "unsrt"):
+        _CLASS_DOCS.append((
+            f"bibliography {_style}",
+            r"\documentclass{article}\usepackage{natbib,xurl}" "\n"
+            r"\begin{document}\citep{a2020} \citet{b2019}" "\n"
+            rf"\bibliographystyle{{{_style}}}\bibliography{{kherveref}}" "\n"
+            r"\end{document}" "\n"))
+
     total = len(_CLASS_DOCS)
 
     for idx, (name, source) in enumerate(_CLASS_DOCS, 1):
@@ -562,7 +581,10 @@ def compile_tex(
         for ext in ("*.cls", "*.sty", "*.bst", "*.bib"):
             for f in Path(source_dir).glob(ext):
                 dest = workdir / f.name
-                if not dest.exists():
+                # A .bib is edited between compiles; the rest never is.
+                if not dest.exists() or (
+                        f.suffix == ".bib" and f.name != "kherveref.bib"
+                        and f.stat().st_mtime > dest.stat().st_mtime):
                     shutil.copy2(f, dest)
         # Copy subdirectories (Fonts/, Images/, etc.) so relative paths
         # inside .cls files (e.g. ./Fonts/Lato/Lato-Regular) resolve.
@@ -625,11 +647,18 @@ def compile_tex(
     # Cache first: without --only-cached tectonic may contact its bundle
     # server on every run, which stalls or fails with no network (trains,
     # planes). Only go online when the cache is genuinely missing a file.
+    blg_path = workdir / f"{basename}.blg"
+    blg_path.unlink(missing_ok=True)
     try:
         code, log = _run(only_cached=True)
         missing = _MISSING_FILE_RE.findall(log) + [
             next(g for g in m if g)
             for m in _MISSING_FONT_RE.findall(log.replace("\n", ""))]
+        try:
+            missing += _MISSING_BST_RE.findall(blg_path.read_text(
+                encoding="utf-8", errors="replace"))
+        except OSError:
+            pass
         # continue-on-errors still yields a PDF when a package is missing
         # from the cache, so a clean exit alone doesn't mean success.
         cached_ok = code == 0 and pdf_path.exists() and not missing

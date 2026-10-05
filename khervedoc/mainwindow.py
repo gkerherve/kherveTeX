@@ -39,6 +39,7 @@ from .equation_editor import (
     ChemfigEditorDialog, ChemistryEditorDialog, EquationEditorDialog,
 )
 from . import examples, importers
+from . import kherveref_link
 from .latex_view import LatexView
 from .model import (
     Author, ChapterEntry, Document, DocMeta, Paragraph, Project, Section,
@@ -968,6 +969,9 @@ class MainWindow(QMainWindow):
         # imported .tex) resolve when compiling the preview.
         self._import_source_dir: Path | None = None
         self._kdocz_extract_dir: Path | None = None   # set when opening a .kdocz
+        # Cited KherveRef entries carried by the open document (from its
+        # .ktex), used when its library is not on this machine.
+        self._bundled_bib = ""
         # Multi-chapter project state
         self._project: Project | None = None
         self._project_path: Path | None = None
@@ -1429,7 +1433,11 @@ class MainWindow(QMainWindow):
         self.act_footnote = QAction(icons.footnote(), "&Footnote...", self,
                                     triggered=e.insert_footnote)
         self.act_citation = QAction(icons.citation(), "&Citation...", self,
-                                    triggered=e.insert_citation)
+                                    triggered=self._insert_citation)
+        self.act_check_citations = QAction(
+            "Check c&itations", self, triggered=self._check_citations,
+            statusTip="List cited keys that no KherveRef library or "
+                      "bibliography file defines")
         self.act_crossref = QAction(icons.cross_ref(), "Cross-&reference...", self,
                                     triggered=e.insert_crossref)
         self.act_figure = QAction(icons.figure(), "F&igure...", self,
@@ -1762,6 +1770,7 @@ class MainWindow(QMainWindow):
         m_insert.addSeparator()
         m_insert.addAction(self.act_link); m_insert.addAction(self.act_footnote)
         m_insert.addAction(self.act_citation); m_insert.addAction(self.act_crossref)
+        m_insert.addAction(self.act_check_citations)
         m_insert.addSeparator()
         m_insert.addAction(self.act_figure); m_insert.addAction(self.act_table)
         m_insert.addAction(self.act_drawing)
@@ -2208,6 +2217,7 @@ class MainWindow(QMainWindow):
         self._leave_project()
         self._current_path = None
         self._import_source_dir = None
+        self._bundled_bib = ""
         self._editor.set_document(_blank_document())
         self._update_title()
 
@@ -2344,9 +2354,11 @@ class MainWindow(QMainWindow):
         self._io_start("Importing\u2026" if is_import_ext else "Opening\u2026")
         is_import = False
         try:
+            self._bundled_bib = ""
             if kdocz.is_kdocz_path(path):
                 doc, extract_dir = kdocz.load_kdocz(path)
                 self._kdocz_extract_dir = extract_dir
+                self._bundled_bib = kdocz.read_bundled_bib(path)
             elif path.suffix.lower() == ".tex":
                 doc = importers.import_tex(path.read_text(encoding="utf-8"),
                                           base_dir=path.parent)
@@ -2383,6 +2395,10 @@ class MainWindow(QMainWindow):
             else:
                 doc = from_json(path.read_text(encoding="utf-8"))
                 self._kdocz_extract_dir = None
+                bundled = (project_store.work_dir(path.parent)
+                           / kherveref_link.BIB_FILE)
+                if bundled.exists():
+                    self._bundled_bib = bundled.read_text(encoding="utf-8")
         except Exception as exc:
             self._io_stop()
             QMessageBox.critical(self, "Open failed", str(exc))
@@ -2409,6 +2425,7 @@ class MainWindow(QMainWindow):
             self._editor.set_document(doc)
             self._update_title()
             self._remember_recent(path)
+        self._refresh_kherveref_bib(doc)
         self._io_stop()
 
     # ---- drag-and-drop document files ----
@@ -2561,12 +2578,15 @@ class MainWindow(QMainWindow):
         # .kdoc.json is the plain JSON model. The .tex export sits alongside
         # in both cases so users can inspect the source without unzipping.
         tex_basename = self._doc_stem(path)
+        bib_text = self._refresh_kherveref_bib(doc)
         if kdocz.is_kdocz_path(path):
-            kdocz.save_kdocz(doc, path)
+            kdocz.save_kdocz(doc, path, bib_text=bib_text)
         else:
             path.write_text(to_json(doc), encoding="utf-8")
         # Working files live in .kherve/ so the folder shows only .ktex.
         work = project_store.work_dir(path.parent)
+        if bib_text:
+            (work / kherveref_link.BIB_FILE).write_text(bib_text, encoding="utf-8")
         tex_path = work / f"{tex_basename}.tex"
         tex_path.write_text(serialize_document(doc), encoding="utf-8")
         self._editor.text_edit.document().setModified(False)
@@ -3453,6 +3473,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "tectonic missing",
                                 f"Install tectonic to {purpose}.")
             return None
+        self._stage_kherveref_bib(doc, self._build_dir, self._build_dir / "print")
         return serialize_document(doc), compile_tex
 
     def _export_pdf(self) -> None:
@@ -4998,6 +5019,61 @@ class MainWindow(QMainWindow):
         if self._auto_compile:
             self._kick_compile()
 
+    # ---- KherveRef citations ----
+
+    def _refresh_kherveref_bib(self, doc) -> str:
+        """kherveref.bib for *doc* (the cited entries of its KherveRef
+        library, falling back to the copy its .ktex carries); also feeds
+        the editor so citations display as they will compile."""
+        text, _missing = kherveref_link.bibliography_for(doc, self._bundled_bib)
+        if text:
+            self._bundled_bib = text
+        self._editor.set_extra_bibliography(text or self._bundled_bib)
+        return text if doc.meta.ref_library else ""
+
+    def _stage_kherveref_bib(self, doc, *workdirs: Path) -> None:
+        if not doc.meta.ref_library:
+            return
+        text = self._refresh_kherveref_bib(doc)
+        for d in workdirs:
+            d.mkdir(parents=True, exist_ok=True)
+            (d / kherveref_link.BIB_FILE).write_text(text, encoding="utf-8")
+
+    def _insert_citation(self) -> None:
+        from .citation_picker import CitationPicker
+        meta = self._editor.meta()
+        dlg = CitationPicker(meta.ref_library, self._bundled_bib,
+                             parent=self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        if dlg.library and dlg.library != meta.ref_library:
+            meta.ref_library = dlg.library
+        self._editor.insert_citation_keys(dlg.keys(), dlg.style())
+        self._refresh_kherveref_bib(self._editor.get_document())
+
+    def _check_citations(self) -> None:
+        doc = self._editor.get_document()
+        keys = kherveref_link.cited_keys(doc)
+        if not keys:
+            QMessageBox.information(self, "Citations", "The document cites nothing.")
+            return
+        source_dir = self._resolved_source_dir()
+        _text, missing = kherveref_link.bibliography_for(
+            doc, self._bundled_bib, [source_dir] if source_dir else [])
+        if not missing:
+            QMessageBox.information(
+                self, "Citations",
+                f"All {len(keys)} cited keys are defined.")
+            return
+        where = (kherveref_link.library_name(doc.meta.ref_library)
+                 if doc.meta.ref_library else "any bibliography")
+        QMessageBox.warning(
+            self, "Citations",
+            f"{len(missing)} of {len(keys)} cited keys are not in {where}:\n\n"
+            + "\n".join(missing)
+            + "\n\nAdd them in KherveRef (they then appear here), or fix "
+              "the keys.")
+
     def _resolved_source_dir(self) -> Path | None:
         """Where to look for relative asset paths (\\includegraphics etc.).
         Prefer the current saved-doc location; fall back to an imported
@@ -5341,6 +5417,8 @@ class MainWindow(QMainWindow):
             return
         self._last_source_hash = source_hash
         source_dir = self._resolved_source_dir()
+        if self._compiler != "typst":
+            self._stage_kherveref_bib(doc, self._build_dir)
         self._compile_worker = _CompileWorker(
             source, self._build_dir, source_dir,
             skip_images=self._skip_images,

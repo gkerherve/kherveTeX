@@ -18,7 +18,7 @@ from .model import (
 _BIB_SOURCE_RE = re.compile(
     r"\\(?:bibliography|addbibresource)(?:\[[^\]]*\])?\{([^}]+)\}")
 _BIBITEM_RE = re.compile(r"\\bibitem(?:\[([^\]]*)\])?\{([^}]+)\}")
-_ENTRY_START_RE = re.compile(r"@(\w+)\s*\{\s*([^,\s]+)\s*,")
+_ENTRY_START_RE = re.compile(r"@(\w+)\s*[{(]\s*([^,\s]+)\s*,")
 
 
 def _walk(node):
@@ -103,12 +103,16 @@ def short_author(author: str) -> str:
 class ReferenceResolver:
     """Display text for the citations and cross-references of one document."""
 
-    def __init__(self, doc: Document, base_dir: Path | None = None):
+    def __init__(self, doc: Document, base_dir: Path | None = None,
+                 extra_bib: str = ""):
         self.entries: dict[str, dict[str, str]] = {}
         self._bibitem_labels: dict[str, str] = {}
         self.cite_numbers: dict[str, int] = {}
         self.labels: dict[str, str] = {}
         self._load_bibliography(doc, base_dir)
+        # Citations from a KherveRef library (kherveref_link).
+        for key, entry in parse_bibtex(extra_bib).items():
+            self.entries.setdefault(key, entry)
         self._number_citations(doc)
         self._number_labels(doc)
 

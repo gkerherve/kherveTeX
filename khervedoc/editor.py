@@ -1204,6 +1204,7 @@ class DocumentEditor(QWidget):
         self._images_dir = Path(tempfile.mkdtemp(prefix="khervedoc-imgs-"))
         self._equations_dir: Path | None = None
         self._doc_dir: Path | None = None
+        self._extra_bib = ""     # cited KherveRef entries (kherveref_link)
         self._resolver = ReferenceResolver(Document())
         # Full-resolution equation renders by resource URL, kept so zoom
         # changes can re-scale from the original rather than a copy.
@@ -1402,7 +1403,7 @@ class DocumentEditor(QWidget):
                 f = QFont(self._visual_font_family)
                 f.setPointSize(self._body_font_pt)
                 self._edit.setFont(f)
-            self._resolver = ReferenceResolver(doc, self._doc_dir)
+            self._resolver = ReferenceResolver(doc, self._doc_dir, self._extra_bib)
             self._edit.clear()
             cursor = self._edit.textCursor()
             cursor.movePosition(QTextCursor.Start)
@@ -3075,6 +3076,22 @@ class DocumentEditor(QWidget):
         display = f"[{keys.strip()}]"
         self._edit.textCursor().insertText(display, _citation_format(payload))
 
+    def insert_citation_keys(self, keys: list[str], style: str = "cite") -> None:
+        """Insert a citation chosen in the KherveRef picker."""
+        keys = [k for k in keys if k]
+        if not keys:
+            return
+        payload = f"{','.join(keys)}|{style}"
+        display = self._resolver.cite_text(keys, style)
+        self._edit.textCursor().insertText(display, _citation_format(payload))
+
+    def set_extra_bibliography(self, bib_text: str) -> None:
+        """Entries from a KherveRef library, for showing citations as
+        "[1]" / "Smith (2020)" rather than raw keys."""
+        if bib_text != self._extra_bib:
+            self._extra_bib = bib_text
+            self._refresh_reference_labels()
+
     def insert_crossref(self) -> None:
         label, ok = QInputDialog.getText(self, "Cross-reference", "Label:")
         if not ok or not label: return
@@ -4263,7 +4280,8 @@ class DocumentEditor(QWidget):
         adding a citation or a section renumbers the ones after it."""
         if self._building:
             return
-        self._resolver = ReferenceResolver(self.get_document(), self._doc_dir)
+        self._resolver = ReferenceResolver(self.get_document(), self._doc_dir,
+                                            self._extra_bib)
         self._apply_page_layout()   # heading numbers shift as users edit
         doc = self._edit.document()
         updates = []
