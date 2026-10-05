@@ -36,11 +36,16 @@ def is_library(path: Path | str) -> bool:
 
 
 def library_name(path: Path | str) -> str:
-    try:
-        data = json.loads((Path(path) / "library.json").read_text(encoding="utf-8"))
-        return data.get("name") or Path(path).name
-    except (OSError, ValueError):
-        return Path(path).name
+    """The name KherveRef shows: from <Name>.kref (KherveRef 0.6+) or
+    library.json (older libraries)."""
+    root = Path(path)
+    manifests = sorted(root.glob("*.kref")) + [root / "library.json"]
+    for m in manifests:
+        try:
+            return json.loads(m.read_text(encoding="utf-8")).get("name") or root.name
+        except (OSError, ValueError):
+            continue
+    return root.name
 
 
 def known_libraries() -> list[Path]:

@@ -87,6 +87,9 @@ def test_known_libraries(library, monkeypatch):
     monkeypatch.setattr(kr, "_settings", FakeSettings)
     assert kr.known_libraries() == [library]
     assert kr.library_name(library) == "Thesis"
+    (library / "library.json").unlink()
+    (library / "My Thesis.kref").write_text(json.dumps({"name": "My Thesis"}))
+    assert kr.library_name(library) == "My Thesis"
 
 
 def test_serializer_adds_bibliography_and_natbib():
