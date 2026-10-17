@@ -1038,8 +1038,11 @@ class MainWindow(QMainWindow):
         # the editor (where the page card can scroll horizontally if
         # needed but the wrapped editor lines stay readable at
         # narrower widths).
-        self._splitter.setStretchFactor(0, 2)
-        self._splitter.setStretchFactor(1, 5)
+        # Default: the PDF is only a small preview strip at the right; the
+        # editor keeps nearly all the width (drag the handle to widen it).
+        self._splitter.setStretchFactor(0, 6)
+        self._splitter.setStretchFactor(1, 1)
+        self._splitter.setSizes([1000, 230])
 
         # Find bar (hidden until Ctrl+F).
         self._find_bar = _FindBar(self)
@@ -1065,8 +1068,10 @@ class MainWindow(QMainWindow):
         self._project_dock.setWidget(self._project_sidebar)
         self._project_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
         self.addDockWidget(Qt.LeftDockWidgetArea, self._project_dock)
-        # Always shown: lists the single open document, or the project's
-        # documents once there is more than one.
+        # The list is hidden at start-up (Ctrl+5 or View > Documents shows
+        # it); opening a project shows it.
+        self._dock_before_page = False
+        self._project_dock.hide()
         self._project_dock.toggleViewAction().setShortcut(QKeySequence("Ctrl+5"))
         # The list only holds document names; the default width (the
         # sidebar's size hint) leaves the editor cramped.
@@ -5310,10 +5315,17 @@ class MainWindow(QMainWindow):
         "window": the same, with the PDF in its own window.
         "visual": no PDF panel and no background compiles.
         "page": as "visual", with the Documents list hidden as well —
-        just the page, like Word."""
+        just the page, like Word. The Documents list is left as the user
+        has it, except that "page" hides it and leaving "page" restores it."""
         visual = mode in ("visual", "page")
         self.set_pdf_detached(mode == "window")
-        self._project_dock.setVisible(mode != "page")
+        if mode == "page":
+            if self._project_dock.isVisible():
+                self._dock_before_page = True
+            self._project_dock.hide()
+        elif self._dock_before_page:
+            self._dock_before_page = False
+            self._project_dock.show()
         {"visual": self.act_visual_only, "page": self.act_visual_only,
          "window": self.act_pdf_window}.get(
             mode, self.act_side_by_side).setChecked(True)

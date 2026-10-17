@@ -76,6 +76,7 @@ def test_welcome_example_choice_loads_it(window, monkeypatch):
 
 def test_page_only_also_hides_the_documents_list(window):
     window.show()
+    window._project_dock.show()
     window.apply_layout_mode("page")
     assert window._project_dock.isHidden()
     assert window._side_tabs.isHidden() and window._auto_compile is False
@@ -148,3 +149,13 @@ def test_examples_open_in_the_chosen_layout(window):
     finally:
         new.close()
         window.apply_layout_mode("side")
+
+
+def test_documents_list_hidden_and_pdf_panel_small_by_default(window):
+    window.show()
+    window.apply_layout_mode("side")
+    window._splitter.setSizes([1000, 230])
+    assert window._project_dock.isHidden()
+    assert not window._side_tabs.isHidden()
+    left, right = window._splitter.sizes()
+    assert right < left / 2

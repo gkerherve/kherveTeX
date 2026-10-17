@@ -36,7 +36,8 @@ def _names(w):
 
 
 def test_single_document_is_listed(window, tmp_path):
-    assert not window._project_dock.isHidden()
+    assert window._project_dock.isHidden()      # hidden by default
+
     assert len(_names(window)) == 1
     path = tmp_path / "thesis.ktex.json"
     window._current_path = path
