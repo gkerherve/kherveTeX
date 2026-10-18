@@ -444,10 +444,145 @@ def _class_options(m) -> str:
 
 
 def _documentclass_line(m) -> str:
+    cls = (m.documentclass or "").lower()
     opts = _class_options(m)
-    if opts:
-        return f"\\documentclass[{opts}]{{{m.documentclass}}}"
-    return f"\\documentclass{{{m.documentclass}}}"
+    # standalone crops to its content; without varwidth a paragraph or a
+    # list has no line width and the compile fails.
+    if cls == "standalone" and not opts:
+        opts = "varwidth"
+    # ElegantBook defaults to biber, which tectonic does not ship.
+    if cls == "elegantbook" and "bib" not in opts:
+        opts = ",".join(o for o in (opts, "bibtex") if o)
+    line = (f"\\documentclass[{opts}]{{{m.documentclass}}}" if opts
+            else f"\\documentclass{{{m.documentclass}}}")
+    if cls in _NEEDS_FONTSPEC_FIRST:
+        line = "\\RequirePackage{fontspec}\n" + line
+    if cls == "europasscv":
+        line = _EUROPASSCV_BEFORE + line + _EUROPASSCV_AFTER
+    return line
+
+
+# europasscv inputs def/europasscv_<lang>.def and asks for "TeX Gyre
+# Heros" by system name; tectonic's bundle is flat and has the font only
+# as files. Redirect both while the class loads, then restore them.
+_EUROPASSCV_BEFORE = r"""\RequirePackage{fontspec}
+\makeatletter
+\let\kt@IIFE\InputIfFileExists
+\def\kt@defpath def/#1\kt@end{#1}
+\def\InputIfFileExists#1{\in@{def/}{#1}\ifin@\edef\kt@f{\kt@defpath#1\kt@end}%
+\else\def\kt@f{#1}\fi\expandafter\kt@IIFE\expandafter{\kt@f}}
+\let\kt@setmainfont\setmainfont
+\def\setmainfont#1{\kt@setmainfont{texgyreheros}[Extension=.otf,%
+UprightFont=*-regular,BoldFont=*-bold,ItalicFont=*-italic,%
+BoldItalicFont=*-bolditalic]}
+\makeatother
+"""
+_EUROPASSCV_AFTER = r"""
+\makeatletter\let\InputIfFileExists\kt@IIFE
+\let\setmainfont\kt@setmainfont\makeatother"""
+
+
+# Classes that refuse to load under XeTeX unless fontspec came first.
+_NEEDS_FONTSPEC_FIRST = {"suftesi"}
+
+# Classes whose \author{} cannot hold line breaks or font switches
+# (tufte upper-cases and letter-spaces it, revtex parses it as a list of
+# names): they get the names only.
+_NAMES_ONLY_AUTHOR = {"tufte-handout", "tufte-book", "revtex4-2",
+                      "hepthesis"}
+
+# Packages a class forbids outright.
+_CLASS_FORBIDDEN_PACKAGES = {"revtex4-2": {"multicol"},
+                             "acmart": {"amssymb"}}
+
+# Classes that only accept the abstract before \maketitle.
+_ABSTRACT_BEFORE_TITLE = {"revtex4-2", "acmart"}
+
+_CYR_NAMES = ("a b v g d e zh z i ishrt k l m n o p r s t u f h c ch sh "
+              "shch hrdsn ery sftsn erev yu ya").split()
+
+
+def _cyrillic_macros() -> str:
+    """disser spells its Russian captions with the T2A \\cyr* macros,
+    whose fonts tectonic does not ship. Under XeTeX the same letters as
+    Unicode in a Cyrillic OpenType font do the job."""
+    lines = [r"\usepackage{fontspec}",
+             r"\setmainfont{DejaVuSerif.ttf}[BoldFont=DejaVuSerif-Bold.ttf,"
+             r"ItalicFont=DejaVuSerif-Italic.ttf]",
+             r"\providecommand{\cyr}{}", r"\providecommand{\CYRYO}{Ё}",
+             r"\providecommand{\cyryo}{ё}"]
+    for k, name in enumerate(_CYR_NAMES):
+        lower = chr(0x430 + k)
+        lines.append(f"\\providecommand{{\\cyr{name}}}{{{lower}}}")
+        lines.append(f"\\providecommand{{\\CYR{name.upper()}}}"
+                     f"{{{lower.upper()}}}")
+    return "\n".join(lines)
+
+
+def _class_fallbacks(cls: str) -> str:
+    """Stand-ins for the environments KherveTeX emits that a class may not
+    define (keyword everywhere but elsarticle, abstract in book and letter
+    classes, table in letters and posters), so any document compiles
+    under any class. Deferred to \\begin{document} so a class or package
+    that defines them later still wins."""
+    lines = [
+        r"\providecommand{\texorpdfstring}[2]{#1}",
+        r"\makeatletter",
+        r"\AtBeginDocument{%",
+        r"\@ifundefined{keyword}{\newenvironment{keyword}"
+        r"{\par\medskip\noindent\textbf{Keywords:}\ \def\sep{, }}"
+        r"{\par\medskip}}{}%",
+        r"\@ifundefined{abstract}{\newenvironment{abstract}"
+        r"{\par\begin{quote}\small\noindent\textbf{Abstract.}\ }"
+        r"{\end{quote}\par}}{}%",
+        r"\@ifundefined{table}{\newenvironment{table}[1][]"
+        r"{\par\begin{center}\def\caption##1{\par\textit{##1}\par}}"
+        r"{\end{center}\par}}{}%",
+        r"\@ifundefined{caption}{\newcommand{\caption}[2][]"
+        r"{\par{\centering #2\par}}}{}%",
+        r"}",
+        # Letters and CVs have no sectioning or title page.
+        r"\providecommand{\kt@head}[2]{\par\medskip\noindent{#1#2}\par"
+        r"\nobreak\smallskip}",
+        r"\providecommand{\section}{\@ifstar{\kt@head\Large}{\kt@head\Large}}",
+        r"\providecommand{\subsection}"
+        r"{\@ifstar{\kt@head\large}{\kt@head\large}}",
+        r"\providecommand{\subsubsection}"
+        r"{\@ifstar{\kt@head\bfseries}{\kt@head\bfseries}}",
+        # disser adds Russian captions through babel's \addto; sn-jnl
+        # calls a PostScript header hook that only exists under dvips.
+        r"\providecommand{\addto}[2]{}",
+        r"\providecommand{\chaptername}{Chapter}",
+        r"\providecommand{\tablename}{Table}",
+        r"\providecommand{\figurename}{Figure}",
+        r"\providecommand{\headerps@out}{}",
+        r"\makeatother",
+    ]
+    if cls.startswith("tufte"):
+        # Tufte forbids the deeper headings; map them onto \paragraph.
+        lines += [r"\let\subsubsection\paragraph",
+                  r"\let\subparagraph\paragraph",
+                  # Its soul letter-spacing breaks \maketitle on the
+                  # current LaTeX kernel under XeTeX.
+                  r"\renewcommand{\allcapsspacing}[1]{#1}",
+                  r"\renewcommand{\smallcapsspacing}[1]{#1}"]
+    if cls in ("letter", "scrlttr2"):
+        lines.insert(-1, r"\providecommand{\maketitle}{\begin{center}"
+                     r"{\LARGE\@title\par}\medskip{\large\@author\par}"
+                     r"\end{center}}")
+    if cls == "hepthesis":
+        # Its \maketitle swallows the next token and breaks an empty line.
+        lines.append(r"\renewcommand{\maketitle}{\titlepage[\today]{}}")
+    if cls == "disser":
+        lines.append(_cyrillic_macros())
+    if cls == "tikzposter":
+        # Floats cannot live inside a poster block.
+        lines += [r"\renewenvironment{table}[1][]{\par\begin{center}"
+                  r"\def\caption##1{\par\textit{##1}\par}}"
+                  r"{\end{center}\par}",
+                  r"\renewenvironment{figure}[1][]{\par\begin{center}}"
+                  r"{\end{center}\par}"]
+    return "\n".join(lines)
 
 
 def _wrap_multicols(body: str, n: int) -> str:
@@ -553,7 +688,8 @@ def serialize_document(doc: Document) -> str:
     # Margins flow into geometry per-side so users can pick asymmetric layouts.
     # Journal classes (non-standard) often define their own layout that
     # conflicts with geometry — skip it for those.
-    if is_journal:
+    cls_lower = (m.documentclass or "").lower()
+    if is_journal or is_beamer:
         geometry = ""
     else:
         geometry = (
@@ -578,7 +714,8 @@ def serialize_document(doc: Document) -> str:
     parindent = "" if (m.paragraph_indent or is_journal) else "\\setlength{\\parindent}{0pt}\n\\setlength{\\parskip}{0.8em}"
 
     preamble_extras = "\n".join(p for p in (font_pkg, spacing_pkg, spacing_cmd, parindent) if p)
-    pkg_list = list(m.packages)
+    forbidden = _CLASS_FORBIDDEN_PACKAGES.get(cls_lower, set())
+    pkg_list = [p for p in m.packages if p not in forbidden]
     if "float" not in pkg_list and not is_journal:
         pkg_list.append("float")
     if (_uses_booktabs(doc) and "booktabs" not in pkg_list
@@ -600,6 +737,7 @@ def serialize_document(doc: Document) -> str:
     # already defined" error because \newcommand (unlike
     # \providecommand) refuses to redefine an existing macro.
     packages += "\n" + _KSTROKE_PROVIDE
+    packages += "\n" + _class_fallbacks(cls_lower)
 
     # Review features: highlight colours + todonotes
     hl_colors, has_comments = _collect_review_usage(doc)
@@ -626,6 +764,14 @@ def serialize_document(doc: Document) -> str:
         author_text = (
             f"\\parbox{{\\textwidth}}{{\\centering {author_text}}}"
         )
+
+    if cls_lower in _NAMES_ONLY_AUTHOR and author_parts:
+        names = [serialize_inlines(b.children) for b in doc.children
+                 if isinstance(b, Author)]
+        author_text = ", ".join(n for n in names if n) or author_text
+        if cls_lower == "revtex4-2" and affiliation_parts:
+            author_text += "".join(
+                f"}}\n\\affiliation{{{a}" for a in affiliation_parts)
 
     has_metadata = bool(title_text or author_text)
 
@@ -711,6 +857,15 @@ def serialize_document(doc: Document) -> str:
     fm_extras = (m.frontmatter_extras or "").strip()
     all_extras = extras_src + "\n" + fm_extras
     preamble_meta = ""
+    if cls_lower == "moderncv" and not re.search(r"\\name\b", all_extras):
+        # moderncv has no \author: it needs a style and \name{first}{last}.
+        name = next((serialize_inlines(b.children) for b in doc.children
+                     if isinstance(b, Author)), "") or "~"
+        first, _, last = name.partition(" ")
+        if "\\moderncvstyle" not in all_extras:
+            preamble_meta += "\\moderncvstyle{classic}\n"
+        preamble_meta += f"\\name{{{first}}}{{{last}}}\n"
+        author_text = ""
     if has_metadata:
         if not re.search(r"\\title\b", all_extras):
             preamble_meta += f"\\title{{{title_text or '~'}}}\n"
@@ -735,6 +890,13 @@ def serialize_document(doc: Document) -> str:
         parts.append("\\maketitle\n")
         emitted_maketitle = True
     children = doc.children
+    if cls_lower in _ABSTRACT_BEFORE_TITLE:
+        front = [b for b in children if isinstance(b, Abstract)]
+        rest = [b for b in children if not isinstance(b, Abstract)]
+        at = next((k for k, b in enumerate(rest) if isinstance(b, Title)),
+                  None)
+        if front and at is not None:
+            children = rest[:at] + front + rest[at:]
     n = len(children)
     i = 0
     # If a RawLatex block already contains \maketitle (e.g. inside a
@@ -825,6 +987,17 @@ def serialize_document(doc: Document) -> str:
     body = "".join(parts)
     if getattr(m, "column_count", 1) >= 3:
         body = _wrap_multicols(body, m.column_count)
+    if cls_lower == "tikzposter":
+        # A poster is a canvas: text only typesets inside a \block.
+        head, sep, rest = body.partition("\\maketitle\n")
+        if not sep:
+            head, rest = "", body
+        if rest.strip():
+            body = f"{head}{sep}\\block{{}}{{\n{rest}}}\n"
+    if cls_lower == "revtex4-2":
+        # revtex reads its front matter inside the document body.
+        body = preamble_meta + body
+        preamble_meta = ""
 
     body, natbib = _with_kherveref_bibliography(doc, body)
     if natbib:

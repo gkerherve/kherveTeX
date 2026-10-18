@@ -219,6 +219,33 @@ def _tectonic_cache_dir() -> Path | None:
     return fallback if fallback.is_dir() else None
 
 
+def template_sample_document(documentclass: str):
+    """A short document using every block the editor makes (title page,
+    abstract, keywords, three heading levels, equation, list, table)."""
+    from .model import (
+        Abstract, Affiliation, Author, DocMeta, Document, Keywords, List,
+        ListItem, MathBlock, MathInline, Paragraph, Section, Table, Text,
+        Title,
+    )
+    return Document(meta=DocMeta(documentclass=documentclass), children=[
+        Title(children=[Text("A test title")]),
+        Author(children=[Text("Jane Doe")]),
+        Affiliation(children=[Text("Imperial College London")]),
+        Abstract(children=[Text("This is the abstract.")]),
+        Keywords(children=[Text("one, two")]),
+        Section(level=1, children=[Text("Introduction")]),
+        Paragraph(children=[Text("Body text with "),
+                            MathInline("E=mc^2"), Text(".")]),
+        Section(level=2, children=[Text("Method")]),
+        MathBlock(r"\int_0^1 x\,dx = \tfrac12", numbered=True),
+        List(items=[ListItem(children=[Text("a")]),
+                    ListItem(children=[Text("b")])]),
+        Table(rows=[["a", "b"], ["1", "2"]], caption="A table"),
+        Section(level=3, children=[Text("Detail")]),
+        Paragraph(children=[Text("End.")]),
+    ])
+
+
 def download_tectonic_bundle(on_output=None) -> tuple[bool, str]:
     """Pre-cache TeX packages for offline compilation.
 
@@ -391,6 +418,21 @@ Hello $E=mc^2$.
             r"\begin{document}\citep{a2020} \citet{b2019}" "\n"
             rf"\bibliographystyle{{{_style}}}\bibliography{{kherveref}}" "\n"
             r"\end{document}" "\n"))
+
+    # The same title-page / abstract / table document the editor produces,
+    # under every class it offers: the class fallbacks pull in extra files
+    # (blx-bibtex.def, DejaVu, TeX Gyre Heros...) that must ship too.
+    from .editor import TEMPLATE_CHOICES
+    from .serializer import serialize_document
+    for _cls in TEMPLATE_CHOICES:
+        _CLASS_DOCS.append((f"template {_cls}",
+                            serialize_document(template_sample_document(_cls))))
+    from . import style_manager
+    for sd in style_manager.all_style_dirs():
+        for ext in ("*.cls", "*.sty", "*.bst"):
+            for f in Path(sd).glob(ext):
+                if not (workdir / f.name).exists():
+                    shutil.copy2(f, workdir / f.name)
 
     total = len(_CLASS_DOCS)
 
@@ -593,6 +635,16 @@ def compile_tex(
                 dest = workdir / child.name
                 if not dest.exists():
                     shutil.copytree(child, dest)
+    # Bundled and user styles (sn-jnl, mimosis, resume...) too: tectonic
+    # ignores TEXINPUTS, so a class it cannot see in the workdir is
+    # "not found".
+    from . import style_manager
+    for sd in style_manager.all_style_dirs():
+        for ext in ("*.cls", "*.sty", "*.bst"):
+            for f in Path(sd).glob(ext):
+                dest = workdir / f.name
+                if not dest.exists():
+                    shutil.copy2(f, dest)
     if skip_images:
         tex_source = _strip_images(tex_source)
     else:

@@ -2028,14 +2028,6 @@ class MainWindow(QMainWindow):
         tb.setMovable(False)
         self.addToolBar(tb)
 
-        tb.addAction(self.act_new); tb.addAction(self.act_open)
-        tb.addAction(self.act_save); tb.addAction(self.act_export_pdf)
-        tb.addAction(self.act_print)
-        tb.addAction(self.act_open_project)
-        tb.addSeparator()
-        tb.addAction(self.act_undo); tb.addAction(self.act_redo)
-        tb.addSeparator()
-
         self._heading_combo = QComboBox(self)
         # Order matches Word's paragraph-style picker.
         self._heading_combo.addItem("Body text", 0)
@@ -2049,20 +2041,25 @@ class MainWindow(QMainWindow):
         self._heading_combo.addItem("Chapter", -5)
         for level in range(1, 6):
             self._heading_combo.addItem(f"Heading {level}", level)
-        self._heading_combo.setMinimumWidth(120)
         self._heading_combo.currentIndexChanged.connect(
             lambda idx: self._editor.apply_heading(self._heading_combo.itemData(idx)))
-        tb.addWidget(self._heading_combo)
+        # The combo stays the model of the paragraph styles (sync code reads
+        # it); what Word users see is a Styles gallery of preview tiles.
+        self._heading_combo.hide()
+        style_gallery = self._build_style_gallery()
 
-        self._numbered_cb = QCheckBox("Numbered", self)
+        # A toggle tile like the style tiles, shown pressed when on.
+        self._numbered_cb = QToolButton(self)
+        self._numbered_cb.setCheckable(True)
+        self._numbered_cb.setAutoRaise(True)
+        self._numbered_cb.setIcon(icons.numbered_heading_tile(*self._TILE.toTuple()))
+        self._numbered_cb.setIconSize(self._TILE)
         self._numbered_cb.setChecked(True)
         self._numbered_cb.setToolTip(
             "Uncheck to produce \\section*{} (unnumbered, hidden from "
             "table of contents)")
         self._numbered_cb.toggled.connect(
             lambda checked: self._editor.toggle_heading_numbered(checked))
-        tb.addWidget(self._numbered_cb)
-        tb.addAction(self.act_show_marks)
 
         # Narrow template combo — just the document-class shortcodes.
         self._template_combo = QComboBox(self)
@@ -2072,7 +2069,8 @@ class MainWindow(QMainWindow):
         self._template_combo.setMaximumWidth(130)
         self._template_combo.setToolTip("LaTeX document class")
         self._template_combo.currentIndexChanged.connect(self._on_template_changed)
-        tb.addWidget(self._template_combo)
+        self._template_combo.hide()
+        class_gallery = self._build_class_gallery()
 
         # Body-text font size — affects only the default body size; headings
         # keep their canonical sizes. Editable so users can type 11.5 etc.
@@ -2087,7 +2085,6 @@ class MainWindow(QMainWindow):
             self._on_fontsize_changed)
         self._fontsize_combo.currentIndexChanged.connect(
             self._on_fontsize_changed)
-        tb.addWidget(self._fontsize_combo)
 
         # Paper size combo (A4 / Letter / Legal).
         self._pagesize_combo = QComboBox(self)
@@ -2097,30 +2094,29 @@ class MainWindow(QMainWindow):
         self._pagesize_combo.setMaximumWidth(90)
         self._pagesize_combo.setToolTip("Page size")
         self._pagesize_combo.currentIndexChanged.connect(self._on_pagesize_changed)
-        tb.addWidget(self._pagesize_combo)
-        tb.addSeparator()
 
-        for act in (self.act_bold, self.act_italic, self.act_underline,
-                    self.act_strike, self.act_code, self.act_smallcaps,
-                    self.act_sub, self.act_super):
-            tb.addAction(act)
-        tb.addSeparator()
-        for act in (self.act_align_left, self.act_align_center,
-                    self.act_align_right, self.act_align_justify):
-            tb.addAction(act)
-        tb.addSeparator()
-        for act in (self.act_bullet, self.act_numbered):
-            tb.addAction(act)
-        tb.addSeparator()
-        tb.addAction(self.act_spell_check)
-        tb.addSeparator()
-        tb.addAction(self.act_highlight)
-        tb.addAction(self.act_comment)
-        tb.addAction(self.act_accept_comment)
-        tb.addAction(self.act_reject_comment)
-        tb.addSeparator()
-        tb.addAction(self.act_commit_now); tb.addAction(self.act_history)
-        tb.addSeparator()
+        # Laid out like Word: file actions and undo / redo, then the Home
+        # tab's Font, Paragraph and Styles groups, then Review.
+        def group(*items) -> None:
+            for it in items:
+                (tb.addWidget if isinstance(it, QWidget) else tb.addAction)(it)
+            tb.addSeparator()
+
+        group(self.act_new, self.act_open, self.act_save,
+              self.act_export_pdf, self.act_print, self.act_open_project)
+        group(self.act_undo, self.act_redo)
+        group(self._fontsize_combo, self.act_bold, self.act_italic,
+              self.act_underline, self.act_strike, self.act_sub,
+              self.act_super, self.act_smallcaps, self.act_code,
+              self.act_highlight)
+        group(self.act_bullet, self.act_numbered, self.act_align_left,
+              self.act_align_center, self.act_align_right,
+              self.act_align_justify, self.act_show_marks)
+        group(style_gallery, self._numbered_cb)
+        group(class_gallery, self._pagesize_combo)
+        group(self.act_spell_check, self.act_comment,
+              self.act_accept_comment, self.act_reject_comment)
+        group(self.act_commit_now, self.act_history)
 
         # Right-aligned compile buttons: push them to the far right
         # with a stretching spacer widget.
@@ -3591,7 +3587,134 @@ class MainWindow(QMainWindow):
         meta.documentclass = cls
         self._editor.set_meta(meta)
         self._sync_chapter_enabled()
+        self._sync_class_gallery()
         self._kick_compile()
+
+    _GALLERY_INLINE = (0, -1, 1, 2, 3)
+    _TILE = QSize(70, 40)
+
+    def _build_style_gallery(self) -> QWidget:
+        box = QWidget(self)
+        lay = QHBoxLayout(box)
+        lay.setContentsMargins(2, 0, 2, 0)
+        lay.setSpacing(1)
+        self._style_buttons: dict[int, QToolButton] = {}
+        self._style_menu_actions: dict[int, QAction] = {}
+
+        def label(i: int) -> str:
+            text = self._heading_combo.itemText(i)
+            return "Normal" if text == "Body text" else text
+
+        def pick(level: int) -> None:
+            idx = self._heading_combo.findData(level)
+            if idx >= 0:
+                if idx == self._heading_combo.currentIndex():
+                    self._editor.apply_heading(level)
+                self._heading_combo.setCurrentIndex(idx)
+            self._sync_style_gallery()
+
+        for level in self._GALLERY_INLINE:
+            i = self._heading_combo.findData(level)
+            btn = QToolButton(box)
+            btn.setCheckable(True)
+            btn.setAutoRaise(True)
+            btn.setIcon(icons.style_tile(level, label(i),
+                                         self._TILE.width(),
+                                         self._TILE.height()))
+            btn.setIconSize(self._TILE)
+            btn.setToolTip(f"{label(i)} style")
+            btn.clicked.connect(lambda _=False, lv=level: pick(lv))
+            lay.addWidget(btn)
+            self._style_buttons[level] = btn
+
+        more = QToolButton(box)
+        more.setText("Styles ▾")
+        more.setToolTip("All paragraph styles")
+        more.setPopupMode(QToolButton.InstantPopup)
+        menu = QMenu(more)
+        menu.setStyleSheet("QMenu { icon-size: %dpx; }" % self._TILE.width())
+        for i in range(self._heading_combo.count()):
+            level = self._heading_combo.itemData(i)
+            act = menu.addAction(
+                icons.style_tile(level, label(i), self._TILE.width(),
+                                 self._TILE.height()), "")
+            act.setCheckable(True)
+            act.setToolTip(label(i))
+            act.triggered.connect(lambda _=False, lv=level: pick(lv))
+            self._style_menu_actions[level] = act
+        more.setMenu(menu)
+        lay.addWidget(more)
+        return box
+
+    def _build_class_gallery(self) -> QToolButton:
+        """Document class as a page preview that opens a grid of page
+        previews (Word's template picker), not a list of class names."""
+        from PySide6.QtWidgets import QWidgetAction
+        btn = QToolButton(self)
+        btn.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+        btn.setIconSize(QSize(26, 33))
+        btn.setPopupMode(QToolButton.InstantPopup)
+        btn.setToolTip("Document type (LaTeX class)")
+        menu = QMenu(btn)
+        grid = QListWidget(menu)
+        grid.setViewMode(QListWidget.IconMode)
+        grid.setIconSize(QSize(52, 66))
+        grid.setGridSize(QSize(92, 96))
+        grid.setResizeMode(QListWidget.Adjust)
+        grid.setMovement(QListWidget.Static)
+        grid.setWordWrap(True)
+        grid.setFixedSize(6 * 92 + 24, 4 * 96 + 8)
+        for i in range(self._template_combo.count()):
+            cls = self._template_combo.itemData(i)
+            item = QListWidgetItem(icons.class_thumbnail(cls), cls)
+            item.setData(Qt.UserRole, cls)
+            grid.addItem(item)
+
+        def picked(item: QListWidgetItem) -> None:
+            idx = self._template_combo.findData(item.data(Qt.UserRole))
+            if idx >= 0:
+                self._template_combo.setCurrentIndex(idx)
+            menu.close()
+            self._sync_class_gallery()
+
+        grid.itemClicked.connect(picked)
+        wa = QWidgetAction(menu)
+        wa.setDefaultWidget(grid)
+        menu.addAction(wa)
+        btn.setMenu(menu)
+        self._class_button = btn
+        self._class_grid = grid
+        self._sync_class_gallery()
+        return btn
+
+    def _sync_class_gallery(self) -> None:
+        if not hasattr(self, "_class_button"):
+            return
+        cls = self._template_combo.currentData() or ""
+        self._class_button.setText(cls)
+        self._class_button.setIcon(icons.class_thumbnail(cls))
+        for i in range(self._class_grid.count()):
+            it = self._class_grid.item(i)
+            it.setSelected(it.data(Qt.UserRole) == cls)
+
+    def _sync_style_gallery(self) -> None:
+        if not hasattr(self, "_style_buttons"):
+            return
+        current = self._heading_combo.currentData()
+        model = self._heading_combo.model()
+        for i in range(self._heading_combo.count()):
+            level = self._heading_combo.itemData(i)
+            item = model.item(i)
+            enabled = item is None or bool(item.flags() & Qt.ItemIsEnabled)
+            tip = item.toolTip() if item is not None else ""
+            for w in (self._style_buttons.get(level),
+                      self._style_menu_actions.get(level)):
+                if w is None:
+                    continue
+                w.setEnabled(enabled)
+                w.setChecked(level == current)
+                if tip:
+                    w.setToolTip(tip)
 
     def _sync_chapter_enabled(self) -> None:
         """Grey out Chapter / Frame entries in the heading combo when
@@ -3635,6 +3758,7 @@ class MainWindow(QMainWindow):
                         "Frame is only available in the beamer "
                         "document class — the current class is "
                         f"{meta.documentclass!r}.")
+        self._sync_style_gallery()
 
     def _on_zoom_slider_changed(self, pct: int) -> None:
         # Snap to 5%-multiples so drag movements feel less twitchy.
@@ -5604,6 +5728,7 @@ class MainWindow(QMainWindow):
             self._heading_combo.blockSignals(True)
             self._heading_combo.setCurrentIndex(idx)
             self._heading_combo.blockSignals(False)
+        self._sync_style_gallery()
         # Heading radio group (only tracks body/headings 1..5)
         if level == 0:
             self.act_h_body.setChecked(True)
@@ -5629,6 +5754,7 @@ class MainWindow(QMainWindow):
             self._template_combo.blockSignals(True)
             self._template_combo.setCurrentIndex(tidx)
             self._template_combo.blockSignals(False)
+            self._sync_class_gallery()
 
         meta_page = e.meta().page_size
         pcur = self._pagesize_combo.currentData()

@@ -241,6 +241,53 @@ def heading(level: int) -> QIcon:
     return QIcon(px)
 
 
+# Word's Styles gallery: a sample in the style's own look over its name.
+_STYLE_LOOK = {
+    0: ("Georgia", 11, False, False, "fg"),       # Normal
+    -1: ("Georgia", 14, False, False, "fg"),      # Title
+    -2: ("Georgia", 10, False, True, "fg"),       # Author
+    -7: ("Georgia", 9, False, True, "muted"),     # Affiliation
+    -8: ("Georgia", 9, False, False, "muted"),    # Correspondence
+    -3: ("Georgia", 10, True, False, "fg"),       # Abstract
+    -4: ("Georgia", 9, False, True, "fg"),        # Keywords
+    -6: ("Helvetica", 12, True, False, "accent"), # Frame
+    -5: ("Georgia", 16, True, False, "accent"),   # Chapter
+    1: ("Georgia", 15, True, False, "accent"),
+    2: ("Georgia", 13, True, False, "accent"),
+    3: ("Georgia", 12, True, False, "accent"),
+    4: ("Georgia", 11, True, True, "accent"),
+    5: ("Georgia", 10, False, True, "accent"),
+}
+
+
+def style_tile(level: int, name: str, w: int = 74, h: int = 46) -> QIcon:
+    family, pt, bold_, italic_, tone = _STYLE_LOOK.get(
+        level, _STYLE_LOOK[0])
+    px = QPixmap(w * 2, h * 2)
+    px.setDevicePixelRatio(2.0)
+    px.fill(Qt.transparent)
+    p = QPainter(px)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    p.setRenderHint(QPainter.TextAntialiasing, True)
+    color = {"fg": _fg(), "accent": _accent(),
+             "muted": QColor("#999") if _dark else QColor("#666")}[tone]
+    f = QFont(family); f.setPixelSize(pt + 2)
+    f.setBold(bold_); f.setItalic(italic_)
+    p.setFont(f); p.setPen(color)
+    sample = QRect(0, 0, w, h - 15)
+    p.drawText(sample, Qt.AlignCenter,
+               QFontMetricsF(f).elidedText("AaBbCc", Qt.ElideRight, w - 4))
+    if level in (1, -5):
+        p.setPen(QPen(color, 1))
+        p.drawLine(QPointF(8, h - 17.5), QPointF(w - 8, h - 17.5))
+    lf = QFont(); lf.setPixelSize(10)
+    p.setFont(lf); p.setPen(_fg())
+    p.drawText(QRect(0, h - 14, w, 14), Qt.AlignCenter,
+               QFontMetricsF(lf).elidedText(name, Qt.ElideRight, w - 2))
+    p.end()
+    return QIcon(px)
+
+
 # ----- math -----
 
 def math_inline() -> QIcon:
@@ -461,12 +508,13 @@ def undo() -> QIcon:
     p.setPen(QPen(_fg(), 2.2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
     p.setBrush(Qt.NoBrush)
     path = QPainterPath()
-    path.moveTo(5, 13)
-    path.lineTo(14, 13)
-    path.cubicTo(20, 13, 20, 5, 14, 5)
+    path.moveTo(6, 8)
+    path.lineTo(13, 8)
+    path.cubicTo(21, 8, 21, 19, 13, 19)
+    path.lineTo(9, 19)
     p.drawPath(path)
     p.setBrush(QBrush(_fg())); p.setPen(Qt.NoPen)
-    p.drawPolygon([QPointF(2, 13), QPointF(8, 9), QPointF(8, 17)])
+    p.drawPolygon([QPointF(2, 8), QPointF(8, 3.5), QPointF(8, 12.5)])
     p.end()
     return QIcon(px)
 
@@ -477,12 +525,13 @@ def redo() -> QIcon:
     p.setPen(QPen(_fg(), 2.2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
     p.setBrush(Qt.NoBrush)
     path = QPainterPath()
-    path.moveTo(19, 13)
-    path.lineTo(10, 13)
-    path.cubicTo(4, 13, 4, 5, 10, 5)
+    path.moveTo(18, 8)
+    path.lineTo(11, 8)
+    path.cubicTo(3, 8, 3, 19, 11, 19)
+    path.lineTo(15, 19)
     p.drawPath(path)
     p.setBrush(QBrush(_fg())); p.setPen(Qt.NoPen)
-    p.drawPolygon([QPointF(22, 13), QPointF(16, 9), QPointF(16, 17)])
+    p.drawPolygon([QPointF(22, 8), QPointF(16, 3.5), QPointF(16, 12.5)])
     p.end()
     return QIcon(px)
 
@@ -1551,5 +1600,129 @@ def pen_preview(width: float = 2.0, dash: str = "solid", head: str = "",
         tip(length - 2.0, 1)
         if head == "double":
             tip(2.0, -1)
+    p.end()
+    return QIcon(px)
+
+
+# ----- document-class gallery -----
+
+_TWO_COL = {"ieeetran", "revtex4-2", "acmart", "aa", "mnras", "svjour3",
+            "sn-jnl", "elsarticle", "achemso"}
+_BOOKISH = {"book", "report", "memoir", "scrbook", "scrreprt", "amsbook",
+            "elegantbook", "mimosis", "hepthesis", "suftesi", "toptesi",
+            "disser"}
+
+
+def class_thumbnail(cls: str, w: int = 52, h: int = 66) -> QIcon:
+    """A miniature first page showing the class's layout, like the page
+    previews in Word's template picker."""
+    c = (cls or "").lower()
+    px = QPixmap(w * 2, h * 2)
+    px.setDevicePixelRatio(2.0)
+    px.fill(Qt.transparent)
+    p = QPainter(px)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    ink = QColor("#8a8a8a") if not _dark else QColor("#9a9a9a")
+    acc = _accent()
+    page = QRectF(4, 2, w - 8, h - 4)
+    if c == "beamer":
+        page = QRectF(2, h / 2 - (w - 4) * 0.375, w - 4, (w - 4) * 0.75)
+    elif c == "standalone":
+        page = QRectF(10, h / 2 - 12, w - 20, 24)
+    p.setPen(QPen(QColor("#999"), 0.8))
+    p.setBrush(QColor("#fff") if not _dark else QColor("#2b2b2b"))
+    p.drawRect(page)
+    x0, y0, pw = page.left() + 4, page.top() + 4, page.width() - 8
+
+    def lines(x, y, width, n, step=3.2, last=0.6):
+        p.setPen(QPen(ink, 1))
+        for k in range(n):
+            ww = width * (last if k == n - 1 else 1)
+            p.drawLine(QPointF(x, y + k * step), QPointF(x + ww, y + k * step))
+
+    def bar(x, y, width, height, color):
+        p.setPen(Qt.NoPen); p.setBrush(color)
+        p.drawRect(QRectF(x, y, width, height))
+
+    if c == "beamer":
+        bar(page.left(), page.top(), page.width(), 7, acc)
+        p.setPen(QPen(ink, 1))
+        for k in range(3):
+            yy = page.top() + 12 + k * 5
+            p.drawEllipse(QPointF(x0 + 1, yy), 0.8, 0.8)
+            p.drawLine(QPointF(x0 + 4, yy), QPointF(x0 + pw * 0.8, yy))
+    elif c in ("letter", "scrlttr2"):
+        lines(x0 + pw * 0.55, y0, pw * 0.45, 3, last=1)
+        lines(x0, y0 + 13, pw * 0.4, 3, last=1)
+        lines(x0, y0 + 26, pw, 8)
+    elif c in ("moderncv", "europasscv"):
+        bar(x0, y0, pw * 0.6, 4, acc)
+        for k in range(4):
+            yy = y0 + 10 + k * 12
+            bar(x0, yy, pw * 0.25, 2, acc)
+            lines(x0 + pw * 0.32, yy + 1, pw * 0.68, 3, last=0.8)
+    elif c in ("tikzposter", "a0poster"):
+        bar(page.left(), page.top(), page.width(), 9, acc)
+        p.setPen(QPen(acc, 0.8)); p.setBrush(Qt.NoBrush)
+        half = (pw - 2) / 2
+        for col in range(2):
+            for row in range(2):
+                p.drawRect(QRectF(x0 + col * (half + 2), y0 + 9 + row * 24,
+                                  half, 21))
+    elif c == "standalone":
+        p.setPen(QPen(acc, 1.2)); p.setBrush(Qt.NoBrush)
+        p.drawEllipse(QPointF(page.center().x() - 4, page.center().y()), 5, 5)
+        p.drawRect(QRectF(page.center().x() + 1, page.center().y() - 4, 8, 8))
+    elif c.startswith("tufte"):
+        bar(x0, y0, pw * 0.6, 3, ink)
+        lines(x0, y0 + 9, pw * 0.65, 12)
+        p.setPen(QPen(ink, 0.6))
+        for k in (0, 1, 3):
+            yy = y0 + 10 + k * 8
+            p.drawLine(QPointF(x0 + pw * 0.75, yy), QPointF(x0 + pw, yy))
+            p.drawLine(QPointF(x0 + pw * 0.75, yy + 2),
+                       QPointF(x0 + pw * 0.92, yy + 2))
+    elif c in _BOOKISH:
+        f = QFont("Georgia"); f.setPixelSize(7); f.setBold(True)
+        p.setFont(f); p.setPen(acc)
+        p.drawText(QPointF(x0, y0 + 10), "Chapter 1")
+        bar(x0, y0 + 14, pw, 0.8, acc)
+        lines(x0, y0 + 21, pw, 10)
+    elif c == "exam":
+        f = QFont(); f.setPixelSize(5); f.setBold(True)
+        p.setFont(f)
+        for k in range(4):
+            yy = y0 + 4 + k * 13
+            p.setPen(acc); p.drawText(QPointF(x0, yy + 2), f"{k + 1}.")
+            lines(x0 + 6, yy, pw - 6, 3, last=0.5)
+    else:
+        bar(x0 + pw * 0.15, y0, pw * 0.7, 3, ink)
+        lines(x0 + pw * 0.3, y0 + 6, pw * 0.4, 1, last=1)
+        if c in {x.lower() for x in _TWO_COL} or c == "ieeetran":
+            col = (pw - 3) / 2
+            lines(x0, y0 + 13, col, 12)
+            lines(x0 + col + 3, y0 + 13, col, 12)
+        else:
+            lines(x0 + pw * 0.1, y0 + 12, pw * 0.8, 2, last=1)
+            bar(x0, y0 + 21, pw * 0.4, 1.8, acc)
+            lines(x0, y0 + 26, pw, 9)
+    p.end()
+    return QIcon(px)
+
+
+def numbered_heading_tile(w: int = 70, h: int = 40) -> QIcon:
+    """Toggle tile for numbered headings, drawn like the style tiles."""
+    px = QPixmap(w * 2, h * 2)
+    px.setDevicePixelRatio(2.0)
+    px.fill(Qt.transparent)
+    p = QPainter(px)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    p.setRenderHint(QPainter.TextAntialiasing, True)
+    f = QFont("Georgia"); f.setPixelSize(13); f.setBold(True)
+    p.setFont(f); p.setPen(_accent())
+    p.drawText(QRect(0, 0, w, h - 15), Qt.AlignCenter, "1.2 Aa")
+    lf = QFont(); lf.setPixelSize(10)
+    p.setFont(lf); p.setPen(_fg())
+    p.drawText(QRect(0, h - 14, w, 14), Qt.AlignCenter, "Numbered")
     p.end()
     return QIcon(px)

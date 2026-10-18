@@ -45,7 +45,7 @@ TEMPLATE_CHOICES = [
     "tufte-handout", "tufte-book", "mimosis",
     "hepthesis", "suftesi", "toptesi", "disser",
     # Book
-    "amsbook", "ElegantBook",
+    "amsbook", "elegantbook",
     # Social-science / humanities
     "apa7",
     # CV / résumé
