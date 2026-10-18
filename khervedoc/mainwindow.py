@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from . import tooltips
 from . import (
     __version__, chemistry, equations, git_backend, icons, kdocz, page_sizes,
     project_store,
@@ -1219,6 +1220,7 @@ class MainWindow(QMainWindow):
         self._build_actions()
         self._build_menus()
         self._build_toolbar()
+        tooltips.apply(self)
 
         self._editor.documentChanged.connect(self._on_doc_changed)
         self._editor.text_edit.cursorPositionChanged.connect(self._sync_toolbar_state)
@@ -5218,17 +5220,20 @@ class MainWindow(QMainWindow):
         self._auto_compile = checked
         if checked:
             self.act_auto_compile.setIcon(icons.auto_compile_on())
-            self.act_auto_compile.setToolTip("Auto-compile: ON (click to disable)")
+            self.act_auto_compile.setToolTip(tooltips.action_tip(
+                "act_auto_compile", self.act_auto_compile, "On — click to turn off"))
             self._kick_compile()
         else:
             self.act_auto_compile.setIcon(icons.auto_compile_off())
-            self.act_auto_compile.setToolTip("Auto-compile: OFF (click to enable)")
+            self.act_auto_compile.setToolTip(tooltips.action_tip(
+                "act_auto_compile", self.act_auto_compile, "Off — click to turn on"))
 
     def _toggle_skip_images(self, checked: bool) -> None:
         self._skip_images = checked
         tip = ("Skip images: ON — images replaced by placeholders"
                if checked else "Skip images: OFF — full compile with images")
-        self.act_skip_images.setToolTip(tip)
+        self.act_skip_images.setToolTip(
+            tooltips.action_tip("act_skip_images", self.act_skip_images, tip))
         if self._auto_compile:
             self._kick_compile()
 
@@ -5236,7 +5241,8 @@ class MainWindow(QMainWindow):
         self._use_compile_range = checked
         tip = ("Compile range: ON — only compile between markers"
                if checked else "Compile range: OFF — compile full document")
-        self.act_compile_range.setToolTip(tip)
+        self.act_compile_range.setToolTip(
+            tooltips.action_tip("act_compile_range", self.act_compile_range, tip))
         if self._auto_compile:
             self._kick_compile()
 

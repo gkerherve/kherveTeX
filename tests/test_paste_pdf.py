@@ -37,3 +37,26 @@ def test_no_pdf_flavour_returns_none():
     mime = QMimeData()
     mime.setImageData(QImage(10, 10, QImage.Format_RGB32))
     assert _clipboard_pdf(mime) is None
+
+
+def test_enter_after_pasted_picture_makes_visible_lines(tmp_path):
+    """Enter right after a pasted picture used to add zero-height lines,
+    so the caret seemed stuck until you typed."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QColor
+    from PySide6.QtTest import QTest
+    from khervedoc.editor import DocumentEditor
+    from khervedoc.model import Document
+    QApplication.instance() or QApplication([])
+    ed = DocumentEditor()
+    ed.set_document_dir(tmp_path)
+    ed.set_document(Document())
+    img = QImage(40, 30, QImage.Format_RGB32)
+    img.fill(QColor("red"))
+    mime = QMimeData()
+    mime.setImageData(img)
+    ed._edit.insertFromMimeData(mime)
+    assert ed._edit.textCursor().block().userState() == 0
+    y0 = ed._edit.cursorRect().y()
+    QTest.keyClick(ed._edit, Qt.Key_Return)
+    assert ed._edit.cursorRect().y() > y0

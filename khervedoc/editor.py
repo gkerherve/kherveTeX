@@ -1921,7 +1921,7 @@ class DocumentEditor(QWidget):
         cursor.insertText(_MATH_SEP, _math_hidden_format())
         return True
 
-    def _insert_figure_widget(self, cursor: QTextCursor, figure: Figure) -> None:
+    def _insert_figure_widget(self, cursor: QTextCursor, figure: Figure):
         """Insert a Figure model node as a centered QTextTable with image,
         caption, and label rows."""
         cursor.beginEditBlock()
@@ -1985,6 +1985,7 @@ class DocumentEditor(QWidget):
             lbl_cursor.insertText(f"Label: {figure.label}", lbl_fmt)
         cursor.movePosition(QTextCursor.End)
         cursor.endEditBlock()
+        return qtable
 
     def _figure_display_size(self, width_spec: str,
                              img: QImage) -> tuple[float, float]:
@@ -3216,7 +3217,14 @@ class DocumentEditor(QWidget):
         the cursor pointing at the freshly-saved image."""
         c = self._edit.textCursor()
         fig = Figure(path=path, caption="", label=None, width="0.6\\textwidth")
-        self._insert_figure_widget(c, fig)
+        # Leave the caret on a real body-text line after the picture: the
+        # bare block Qt leaves there has no style or font, so Enter adds
+        # lines of zero height and nothing seems to happen until you type.
+        table = self._insert_figure_widget(c, fig)
+        probe = QTextCursor(self._edit.document())
+        probe.setPosition(table.lastPosition() + 1)
+        self._restyle_block(probe.block(), _STATE_PARAGRAPH)
+        self._place_caret(probe)
         self._on_text_changed()
 
     def drop_image_file(self, src: Path) -> None:
