@@ -2432,7 +2432,6 @@ class MainWindow(QMainWindow):
         rev.add_group("Comments", large=[self.act_comment],
                       rows=[[self.act_accept_comment],
                             [self.act_reject_comment]], text=True)
-        rev.add_group("Marks", large=[self.act_show_marks])
         hist = rb.add_tab("History")
         hist.add_group("Versions", large=[self.act_commit_now,
                                           self.act_history])
@@ -2442,8 +2441,7 @@ class MainWindow(QMainWindow):
                                        self.act_page_console])
         view.add_group("PDF", large=[self.act_pdf_panel,
                                      self.act_pdf_detach])
-        view.add_group("Show", large=[self.act_show_marks],
-                       rows=[[self.act_fit_page_width]], text=True)
+        view.add_group("Zoom", large=[self.act_fit_page_width])
         # Word's contextual tabs: shown only while the caret is in one.
         t = rb.add_contextual_tab("Table", "table")
         t.add_group("Rows & Columns", large=[
