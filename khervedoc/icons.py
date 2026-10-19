@@ -1547,3 +1547,140 @@ def copy() -> QIcon:
     c.page(8, 2.5, 12, 15, 3)
     c.page(4, 6.5, 12, 15, 3)
     return c.done()
+
+
+# ----- contextual tabs: table, picture, equation, page setup -----
+
+def _grid(c: _W, x=3, y=7, w=14, h=14) -> None:
+    c.rect(x, y, w, h, fill=_paper(), r=0.8, lw=1.2)
+    c.line(x, y + h / 2, x + w, y + h / 2, w=0.9)
+    c.line(x + w / 2, y, x + w / 2, y + h, w=0.9)
+
+
+def _plus(c: _W, x, y) -> None:
+    c.line(x - 3, y, x + 3, y, _blue(), 1.8); c.line(x, y - 3, x, y + 3, _blue(), 1.8)
+
+
+def _cross(c: _W, x, y) -> None:
+    red = QColor("#c42b1c")
+    c.line(x - 2.8, y - 2.8, x + 2.8, y + 2.8, red, 1.8)
+    c.line(x + 2.8, y - 2.8, x - 2.8, y + 2.8, red, 1.8)
+
+
+def table_row_above() -> QIcon:
+    c = _W(); _grid(c, 3, 9, 18, 12)
+    c.fillrect(3.8, 9.8, 16.4, 5, _tint()); _plus(c, 12, 4.5)
+    return c.done()
+
+
+def table_row_below() -> QIcon:
+    c = _W(); _grid(c, 3, 3, 18, 12)
+    c.fillrect(3.8, 9.5, 16.4, 4.8, _tint()); _plus(c, 12, 19.5)
+    return c.done()
+
+
+def table_col_left() -> QIcon:
+    c = _W(); _grid(c, 9, 3, 12, 18)
+    c.fillrect(9.8, 3.8, 5, 16.4, _tint()); _plus(c, 4.5, 12)
+    return c.done()
+
+
+def table_col_right() -> QIcon:
+    c = _W(); _grid(c, 3, 3, 12, 18)
+    c.fillrect(9.5, 3.8, 4.8, 16.4, _tint()); _plus(c, 19.5, 12)
+    return c.done()
+
+
+def table_delete_row() -> QIcon:
+    c = _W(); _grid(c, 3, 3, 14, 14)
+    c.fillrect(3.8, 3.8, 12.4, 6.4, QColor("#f6d5d1")); _cross(c, 19, 19)
+    return c.done()
+
+
+def table_delete_col() -> QIcon:
+    c = _W(); _grid(c, 3, 3, 14, 14)
+    c.fillrect(3.8, 3.8, 6.4, 12.4, QColor("#f6d5d1")); _cross(c, 19, 19)
+    return c.done()
+
+
+def table_delete() -> QIcon:
+    c = _W(); _grid(c, 3, 3, 14, 14); _cross(c, 19, 19)
+    return c.done()
+
+
+def table_style_plain() -> QIcon:
+    c = _W(); c.rect(3, 4, 18, 16, fill=_paper(), r=0.5, lw=1.2)
+    for y in (9, 14.5):
+        c.line(3, y, 21, y, w=1)
+    c.line(9, 4, 9, 20, w=1); c.line(15, 4, 15, 20, w=1)
+    return c.done()
+
+
+def table_style_booktabs() -> QIcon:
+    c = _W()
+    c.line(3, 4.5, 21, 4.5, w=2); c.line(3, 9, 21, 9, w=1)
+    c.line(3, 19.5, 21, 19.5, w=2)
+    for y in (12, 15.5):
+        c.line(5, y, 10, y, _blue(), 1); c.line(14, y, 19, y, _blue(), 1)
+    return c.done()
+
+
+def picture_delete() -> QIcon:
+    c = _W()
+    c.rect(2.5, 3.5, 15, 12.5, fill=_paper())
+    c.poly([(4, 14.5), (8.5, 9), (12, 12.5), (16, 14.5)], color=_blue(),
+           fill=_tint(), lw=1)
+    _cross(c, 19, 19)
+    return c.done()
+
+
+def picture_edit() -> QIcon:
+    c = _W()
+    c.rect(2.5, 3.5, 15, 12.5, fill=_paper())
+    c.poly([(19.5, 9.5), (22, 12), (13, 21), (10, 21.5), (10.5, 18.5)],
+           color=_blue(), fill=_tint(), lw=1.3)
+    return c.done()
+
+
+def picture_width(frac: float) -> QIcon:
+    c = _W()
+    c.rect(2, 5, 20, 14, color=QColor("#999"), r=0.5, lw=0.8)
+    w = 18 * frac
+    c.rect(12 - w / 2, 8, w, 8, color=_blue(), fill=_tint(), r=0.5, lw=1)
+    return c.done()
+
+
+def equation_numbered() -> QIcon:
+    c = _W(); c.text((0, 0, 15, 24), "π", size=13, color=_blue(),
+                     family="Georgia")
+    c.text((12, 0, 12, 24), "(1)", size=7.5)
+    return c.done()
+
+
+def equation_delete() -> QIcon:
+    c = _W(); c.text((0, 0, 17, 22), "π", size=15, color=_blue(),
+                     family="Georgia")
+    _cross(c, 19, 19)
+    return c.done()
+
+
+def page_size() -> QIcon:
+    c = _W(); c.page(6, 2.5, 12, 18, 3.5)
+    c.line(3.5, 3, 3.5, 20.5, _blue(), 1); c.line(8, 22.5, 16, 22.5, _blue(), 1)
+    return c.done()
+
+
+def page_margins() -> QIcon:
+    c = _W(); c.rect(4, 2.5, 16, 19.5, fill=_paper(), r=0.5, lw=1.2)
+    c.p.setPen(QPen(_blue(), 1, Qt.DashLine)); c.p.setBrush(Qt.NoBrush)
+    c.p.drawRect(QRectF(7, 5.5, 10, 13.5))
+    return c.done()
+
+
+def paper_thumb(w_in: float, h_in: float) -> QIcon:
+    """A sheet drawn to the paper's real proportions."""
+    c = _W()
+    s = 19 / max(w_in, h_in)
+    w, h = w_in * s, h_in * s
+    c.page(12 - w / 2, 12 - h / 2, w, h, 3)
+    return c.done()

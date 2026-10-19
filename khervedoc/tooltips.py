@@ -208,6 +208,65 @@ TIPS: dict[str, tuple[str, str, str]] = {
     "act_hrule": ("Horizontal line",
         "Inserts a thin line across the page to separate sections.",
         "Becomes \\hrulefill."),
+    # ----- table tab -----
+    "act_tbl_row_above": ("Insert row above",
+        "Adds an empty row above the row the cursor is in.", ""),
+    "act_tbl_row_below": ("Insert row below",
+        "Adds an empty row below the row the cursor is in.", ""),
+    "act_tbl_col_left": ("Insert column left",
+        "Adds an empty column to the left of the cursor's column.", ""),
+    "act_tbl_col_right": ("Insert column right",
+        "Adds an empty column to the right of the cursor's column.", ""),
+    "act_tbl_del_row": ("Delete row",
+        "Removes the row the cursor is in. Deleting the last row "
+        "removes the table.", ""),
+    "act_tbl_del_col": ("Delete column",
+        "Removes the column the cursor is in. Deleting the last column "
+        "removes the table.", ""),
+    "act_tbl_delete": ("Delete table",
+        "Removes the whole table, with its caption.", ""),
+    "act_tbl_plain": ("Grid lines",
+        "Classic look: a rule above, below and under the header row.",
+        "Uses \\hline rules."),
+    "act_tbl_booktabs": ("Journal style",
+        "The look most journals ask for: heavier top and bottom rules, "
+        "a thin one under the header, no vertical lines.",
+        "Uses \\toprule, \\midrule and \\bottomrule (booktabs)."),
+    # ----- picture tab -----
+    "act_fig_left": ("Align picture left",
+        "Places the picture against the left margin. The paragraph align "
+        "buttons on Home do the same while a picture is selected.",
+        "Becomes \\raggedright in the figure."),
+    "act_fig_center": ("Centre picture",
+        "Centres the picture between the margins (the usual choice).",
+        "Becomes \\centering in the figure."),
+    "act_fig_right": ("Align picture right",
+        "Places the picture against the right margin.",
+        "Becomes \\raggedleft in the figure."),
+    "act_fig_w25": ("Quarter width",
+        "Makes the picture a quarter of the text width. You can also drag "
+        "any of the eight handles around the picture.",
+        "width=0.25\\textwidth"),
+    "act_fig_w50": ("Half width", "Makes the picture half the text width.",
+        "width=0.50\\textwidth"),
+    "act_fig_w75": ("Three-quarter width",
+        "Makes the picture three quarters of the text width.",
+        "width=0.75\\textwidth"),
+    "act_fig_w100": ("Full width",
+        "Makes the picture as wide as the text.", "width=1.00\\textwidth"),
+    "act_fig_edit": ("Edit drawing",
+        "Re-opens the drawing or flowchart this picture was made with.", ""),
+    "act_fig_delete": ("Delete picture",
+        "Removes the picture and its caption from the document.", ""),
+    # ----- equation tab -----
+    "act_eq_edit": ("Edit equation",
+        "Opens the equation under the cursor in the equation editor.", ""),
+    "act_eq_numbered": ("Numbered equation",
+        "Pressed: the equation gets a number such as (1) at the right "
+        "margin, so you can cross-reference it.",
+        "Switches between equation and equation*."),
+    "act_eq_delete": ("Delete equation",
+        "Removes the display equation the cursor is in.", ""),
 }
 
 # Toolbar widgets that are not QActions.
@@ -234,9 +293,14 @@ WIDGET_TIPS: dict[str, tuple[str, str, str]] = {
     "fontsize": ("Font size",
         "Size of the body text in points. Headings scale with it.",
         "Most classes accept 10, 11 or 12 pt."),
-    "pagesize": ("Paper size",
-        "Page size of the PDF: A4, US Letter, Legal and others.",
+    "pagesize": ("Size",
+        "Paper size of the document: A4, US Letter or Legal, shown with "
+        "its dimensions, as in Word's Layout > Size.",
         "Sets the geometry package's paper option."),
+    "margins": ("Margins",
+        "Word's margin presets (Normal, Narrow, Moderate, Wide), or "
+        "Custom Margins… to type your own.",
+        "Sets the geometry package's top / bottom / left / right."),
 }
 
 
@@ -280,7 +344,8 @@ def apply(window) -> None:
         btn.setToolTip(widget_tip("style"))
     for attr, key in (("_numbered_cb", "numbered"), ("_class_button", "class"),
                       ("_fontsize_combo", "fontsize"),
-                      ("_pagesize_combo", "pagesize")):
+                      ("_size_button", "pagesize"),
+                      ("_margins_button", "margins")):
         w = getattr(window, attr, None)
         if w is not None:
             w.setToolTip(widget_tip(key))

@@ -127,7 +127,10 @@ def serialize_block(node: Block) -> str:
         if cap:
             parts.append(f",\n  caption: [{cap}]")
         parts.append(f"\n){lab}\n")
-        return "".join(parts)
+        out = "".join(parts)
+        if node.align in ("left", "right"):
+            out = f"#align({node.align})[{out.rstrip()}]\n"
+        return out
 
     if isinstance(node, Table):
         if not node.rows:

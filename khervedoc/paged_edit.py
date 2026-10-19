@@ -264,7 +264,7 @@ class PagedTextEdit(QTextEdit):
         # images qualify (figures yes, typeset equations no).
         self.image_resizable = lambda fmt: False
         self._hover_img = None      # (doc pos, QRectF in view coords)
-        self._img_drag = None       # (doc pos, start QPointF, w, h)
+        self._img_drag = None       # (doc pos, start QPointF, w, h, handle)
         self.viewport().setMouseTracking(True)
         # A hovered image's position goes stale as soon as text moves.
         self.textChanged.connect(self._forget_stale_hover)
@@ -529,26 +529,61 @@ class PagedTextEdit(QTextEdit):
             return QRectF(tl.x(), tl.y(), w, h)
         return QRectF(cr.left(), cr.top(), w, h)
 
-    def _handle_rect(self, rect: QRectF) -> QRectF:
+    # Word's eight sizing handles: corners and side midpoints. The
+    # picture keeps its aspect ratio (LaTeX sets only its width), so any
+    # handle scales the whole image.
+    _HANDLE_CURSORS = {
+        "nw": Qt.SizeFDiagCursor, "se": Qt.SizeFDiagCursor,
+        "ne": Qt.SizeBDiagCursor, "sw": Qt.SizeBDiagCursor,
+        "n": Qt.SizeVerCursor, "s": Qt.SizeVerCursor,
+        "e": Qt.SizeHorCursor, "w": Qt.SizeHorCursor,
+    }
+
+    def _handle_rects(self, rect: QRectF) -> dict[str, QRectF]:
         s = self._HANDLE
-        return QRectF(rect.right() - s / 2, rect.bottom() - s / 2, s, s)
+        xs = {"w": rect.left(), "c": rect.center().x(), "e": rect.right()}
+        ys = {"n": rect.top(), "m": rect.center().y(), "s": rect.bottom()}
+        out = {}
+        for name in self._HANDLE_CURSORS:
+            x = xs["e" if "e" in name else "w" if "w" in name else "c"]
+            y = ys["n" if "n" in name else "s" if "s" in name else "m"]
+            out[name] = QRectF(x - s / 2, y - s / 2, s, s)
+        return out
+
+    def _handle_at(self, rect: QRectF, pt) -> str | None:
+        for name, r in self._handle_rects(rect).items():
+            if r.adjusted(-4, -4, 4, 4).contains(pt):
+                return name
+        return None
 
     def mousePressEvent(self, ev):
         hit = self._hover_img
-        if (hit is not None and ev.button() == Qt.LeftButton
-                and self._handle_rect(hit[1]).adjusted(-4, -4, 4, 4)
-                .contains(ev.position())):
+        handle = (self._handle_at(hit[1], ev.position())
+                  if hit is not None and ev.button() == Qt.LeftButton
+                  else None)
+        if handle is not None:
             pos, rect = hit
-            self._img_drag = (pos, ev.position(), rect.width(), rect.height())
+            self._img_drag = (pos, ev.position(), rect.width(),
+                              rect.height(), handle)
             ev.accept()
             return
         super().mousePressEvent(self._mapped(ev))
 
     def mouseMoveEvent(self, ev):
         if self._img_drag is not None:
-            pos, start, w0, h0 = self._img_drag
+            pos, start, w0, h0, handle = self._img_drag
             limit = max(40.0, self.text_width_px())
-            w = max(24.0, min(limit, w0 + ev.position().x() - start.x()))
+            dx = ev.position().x() - start.x()
+            dy = ev.position().y() - start.y()
+            if "e" in handle:
+                w = w0 + dx
+            elif "w" in handle:
+                w = w0 - dx
+            elif h0:
+                w = w0 * (h0 + (dy if handle == "s" else -dy)) / h0
+            else:
+                w = w0
+            w = max(24.0, min(limit, w))
             self._set_image_size(pos, w, w * h0 / w0 if w0 else h0)
             ev.accept()
             return
@@ -557,10 +592,10 @@ class PagedTextEdit(QTextEdit):
             if (hit is None) != (self._hover_img is None) or hit != self._hover_img:
                 self._hover_img = hit
                 self.viewport().update()
-            on_handle = hit is not None and self._handle_rect(hit[1]) \
-                .adjusted(-4, -4, 4, 4).contains(ev.position())
-            if on_handle:
-                self.viewport().setCursor(Qt.SizeFDiagCursor)
+            handle = (self._handle_at(hit[1], ev.position())
+                      if hit is not None else None)
+            if handle is not None:
+                self.viewport().setCursor(self._HANDLE_CURSORS[handle])
             else:
                 self.viewport().unsetCursor()
         super().mouseMoveEvent(self._mapped(ev))
@@ -612,9 +647,10 @@ class PagedTextEdit(QTextEdit):
         p.setPen(QPen(accent, 1, Qt.DashLine))
         p.setBrush(Qt.NoBrush)
         p.drawRect(rect.adjusted(-1, -1, 1, 1))
-        p.setPen(QPen(QColor("white"), 1))
-        p.setBrush(accent)
-        p.drawRect(self._handle_rect(rect))
+        p.setPen(QPen(accent, 1))
+        p.setBrush(QColor("white"))
+        for r in self._handle_rects(rect).values():
+            p.drawRect(r)
         p.end()
 
     def mouseDoubleClickEvent(self, ev):

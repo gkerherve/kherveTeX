@@ -629,6 +629,15 @@ _FONT_FAMILIES = [
 ]
 
 
+# Word's margin presets, in cm: top, bottom, left, right.
+_MARGIN_PRESETS = {
+    "Normal": (2.54, 2.54, 2.54, 2.54),
+    "Narrow": (1.27, 1.27, 1.27, 1.27),
+    "Moderate": (2.54, 2.54, 1.91, 1.91),
+    "Wide": (2.54, 2.54, 5.08, 5.08),
+}
+
+
 class DocSettingsDialog(QDialog):
     """All document-level typesetting knobs in one tabbed dialog."""
 
@@ -2108,6 +2117,9 @@ class MainWindow(QMainWindow):
         self._pagesize_combo.currentIndexChanged.connect(self._on_pagesize_changed)
 
         self._style_gallery = style_gallery
+        self._pagesize_combo.hide()
+        self._build_page_setup_buttons()
+        self._build_context_actions()
         self._toolbars: list[QToolBar] = []
         self._toolbar_style = self._settings.value("toolbar_style", "word")
         self._apply_toolbar_style(self._toolbar_style)
@@ -2116,7 +2128,8 @@ class MainWindow(QMainWindow):
     # so removing a layout (which deletes its boxes) never deletes them.
     def _shared_toolbar_widgets(self) -> list[QWidget]:
         return [self._style_gallery, self._numbered_cb, self._class_button,
-                self._fontsize_combo, self._pagesize_combo]
+                self._fontsize_combo, self._size_button,
+                self._margins_button]
 
     def _boxed(self, w: QWidget) -> QWidget:
         box = QWidget()
@@ -2135,12 +2148,15 @@ class MainWindow(QMainWindow):
             self.removeToolBar(bar)
             bar.deleteLater()
         self._toolbars = []
+        self._context_bar = None
+        self._ribbon = None
         self._toolbar_style = "classic" if style == "classic" else "word"
         if self._toolbar_style == "classic":
             self._build_classic_toolbars()
         else:
             self._build_ribbon()
         self._settings.setValue("toolbar_style", self._toolbar_style)
+        self._sync_context_tools()
         for name, act in (("word", getattr(self, "act_style_word", None)),
                           ("classic", getattr(self, "act_style_classic", None))):
             if act is not None:
@@ -2152,6 +2168,166 @@ class MainWindow(QMainWindow):
         self.addToolBar(area, bar)
         self._toolbars.append(bar)
         return bar
+
+    def _build_page_setup_buttons(self) -> None:
+        """Word's Layout > Page Setup: Margins and Size drop-down buttons
+        with page pictures, in place of a bare paper-size combo."""
+        def drop(icon, text) -> QToolButton:
+            b = QToolButton(self)
+            b.setIcon(icon); b.setText(text)
+            b.setIconSize(QSize(32, 32))
+            b.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+            b.setPopupMode(QToolButton.InstantPopup)
+            b.setAutoRaise(True)
+            return b
+
+        self._size_button = drop(icons.page_size(), "Size")
+        size_menu = QMenu(self._size_button)
+        size_menu.setStyleSheet("QMenu { icon-size: 28px; }")
+        self._size_actions: dict[str, QAction] = {}
+        for p in page_sizes.ALL:
+            cm = f"{p.width_in * 2.54:.1f} cm × {p.height_in * 2.54:.1f} cm"
+            act = size_menu.addAction(
+                icons.paper_thumb(p.width_in, p.height_in),
+                f"{p.code}\t{cm}")
+            act.setCheckable(True)
+            act.triggered.connect(
+                lambda _=False, code=p.code: self._set_page_size(code))
+            self._size_actions[p.code] = act
+        self._size_button.setMenu(size_menu)
+
+        self._margins_button = drop(icons.page_margins(), "Margins")
+        m_menu = QMenu(self._margins_button)
+        self._margin_actions: dict[str, QAction] = {}
+        for name, (t, b, l, r) in _MARGIN_PRESETS.items():
+            act = m_menu.addAction(
+                f"{name}\tTop {t} cm  Bottom {b} cm  Left {l} cm  Right {r} cm")
+            act.setCheckable(True)
+            act.triggered.connect(
+                lambda _=False, v=(t, b, l, r): self._set_margins(*v))
+            self._margin_actions[name] = act
+        m_menu.addSeparator()
+        m_menu.addAction("Custom Margins…", self._edit_props)
+        self._margins_button.setMenu(m_menu)
+
+    def _set_page_size(self, code: str) -> None:
+        idx = self._pagesize_combo.findData(code)
+        if idx >= 0:
+            self._pagesize_combo.setCurrentIndex(idx)
+        self._sync_page_setup()
+
+    def _set_margins(self, t: float, b: float, l: float, r: float) -> None:
+        meta = self._editor.meta()
+        meta.margin_top_cm, meta.margin_bottom_cm = t, b
+        meta.margin_left_cm, meta.margin_right_cm = l, r
+        self._editor.set_meta(meta)
+        self._sync_page_setup()
+        self._kick_compile()
+
+    def _sync_page_setup(self) -> None:
+        if not hasattr(self, "_size_actions"):
+            return
+        meta = self._editor.meta()
+        for code, act in self._size_actions.items():
+            act.setChecked(code == meta.page_size)
+        cur = (meta.margin_top_cm, meta.margin_bottom_cm,
+               meta.margin_left_cm, meta.margin_right_cm)
+        for name, act in self._margin_actions.items():
+            act.setChecked(all(abs(a - b) < 0.01 for a, b in
+                               zip(cur, _MARGIN_PRESETS[name])))
+
+    def _build_context_actions(self) -> None:
+        e = self._editor
+
+        def act(icon, text, slot, checkable=False) -> QAction:
+            a = QAction(icon, text, self, checkable=checkable)
+            a.triggered.connect(slot)
+            return a
+
+        self.act_tbl_row_above = act(icons.table_row_above(), "Insert Above",
+                                     lambda: e.table_insert_row(False))
+        self.act_tbl_row_below = act(icons.table_row_below(), "Insert Below",
+                                     lambda: e.table_insert_row(True))
+        self.act_tbl_col_left = act(icons.table_col_left(), "Insert Left",
+                                    lambda: e.table_insert_column(False))
+        self.act_tbl_col_right = act(icons.table_col_right(), "Insert Right",
+                                     lambda: e.table_insert_column(True))
+        self.act_tbl_del_row = act(icons.table_delete_row(), "Delete Row",
+                                   e.table_delete_row)
+        self.act_tbl_del_col = act(icons.table_delete_col(), "Delete Column",
+                                   e.table_delete_column)
+        self.act_tbl_delete = act(icons.table_delete(), "Delete Table",
+                                  e.delete_current_table)
+        self.act_tbl_plain = act(icons.table_style_plain(), "Grid lines",
+                                 lambda: e.set_table_style(""), True)
+        self.act_tbl_booktabs = act(icons.table_style_booktabs(),
+                                    "Journal (booktabs)",
+                                    lambda: e.set_table_style("booktabs"),
+                                    True)
+        self.act_fig_left = act(icons.align_left(), "Left",
+                                lambda: e.set_figure_alignment("left"), True)
+        self.act_fig_center = act(icons.align_center(), "Center",
+                                  lambda: e.set_figure_alignment("center"),
+                                  True)
+        self.act_fig_right = act(icons.align_right(), "Right",
+                                 lambda: e.set_figure_alignment("right"), True)
+        self._fig_width_actions = {}
+        for frac in (0.25, 0.5, 0.75, 1.0):
+            a = act(icons.picture_width(frac), f"{int(frac * 100)}% width",
+                    lambda _=False, f=frac: e.set_figure_width(f))
+            setattr(self, f"act_fig_w{int(frac * 100)}", a)
+        self.act_fig_edit = act(icons.picture_edit(), "Edit drawing",
+                                e.edit_current_figure)
+        self.act_fig_delete = act(icons.picture_delete(), "Delete Picture",
+                                  e.delete_current_figure)
+        self.act_eq_edit = act(icons.equation_builder(), "Edit Equation",
+                               e.edit_current_equation)
+        self.act_eq_numbered = act(icons.equation_numbered(), "Numbered",
+                                   e.set_current_equation_numbered, True)
+        self.act_eq_delete = act(icons.equation_delete(), "Delete Equation",
+                                 e.delete_current_equation)
+        self._context_actions = {
+            "table": [self.act_tbl_row_above, self.act_tbl_row_below,
+                      self.act_tbl_col_left, self.act_tbl_col_right,
+                      self.act_tbl_del_row, self.act_tbl_del_col,
+                      self.act_tbl_delete, self.act_tbl_plain,
+                      self.act_tbl_booktabs],
+            "figure": [self.act_fig_left, self.act_fig_center,
+                       self.act_fig_right, self.act_fig_w25, self.act_fig_w50,
+                       self.act_fig_w75, self.act_fig_w100, self.act_fig_edit,
+                       self.act_fig_delete],
+            "equation": [self.act_eq_edit, self.act_eq_numbered,
+                         self.act_eq_delete],
+        }
+
+    def _sync_context_tools(self) -> None:
+        if not hasattr(self, "_context_actions"):
+            return
+        e = self._editor
+        ctx = e.context_object()
+        for kind, acts in self._context_actions.items():
+            for a in acts:
+                a.setEnabled(kind == ctx)
+        if ctx == "table":
+            style = e.current_table_style()
+            self.act_tbl_plain.setChecked(style != "booktabs")
+            self.act_tbl_booktabs.setChecked(style == "booktabs")
+        elif ctx == "figure":
+            align = e.current_alignment()
+            for a, name in ((self.act_fig_left, "left"),
+                            (self.act_fig_center, "center"),
+                            (self.act_fig_right, "right")):
+                a.setChecked(align == name)
+        elif ctx == "equation":
+            self.act_eq_numbered.blockSignals(True)
+            self.act_eq_numbered.setChecked(e.current_equation_numbered())
+            self.act_eq_numbered.setEnabled(
+                e.current_equation_block() is not None)
+            self.act_eq_numbered.blockSignals(False)
+        if getattr(self, "_ribbon", None) is not None:
+            self._ribbon.show_context(ctx)
+        if getattr(self, "_context_bar", None) is not None:
+            self._context_bar.setVisible(ctx is not None)
 
     def _build_ribbon(self) -> None:
         from .ribbon import Ribbon
@@ -2193,10 +2369,11 @@ class MainWindow(QMainWindow):
         ins.add_group("Chemistry", large=[self.act_chemistry],
                       rows=[[self.act_chemfig]], text=True)
         lay = rb.add_tab("Layout")
+        lay.add_group("Page Setup", large=[b(self._margins_button),
+                                           b(self._size_button),
+                                           self.act_cols_1, self.act_cols_2,
+                                           self.act_cols_3])
         lay.add_group("Document type", large=[b(self._class_button)])
-        lay.add_group("Page setup", rows=[[b(self._pagesize_combo)]])
-        lay.add_group("Columns", large=[self.act_cols_1, self.act_cols_2,
-                                        self.act_cols_3])
         ref = rb.add_tab("References")
         ref.add_group("Citations", large=[self.act_citation])
         ref.add_group("Footnotes", large=[self.act_footnote])
@@ -2210,6 +2387,30 @@ class MainWindow(QMainWindow):
         hist = rb.add_tab("History")
         hist.add_group("Versions", large=[self.act_commit_now,
                                           self.act_history])
+        # Word's contextual tabs: shown only while the caret is in one.
+        t = rb.add_contextual_tab("Table", "table")
+        t.add_group("Rows & Columns", large=[
+            self.act_tbl_row_above, self.act_tbl_row_below,
+            self.act_tbl_col_left, self.act_tbl_col_right])
+        t.add_group("Delete", large=[self.act_tbl_del_row,
+                                     self.act_tbl_del_col,
+                                     self.act_tbl_delete])
+        t.add_group("Table Style", large=[self.act_tbl_plain,
+                                          self.act_tbl_booktabs])
+        pic = rb.add_contextual_tab("Picture", "figure")
+        pic.add_group("Arrange", large=[self.act_fig_left,
+                                        self.act_fig_center,
+                                        self.act_fig_right])
+        pic.add_group("Size", large=[self.act_fig_w25, self.act_fig_w50,
+                                     self.act_fig_w75, self.act_fig_w100])
+        pic.add_group("Picture", large=[self.act_fig_edit,
+                                        self.act_fig_delete])
+        eq = rb.add_contextual_tab("Equation", "equation")
+        eq.add_group("Equation", large=[self.act_eq_edit,
+                                        self.act_eq_numbered,
+                                        self.act_eq_delete])
+        eq.add_group("Insert", large=[self.act_symbol,
+                                      self.act_equation_builder])
         bar = self._new_bar("Ribbon")
         bar.addWidget(rb)
         self._ribbon = rb
@@ -2241,7 +2442,8 @@ class MainWindow(QMainWindow):
         tb2 = self._new_bar("Document and review")
         tb2.setIconSize(tb.iconSize())
         group(self._style_gallery, self._numbered_cb, bar=tb2)
-        group(self._class_button, self._pagesize_combo, bar=tb2)
+        group(self._class_button, self._margins_button, self._size_button,
+              bar=tb2)
         group(self.act_spell_check, self.act_comment,
               self.act_accept_comment, self.act_reject_comment, bar=tb2)
         group(self.act_commit_now, self.act_history, bar=tb2)
@@ -2252,6 +2454,18 @@ class MainWindow(QMainWindow):
         for a in (self.act_compile_range, self.act_skip_images,
                   self.act_compile_now, self.act_auto_compile):
             tb2.addAction(a)
+
+        # Classic stand-in for the contextual tabs: one bar whose buttons
+        # follow the object under the caret.
+        self._context_bar = self._new_bar("Object tools")
+        for a in self._context_actions["table"] + [None] \
+                + self._context_actions["figure"] + [None] \
+                + self._context_actions["equation"]:
+            if a is None:
+                self._context_bar.addSeparator()
+            else:
+                self._context_bar.addAction(a)
+        self._context_bar.setVisible(False)
 
         side = self._new_bar("Insert", Qt.LeftToolBarArea)
         side.setOrientation(Qt.Vertical)
@@ -5874,6 +6088,8 @@ class MainWindow(QMainWindow):
                 self._pagesize_combo.blockSignals(True)
                 self._pagesize_combo.setCurrentIndex(pidx)
                 self._pagesize_combo.blockSignals(False)
+        self._sync_page_setup()
+        self._sync_context_tools()
 
 
 def _apply_user_defaults(meta: DocMeta) -> DocMeta:

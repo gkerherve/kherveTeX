@@ -157,6 +157,8 @@ class Figure:
     # "flowchart" = made in the flowchart builder: `path` is the PNG
     # preview, beside .pdf (for LaTeX), .flow.json (source) and .tikz.
     source: str = ""
+    # "left", "center" or "right" on the page, set with the align buttons.
+    align: str = "center"
     type: str = "Figure"
 
 
@@ -436,6 +438,7 @@ def _build_block(d: dict) -> Block:
             label=d.get("label"),
             width=d.get("width", "0.8\\textwidth"),
             source=d.get("source", ""),
+            align=d.get("align", "center"),
         )
     if t == "Table":
         return Table(

@@ -185,6 +185,10 @@ _SECTION_COMMANDS = {
 _VECTOR_SIBLINGS = {"drawing": (".pdf", ".svg"), "flowchart": (".pdf",)}
 
 
+_FIGURE_ALIGN = {"left": "\\raggedright", "center": "\\centering",
+                 "right": "\\raggedleft"}
+
+
 def figure_output_path(node: Figure, vector_ext: str) -> str:
     """Path to emit for a figure, forward-slashed. Drawings and flowcharts
     keep a PNG preview in `path` but the engines get the vector sibling
@@ -261,7 +265,7 @@ def serialize_block(node: Block, *, has_chapters: bool = False,
         placement = "H" if float_h else "htbp"
         return (
             f"\\begin{{figure}}[{placement}]\n"
-            "  \\centering\n"
+            f"  {_FIGURE_ALIGN.get(node.align, '\\centering')}\n"
             f"  \\includegraphics[width={node.width}]{{{path}}}\n"
             f"  \\caption{{{cap}}}\n"
             f"  {lab}"

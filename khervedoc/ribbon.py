@@ -7,7 +7,7 @@ ribbon can be swapped at run time without rebuilding any state."""
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QColor
 from PySide6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLabel, QSizePolicy, QTabWidget,
     QToolButton, QVBoxLayout, QWidget,
@@ -100,6 +100,26 @@ class Ribbon(QTabWidget):
         tab = RibbonTab()
         self.addTab(tab, name)
         return tab
+
+    def add_contextual_tab(self, name: str, kind: str) -> RibbonTab:
+        """A tab that appears only while the caret is in that kind of
+        object (Word's Table Design / Picture Format tabs)."""
+        tab = self.add_tab(name)
+        idx = self.indexOf(tab)
+        self.tabBar().setTabTextColor(idx, QColor("#2b579a"))
+        self.setTabVisible(idx, False)
+        self._contextual = getattr(self, "_contextual", {})
+        self._contextual[kind] = tab
+        return tab
+
+    def show_context(self, kind: str | None) -> None:
+        for k, tab in getattr(self, "_contextual", {}).items():
+            idx = self.indexOf(tab)
+            visible = k == kind
+            if self.isTabVisible(idx) != visible:
+                if not visible and self.currentIndex() == idx:
+                    self.setCurrentIndex(0)
+                self.setTabVisible(idx, visible)
 
     def set_corner(self, actions, corner: Qt.Corner) -> None:
         """Always-visible buttons beside the tabs (Word's Quick Access)."""

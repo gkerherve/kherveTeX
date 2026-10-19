@@ -918,6 +918,7 @@ _P_FIGURE_LABEL = QTextCharFormat.UserProperty + 31
 _P_FIGURE_WIDTH = QTextCharFormat.UserProperty + 32
 _P_FIGURE_SOURCE = QTextCharFormat.UserProperty + 38
 _P_IS_FIGURE = QTextCharFormat.UserProperty + 33
+_P_FIGURE_ALIGN = QTextCharFormat.UserProperty + 39
 
 
 def _make_figure_table_format(dark: bool = False) -> QTextTableFormat:
@@ -1934,6 +1935,7 @@ class DocumentEditor(QWidget):
         tfmt.setProperty(_P_FIGURE_LABEL, figure.label or "")
         tfmt.setProperty(_P_FIGURE_WIDTH, figure.width or "0.8\\textwidth")
         tfmt.setProperty(_P_FIGURE_SOURCE, figure.source or "")
+        tfmt.setProperty(_P_FIGURE_ALIGN, figure.align or "center")
         qtable = cursor.insertTable(total_rows, 1, tfmt)
         # Row 0: centered image.
         img_cursor = qtable.cellAt(0, 0).firstCursorPosition()
@@ -1983,9 +1985,19 @@ class DocumentEditor(QWidget):
             lbl_fmt.setForeground(QColor(p["table_caption_fg"]))
             f = lbl_fmt.font(); f.setPointSize(9); lbl_fmt.setFont(f)
             lbl_cursor.insertText(f"Label: {figure.label}", lbl_fmt)
+        self._align_figure_rows(qtable, figure.align or "center")
         cursor.movePosition(QTextCursor.End)
         cursor.endEditBlock()
         return qtable
+
+    def _align_figure_rows(self, qtable: QTextTable, align: str) -> None:
+        flag = {"left": Qt.AlignLeft, "right": Qt.AlignRight}.get(
+            align, Qt.AlignHCenter)
+        for r in range(qtable.rows()):
+            c = qtable.cellAt(r, 0).firstCursorPosition()
+            bf = c.blockFormat()
+            bf.setAlignment(flag)
+            c.setBlockFormat(bf)
 
     def _figure_display_size(self, width_spec: str,
                              img: QImage) -> tuple[float, float]:
@@ -2087,7 +2099,8 @@ class DocumentEditor(QWidget):
                 caption = cell_text[len("Figure: "):]
                 break
         return Figure(path=path, caption=caption, label=label or None,
-                      width=width, source=source)
+                      width=width, source=source,
+                      align=tfmt.property(_P_FIGURE_ALIGN) or "center")
 
     def _resolve_image_path(self, img_path: str) -> Path | None:
         """Resolve a figure path to an absolute file, checking common bases."""
@@ -2585,6 +2598,12 @@ class DocumentEditor(QWidget):
 
     def apply_alignment(self, name: str) -> None:
         """name ∈ {"left", "center", "right", "justify"}."""
+        figure = self.current_figure()
+        if figure is not None:
+            # Word: the paragraph align buttons place a selected picture.
+            self.set_figure_alignment(
+                "center" if name == "justify" else name, figure)
+            return
         flag = _QT_ALIGNMENT.get(name, Qt.AlignLeft)
         cursor = self._edit.textCursor()
         bfmt = cursor.blockFormat()
@@ -2593,7 +2612,182 @@ class DocumentEditor(QWidget):
         self._on_text_changed()
 
     def current_alignment(self) -> str:
+        figure = self.current_figure()
+        if figure is not None:
+            return figure.format().property(_P_FIGURE_ALIGN) or "center"
         return self._alignment_of(self._edit.textCursor().block())
+
+    # ----- the object under the caret (Word's contextual tabs) -----
+
+    def current_figure(self) -> QTextTable | None:
+        t = self._edit.textCursor().currentTable()
+        if t is not None and t.format().property(_P_FIGURE_PATH) is not None:
+            return t
+        return None
+
+    def current_data_table(self) -> QTextTable | None:
+        t = self._edit.textCursor().currentTable()
+        if t is not None and t.format().property(_P_FIGURE_PATH) is None:
+            return t
+        return None
+
+    def current_equation_block(self):
+        block = self._edit.textCursor().block()
+        if block.userState() == _STATE_MATH_BLOCK:
+            return block
+        return None
+
+    def context_object(self) -> str | None:
+        """"table", "figure", "equation" or None for the caret's spot."""
+        if self.current_figure() is not None:
+            return "figure"
+        if self.current_data_table() is not None:
+            return "table"
+        if (self.current_equation_block() is not None
+                or self._has_math_at(self._edit.textCursor())):
+            return "equation"
+        return None
+
+    def _remove_frame(self, frame) -> None:
+        c = QTextCursor(self._edit.document())
+        c.setPosition(frame.firstPosition() - 1)
+        c.setPosition(frame.lastPosition() + 1, QTextCursor.KeepAnchor)
+        c.removeSelectedText()
+        self._on_text_changed()
+
+    # figures
+
+    def set_figure_alignment(self, align: str,
+                             qtable: QTextTable | None = None) -> None:
+        qtable = qtable or self.current_figure()
+        if qtable is None:
+            return
+        tfmt = qtable.format()
+        tfmt.setProperty(_P_FIGURE_ALIGN, align)
+        qtable.setFormat(tfmt)
+        self._align_figure_rows(qtable, align)
+        self._on_text_changed()
+
+    def set_figure_width(self, fraction: float) -> None:
+        qtable = self.current_figure()
+        if qtable is None:
+            return
+        tfmt = qtable.format()
+        tfmt.setProperty(_P_FIGURE_WIDTH, f"{fraction:.2f}\\textwidth")
+        qtable.setFormat(tfmt)
+        self._resize_figure_images()
+        self._on_text_changed()
+
+    def edit_current_figure(self) -> None:
+        qtable = self.current_figure()
+        if qtable is not None:
+            self._edit_existing_figure(qtable)
+
+    def delete_current_figure(self) -> None:
+        qtable = self.current_figure()
+        if qtable is not None:
+            self._remove_frame(qtable)
+
+    # tables
+
+    def _table_cell(self):
+        qtable = self.current_data_table()
+        if qtable is None:
+            return None, -1, -1
+        cell = qtable.cellAt(self._edit.textCursor())
+        return qtable, cell.row(), cell.column()
+
+    def _data_rows(self, qtable: QTextTable) -> int:
+        n = qtable.rows()
+        if n > 1 and qtable.cellAt(n - 1, 0).format().property(_P_CAPTION_ROW):
+            return n - 1
+        return n
+
+    def table_insert_row(self, below: bool) -> None:
+        qtable, row, _ = self._table_cell()
+        if qtable is None:
+            return
+        row = min(row, self._data_rows(qtable) - 1)
+        self._table_insert_row(qtable, row + (1 if below else 0))
+        self._on_text_changed()
+
+    def table_insert_column(self, right: bool) -> None:
+        qtable, _, col = self._table_cell()
+        if qtable is None:
+            return
+        self._table_insert_col(qtable, col + (1 if right else 0))
+        self._on_text_changed()
+
+    def table_delete_row(self) -> None:
+        qtable, row, _ = self._table_cell()
+        if qtable is None or row >= self._data_rows(qtable):
+            return
+        if self._data_rows(qtable) <= 1:
+            self.delete_current_table()
+            return
+        self._table_delete_row(qtable, row)
+        self._on_text_changed()
+
+    def table_delete_column(self) -> None:
+        qtable, _, col = self._table_cell()
+        if qtable is None:
+            return
+        if qtable.columns() <= 1:
+            self.delete_current_table()
+            return
+        self._table_delete_col(qtable, col)
+        self._on_text_changed()
+
+    def delete_current_table(self) -> None:
+        qtable = self.current_data_table()
+        if qtable is not None:
+            self._remove_frame(qtable)
+
+    def current_table_style(self) -> str:
+        qtable = self.current_data_table()
+        return (qtable.format().property(_P_TABLE_STYLE) or "") if qtable else ""
+
+    def set_table_style(self, style: str) -> None:
+        """"" = plain rules, "booktabs" = publication rules."""
+        qtable = self.current_data_table()
+        if qtable is None:
+            return
+        tfmt = qtable.format()
+        tfmt.setProperty(_P_TABLE_STYLE, style)
+        qtable.setFormat(tfmt)
+        self._apply_table_rules(qtable)
+        self._on_text_changed()
+
+    # equations
+
+    def edit_current_equation(self) -> None:
+        self._edit_math_at(self._edit.textCursor())
+
+    def current_equation_numbered(self) -> bool:
+        block = self.current_equation_block()
+        return bool(block is not None
+                    and block.blockFormat().property(_P_MATH_NUMBERED))
+
+    def set_current_equation_numbered(self, on: bool) -> None:
+        block = self.current_equation_block()
+        if block is not None:
+            self.set_math_block_numbered(block, on)
+
+    def delete_current_equation(self) -> None:
+        block = self.current_equation_block()
+        if block is None:
+            return
+        c = QTextCursor(block)
+        c.beginEditBlock()
+        c.select(QTextCursor.BlockUnderCursor)
+        c.removeSelectedText()
+        # The first block of a document cannot be removed, only emptied:
+        # turn what is left back into body text.
+        if c.block().userState() == _STATE_MATH_BLOCK:
+            c.setBlockFormat(QTextBlockFormat())
+            self._restyle_block(c.block(), _STATE_PARAGRAPH)
+        c.endEditBlock()
+        self._on_text_changed()
 
     # ----- zoom -----
 
@@ -4006,7 +4200,7 @@ class DocumentEditor(QWidget):
                 menu.addAction(
                     "Edit in KhervePaint",
                     lambda p=resolved: self.edit_in_khervepaint(p))
-        qtable = self._current_table()
+        qtable = self.current_data_table()
         if qtable is not None:
             menu.addSeparator()
             cursor = self._edit.textCursor()
@@ -4028,6 +4222,7 @@ class DocumentEditor(QWidget):
             if qtable.columns() > 1:
                 menu.addAction("Delete column",
                                lambda: self._table_delete_col(qtable, col))
+            menu.addAction("Delete table", self.delete_current_table)
         if self._extra_context_actions:
             menu.addSeparator()
             for label, callback in self._extra_context_actions:
@@ -4077,6 +4272,7 @@ class DocumentEditor(QWidget):
     def _table_insert_row(self, qtable: QTextTable, at: int) -> None:
         qtable.insertRows(at, 1)
         self._apply_table_rules(qtable)
+        self._on_text_changed()
 
     def _table_columns_changed(self, qtable: QTextTable) -> None:
         # The stored column spec no longer matches the column count;
@@ -4085,6 +4281,7 @@ class DocumentEditor(QWidget):
         tfmt.setProperty(_P_TABLE_ALIGNMENT, "")
         qtable.setFormat(tfmt)
         self._apply_table_rules(qtable)
+        self._on_text_changed()
 
     def _table_insert_col(self, qtable: QTextTable, at: int) -> None:
         qtable.insertColumns(at, 1)
@@ -4093,6 +4290,7 @@ class DocumentEditor(QWidget):
     def _table_delete_row(self, qtable: QTextTable, at: int) -> None:
         qtable.removeRows(at, 1)
         self._apply_table_rules(qtable)
+        self._on_text_changed()
 
     def _table_delete_col(self, qtable: QTextTable, at: int) -> None:
         qtable.removeColumns(at, 1)
