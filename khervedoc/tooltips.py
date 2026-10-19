@@ -208,6 +208,22 @@ TIPS: dict[str, tuple[str, str, str]] = {
     "act_hrule": ("Horizontal line",
         "Inserts a thin line across the page to separate sections.",
         "Becomes \\hrulefill."),
+    # ----- view tab -----
+    "act_page_visual": ("Visual",
+        "The page as it will print, where you write — like Word's Print "
+        "Layout view.", ""),
+    "act_page_code": ("Code",
+        "The LaTeX source KherveTeX generates from your document. Edits "
+        "there flow back into the page.", ""),
+    "act_page_console": ("Console",
+        "The compiler's log: warnings and errors from the last PDF build.",
+        ""),
+    "act_pdf_panel": ("PDF preview",
+        "Shows the compiled PDF beside the page, refreshed as you type. "
+        "Turn it off to write with the page alone.", ""),
+    "act_pdf_detach": ("Detach PDF",
+        "Moves the PDF preview into its own window, e.g. for a second "
+        "screen. Release it to put it back beside the page.", ""),
     # ----- table tab -----
     "act_tbl_row_above": ("Insert row above",
         "Adds an empty row above the row the cursor is in.", ""),

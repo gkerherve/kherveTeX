@@ -1040,6 +1040,8 @@ class MainWindow(QMainWindow):
         self._side_tabs = QTabWidget(self)
         self._side_tabs.addTab(self._pdf_side_panel, "PDF")
         self._side_tabs.hide()
+        # A single tab labelled "PDF" over the PDF said nothing.
+        self._side_tabs.tabBar().hide()
         self._splitter.addWidget(self._side_tabs)
         self._pdf_window: _PdfWindow | None = None
         # Give the PDF side panel ~2× the width of the Formatted tab.
@@ -2155,6 +2157,9 @@ class MainWindow(QMainWindow):
             self._build_classic_toolbars()
         else:
             self._build_ribbon()
+        # The ribbon's View tab replaces the Visual / Code / Console bar.
+        self._tabs.tabBar().setVisible(self._toolbar_style == "classic")
+        self._sync_pdf_actions()
         self._settings.setValue("toolbar_style", self._toolbar_style)
         self._sync_context_tools()
         for name, act in (("word", getattr(self, "act_style_word", None)),
@@ -2286,6 +2291,26 @@ class MainWindow(QMainWindow):
                                    e.set_current_equation_numbered, True)
         self.act_eq_delete = act(icons.equation_delete(), "Delete Equation",
                                  e.delete_current_equation)
+        # Ribbon View tab: the Visual / Code / Console pages and where the
+        # PDF lives, in place of the tab bar above the page.
+        self._page_group = QActionGroup(self)
+        self.act_page_visual = act(icons.page_view(), "Visual",
+                                   lambda: self._tabs.setCurrentIndex(0), True)
+        self.act_page_code = act(icons.code(), "Code",
+                                 lambda: self._tabs.setCurrentIndex(1), True)
+        self.act_page_console = act(
+            icons.console_view(), "Console",
+            lambda: self._tabs.setCurrentWidget(self._console), True)
+        for a in (self.act_page_visual, self.act_page_code,
+                  self.act_page_console):
+            self._page_group.addAction(a)
+        self.act_page_visual.setChecked(True)
+        self._tabs.currentChanged.connect(self._sync_page_actions)
+        self.act_pdf_panel = act(icons.export_pdf(), "PDF",
+                                 self._toggle_pdf_panel, True)
+        self.act_pdf_detach = act(icons.pdf_detach(), "Detach PDF",
+                                  self._toggle_pdf_detached, True)
+        self.act_fit_page_width.setIcon(icons.fit_width())
         self._context_actions = {
             "table": [self.act_tbl_row_above, self.act_tbl_row_below,
                       self.act_tbl_col_left, self.act_tbl_col_right,
@@ -2299,6 +2324,30 @@ class MainWindow(QMainWindow):
             "equation": [self.act_eq_edit, self.act_eq_numbered,
                          self.act_eq_delete],
         }
+
+    def _sync_page_actions(self, _idx: int = 0) -> None:
+        w = self._tabs.currentWidget()
+        for a, page in ((self.act_page_visual, self._editor),
+                        (self.act_page_code, self._latex_view),
+                        (self.act_page_console, self._console)):
+            a.setChecked(w is page)
+
+    def _toggle_pdf_panel(self, on: bool) -> None:
+        if on:
+            self.apply_layout_mode(
+                "window" if self.act_pdf_detach.isChecked() else "side")
+        else:
+            self.apply_layout_mode("visual")
+
+    def _toggle_pdf_detached(self, on: bool) -> None:
+        self.apply_layout_mode("window" if on else "side")
+
+    def _sync_pdf_actions(self) -> None:
+        if not hasattr(self, "act_pdf_panel"):
+            return
+        mode = self._settings.value("layout_mode", "side")
+        self.act_pdf_panel.setChecked(mode in ("side", "window"))
+        self.act_pdf_detach.setChecked(mode == "window")
 
     def _sync_context_tools(self) -> None:
         if not hasattr(self, "_context_actions"):
@@ -2387,6 +2436,14 @@ class MainWindow(QMainWindow):
         hist = rb.add_tab("History")
         hist.add_group("Versions", large=[self.act_commit_now,
                                           self.act_history])
+        view = rb.add_tab("View")
+        view.add_group("Views", large=[self.act_page_visual,
+                                       self.act_page_code,
+                                       self.act_page_console])
+        view.add_group("PDF", large=[self.act_pdf_panel,
+                                     self.act_pdf_detach])
+        view.add_group("Show", large=[self.act_show_marks],
+                       rows=[[self.act_fit_page_width]], text=True)
         # Word's contextual tabs: shown only while the caret is in one.
         t = rb.add_contextual_tab("Table", "table")
         t.add_group("Rows & Columns", large=[
@@ -5783,6 +5840,7 @@ class MainWindow(QMainWindow):
             self._toggle_auto_compile(False)
         self._toggle_side_by_side(not visual)
         self._settings.setValue("layout_mode", mode)
+        self._sync_pdf_actions()
 
     def show_welcome(self) -> None:
         from .welcome import WelcomeDialog

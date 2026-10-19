@@ -1684,3 +1684,30 @@ def paper_thumb(w_in: float, h_in: float) -> QIcon:
     w, h = w_in * s, h_in * s
     c.page(12 - w / 2, 12 - h / 2, w, h, 3)
     return c.done()
+
+
+# ----- view tab -----
+
+def page_view() -> QIcon:
+    c = _W(); c.page(5, 2.5, 14, 19)
+    c.text((5, 5, 14, 9), "Aa", size=7.5, bold=True, color=_blue())
+    for y in (15, 17.5):
+        c.line(7.5, y, 16.5, y, w=1)
+    return c.done()
+
+
+def console_view() -> QIcon:
+    c = _W(); c.rect(2.5, 4, 19, 16, fill=QColor("#1e1e1e"), r=1.5)
+    c.poly([(6, 9), (9, 12), (6, 15)], color=QColor("#7ec27e"),
+           closed=False, lw=1.5)
+    c.line(11, 15, 17, 15, QColor("#d4d4d4"), 1.4)
+    return c.done()
+
+
+def pdf_detach() -> QIcon:
+    c = _W()
+    c.rect(2.5, 6, 13, 15, fill=_paper(), r=1)
+    c.rect(9, 3, 12.5, 10, color=_blue(), fill=_tint(), r=1)
+    c.line(13, 11, 19, 5, _blue(), 1.5)
+    c.poly([(15.5, 5), (19, 5), (19, 8.5)], color=_blue(), closed=False)
+    return c.done()
