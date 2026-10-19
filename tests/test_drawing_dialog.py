@@ -241,3 +241,19 @@ def test_legacy_json_drawing_loads(qapp, tmp_path):
     assert png.with_suffix(".svg").exists()
     assert drawing_source_for(png) == png.with_suffix(".svg")
     d.close()
+
+
+def test_shape_fill_panel_defaults_to_no_fill_and_fills_selection(dlg):
+    from PySide6.QtGui import QPen
+    assert dlg._fill_menu_btn.text() == "No Fill"
+    r = C.RectItem(QRectF(10, 10, 80, 40))
+    r.setPen(QPen(QColor("black"), 2))
+    dlg.scene.addItem(r)
+    r.setSelected(True)
+    dlg._fill_btn.set_color(QColor("#d8000c"), emit=True)
+    assert r.brush().style() != Qt.NoBrush
+    assert r.brush().color().name() == "#d8000c"
+    assert dlg._fill_menu_btn.text() == "Fill: #d8000c"
+    dlg._fill_check.setChecked(False)          # the menu's "No Fill"
+    assert r.brush().style() == Qt.NoBrush
+    assert dlg._fill_menu_btn.text() == "No Fill"

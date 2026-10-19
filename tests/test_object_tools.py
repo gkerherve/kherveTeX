@@ -113,3 +113,28 @@ def test_equation_numbering_and_delete(tmp_path):
     ed.delete_current_equation()
     assert not any(isinstance(b, MathBlock)
                    for b in ed.get_document().children)
+
+
+def test_table_caption_label_and_column_alignment(tmp_path):
+    ed = _editor(tmp_path, Paragraph(children=[Text("x")]),
+                 Table(rows=[["a", "b"], ["1", "2"]], alignment="|l|p{3cm}|"),
+                 Paragraph(children=[Text("y")]))
+    _caret_in_frame(ed, 0)
+    ed.set_caption("Results", "tab:res")
+    _caret_in_frame(ed, 0)
+    assert ed.current_caption() == ("Results", "tab:res")
+    ed.set_column_alignment("r")
+    t = next(b for b in ed.get_document().children if isinstance(b, Table))
+    assert t.caption == "Results" and t.label == "tab:res"
+    assert t.alignment == "|r|p{3cm}|"
+    assert len(t.rows) == 2
+
+
+def test_picture_caption(tmp_path):
+    ed = _editor(tmp_path, Paragraph(children=[Text("x")]),
+                 Figure(path=_picture(tmp_path), align="right"))
+    _caret_in_frame(ed, 0)
+    ed.set_caption("A red square", "fig:sq")
+    fig = next(b for b in ed.get_document().children if isinstance(b, Figure))
+    assert (fig.caption, fig.label, fig.align) == ("A red square", "fig:sq",
+                                                   "right")

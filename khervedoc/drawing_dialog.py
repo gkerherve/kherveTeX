@@ -24,8 +24,8 @@ from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCheckBox, QColorDialog, QComboBox, QDialog,
     QDialogButtonBox, QDoubleSpinBox, QFileDialog, QFontComboBox,
     QFormLayout, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QLabel,
-    QLineEdit, QMenu, QScrollArea, QSpinBox, QToolButton,
-    QVBoxLayout, QWidget,
+    QLineEdit, QMenu, QScrollArea, QSizePolicy, QSpinBox, QToolButton,
+    QVBoxLayout, QWidget, QWidgetAction,
 )
 
 from . import icons
@@ -727,6 +727,43 @@ class DrawingDialog(QDialog):
         form.addRow("Label", self._p_label)
         lay.addWidget(sel)
 
+        # Word's Shape Fill: No Fill by default, a colour, or More Colours.
+        fill_box = QGroupBox("Shape Fill")
+        fl = QVBoxLayout(fill_box)
+        fl.setContentsMargins(8, 6, 8, 8)
+        self._fill_menu_btn = QToolButton()
+        self._fill_menu_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self._fill_menu_btn.setPopupMode(QToolButton.InstantPopup)
+        self._fill_menu_btn.setSizePolicy(QSizePolicy.Expanding,
+                                          QSizePolicy.Fixed)
+        self._fill_menu_btn.setToolTip(
+            "Fill the selected shapes and new ones with a colour, or "
+            "leave them unfilled (No Fill)")
+        menu = QMenu(self._fill_menu_btn)
+        menu.addAction(icons.color_swatch("#ffffff", 16, none=True),
+                       "No Fill", lambda: self._fill_check.setChecked(False))
+        grid_w = QWidget()
+        grid = QGridLayout(grid_w)
+        grid.setContentsMargins(6, 2, 6, 2)
+        grid.setSpacing(2)
+        for i, hexc in enumerate(_PALETTE):
+            b = QToolButton()
+            b.setIcon(icons.color_swatch(hexc, 16))
+            b.setAutoRaise(True)
+            b.setToolTip(hexc)
+            b.clicked.connect(lambda _=False, c=hexc: (
+                self._fill_btn.set_color(QColor(c), emit=True), menu.close()))
+            grid.addWidget(b, i // 6, i % 6)
+        wa = QWidgetAction(menu)
+        wa.setDefaultWidget(grid_w)
+        menu.addAction(wa)
+        menu.addSeparator()
+        menu.addAction("More Colours…", self._fill_btn._pick)
+        self._fill_menu_btn.setMenu(menu)
+        fl.addWidget(self._fill_menu_btn)
+        lay.addWidget(fill_box)
+        self._update_fill_menu_button()
+
         arr = QGroupBox("Arrange")
         g = QGridLayout(arr)
         g.setContentsMargins(6, 6, 6, 6)
@@ -905,6 +942,7 @@ class DrawingDialog(QDialog):
             elif brush.style() != Qt.NoBrush:
                 self._fill_btn.set_color(brush.color())
                 self._fill_style.setCurrentIndex(0)
+            self._update_fill_menu_button()
 
     # ------------------------------------------------------------ style
     def _style_selection(self, fn) -> None:
@@ -970,6 +1008,19 @@ class DrawingDialog(QDialog):
     def _set_fill_enabled(self, on: bool):
         self.scene.fill_enabled = on
         self._apply_brush_to_selection()
+        self._update_fill_menu_button()
+
+    def _update_fill_menu_button(self):
+        btn = getattr(self, "_fill_menu_btn", None)
+        if btn is None:
+            return
+        if self._fill_check.isChecked():
+            c = self._fill_btn.color()
+            btn.setIcon(icons.color_swatch(c.name(), 16))
+            btn.setText(f"Fill: {c.name()}")
+        else:
+            btn.setIcon(icons.color_swatch("#ffffff", 16, none=True))
+            btn.setText("No Fill")
 
     def _set_fill_color(self, color: QColor):
         self.scene.fill_color = color
@@ -977,6 +1028,7 @@ class DrawingDialog(QDialog):
             self._fill_check.setChecked(True)     # applies via toggled
         else:
             self._apply_brush_to_selection()
+        self._update_fill_menu_button()
 
     def _set_fill_color2(self, color: QColor):
         self.scene.fill_color2 = color

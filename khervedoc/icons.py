@@ -1720,3 +1720,13 @@ def theorem() -> QIcon:
     for y in (14, 17):
         c.line(5.5, y, 18.5, y, w=1)
     return c.done()
+
+
+def caption() -> QIcon:
+    c = _W()
+    c.rect(4, 3, 16, 11, fill=_paper(), r=0.8)
+    c.poly([(5.5, 12.5), (10, 7.5), (13, 10.5), (18.5, 12.5)],
+           color=_blue(), fill=_tint(), lw=1)
+    c.line(4, 17.5, 20, 17.5, _blue(), 1.6)
+    c.line(6.5, 20.5, 17.5, 20.5, w=1.1)
+    return c.done()

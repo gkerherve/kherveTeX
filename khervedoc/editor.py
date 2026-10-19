@@ -2925,6 +2925,85 @@ class DocumentEditor(QWidget):
         self._apply_table_rules(qtable)
         self._on_text_changed()
 
+    def _rebuild_frame(self, qtable: QTextTable, model) -> None:
+        """Replace a table / figure widget by a fresh one built from
+        *model* (used when its caption rows change shape)."""
+        pos = qtable.firstPosition() - 1
+        c = QTextCursor(self._edit.document())
+        c.beginEditBlock()
+        c.setPosition(pos)
+        c.setPosition(qtable.lastPosition() + 1, QTextCursor.KeepAnchor)
+        c.removeSelectedText()
+        if isinstance(model, Figure):
+            self._insert_figure_widget(c, model)
+        else:
+            self._insert_table_widget(c, model)
+        c.endEditBlock()
+        self._on_text_changed()
+
+    def current_caption(self) -> tuple[str, str]:
+        """(caption, label) of the table or picture under the caret."""
+        t = self.current_data_table()
+        if t is not None:
+            m = self._table_from_qtexttable(t)
+            return m.caption, m.label or ""
+        f = self.current_figure()
+        if f is not None:
+            m = self._figure_from_qtexttable(f)
+            return m.caption, m.label or ""
+        return "", ""
+
+    def set_caption(self, caption: str, label: str) -> None:
+        """Word's Insert Caption for the table or picture at the caret;
+        the label is the name cross-references point at."""
+        t = self.current_data_table()
+        if t is not None:
+            m = self._table_from_qtexttable(t)
+            m.caption, m.label = caption, label or None
+            self._rebuild_frame(t, m)
+            return
+        f = self.current_figure()
+        if f is not None:
+            m = self._figure_from_qtexttable(f)
+            m.caption, m.label = caption, label or None
+            self._rebuild_frame(f, m)
+
+    def set_column_alignment(self, align: str) -> None:
+        """'l', 'c' or 'r' for the column under the caret, keeping the
+        rest of the column spec (rules, p{} widths) as it was."""
+        qtable, _, col = self._table_cell()
+        if qtable is None:
+            return
+        tfmt = qtable.format()
+        spec = tfmt.property(_P_TABLE_ALIGNMENT) or ""
+        toks = _COL_SPEC_RE.findall(spec)
+        if sum(1 for t in toks if t != "|" and t[0] not in "@!<>") \
+                != qtable.columns():
+            aligns, vrules = _parse_column_spec(spec, qtable.columns())
+            toks = []
+            for i, a in enumerate(aligns):
+                toks += ["|"] * vrules[i] + [a]
+            toks += ["|"] * vrules[-1]
+        n = -1
+        for i, t in enumerate(toks):
+            if t != "|" and t[0] not in "@!<>":
+                n += 1
+                if n == col:
+                    toks[i] = align
+        tfmt.setProperty(_P_TABLE_ALIGNMENT, "".join(toks))
+        qtable.setFormat(tfmt)
+        self._apply_table_rules(qtable)
+        self._on_text_changed()
+
+    def current_column_alignment(self) -> str:
+        qtable, _, col = self._table_cell()
+        if qtable is None:
+            return ""
+        aligns, _ = _parse_column_spec(
+            qtable.format().property(_P_TABLE_ALIGNMENT) or "",
+            qtable.columns())
+        return aligns[col] if 0 <= col < len(aligns) else "l"
+
     # equations
 
     def edit_current_equation(self) -> None:

@@ -2284,6 +2284,14 @@ class MainWindow(QMainWindow):
             a = act(icons.picture_width(frac), f"{int(frac * 100)}% width",
                     lambda _=False, f=frac: e.set_figure_width(f))
             setattr(self, f"act_fig_w{int(frac * 100)}", a)
+        self.act_caption = act(icons.caption(), "Insert Caption",
+                               self._insert_caption)
+        self.act_tbl_align_l = act(icons.align_left(), "Align Left",
+                                   lambda: e.set_column_alignment("l"), True)
+        self.act_tbl_align_c = act(icons.align_center(), "Center",
+                                   lambda: e.set_column_alignment("c"), True)
+        self.act_tbl_align_r = act(icons.align_right(), "Align Right",
+                                   lambda: e.set_column_alignment("r"), True)
         self.act_fig_edit = act(icons.picture_edit(), "Edit drawing",
                                 e.edit_current_figure)
         self.act_fig_delete = act(icons.picture_delete(), "Delete Picture",
@@ -2349,7 +2357,8 @@ class MainWindow(QMainWindow):
                       self.act_tbl_col_left, self.act_tbl_col_right,
                       self.act_tbl_del_row, self.act_tbl_del_col,
                       self.act_tbl_delete, self.act_tbl_plain,
-                      self.act_tbl_booktabs],
+                      self.act_tbl_booktabs, self.act_tbl_align_l,
+                      self.act_tbl_align_c, self.act_tbl_align_r],
             "figure": [self.act_fig_left, self.act_fig_center,
                        self.act_fig_right, self.act_fig_w25, self.act_fig_w50,
                        self.act_fig_w75, self.act_fig_w100, self.act_fig_edit,
@@ -2391,6 +2400,29 @@ class MainWindow(QMainWindow):
             False)
         if ok:
             self._editor.paste_special(opts[labels.index(choice)][0])
+
+    def _insert_caption(self) -> None:
+        caption, label = self._editor.current_caption()
+        kind = ("Table" if self._editor.current_data_table() is not None
+                else "Figure")
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Insert Caption")
+        form = QFormLayout(dlg)
+        cap_edit = QLineEdit(caption)
+        cap_edit.setPlaceholderText(f"{kind} 1: describe the {kind.lower()}")
+        lab_edit = QLineEdit(label)
+        lab_edit.setPlaceholderText(f"e.g. {kind[:3].lower()}:results")
+        form.addRow("Caption", cap_edit)
+        form.addRow("Label (for cross-references)", lab_edit)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok
+                                   | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        form.addRow(buttons)
+        cap_edit.setMinimumWidth(360)
+        if dlg.exec() == QDialog.Accepted:
+            self._editor.set_caption(cap_edit.text().strip(),
+                                     lab_edit.text().strip())
 
     def _insert_theorem(self, kind: str) -> None:
         self._editor.insert_theorem(kind)
@@ -2434,7 +2466,13 @@ class MainWindow(QMainWindow):
         for kind, acts in self._context_actions.items():
             for a in acts:
                 a.setEnabled(kind == ctx)
+        self.act_caption.setEnabled(ctx in ("table", "figure"))
         if ctx == "table":
+            col = e.current_column_alignment()
+            for a, k in ((self.act_tbl_align_l, "l"),
+                         (self.act_tbl_align_c, "c"),
+                         (self.act_tbl_align_r, "r")):
+                a.setChecked(col == k)
             style = e.current_table_style()
             self.act_tbl_plain.setChecked(style != "booktabs")
             self.act_tbl_booktabs.setChecked(style == "booktabs")
@@ -2509,7 +2547,8 @@ class MainWindow(QMainWindow):
         ref = rb.add_tab("References")
         ref.add_group("Citations", large=[self.act_citation])
         ref.add_group("Footnotes", large=[self.act_footnote])
-        ref.add_group("Cross-references", large=[self.act_crossref])
+        ref.add_group("Captions", large=[self.act_caption,
+                                         self.act_crossref])
         rev = rb.add_tab("Review")
         rev.add_group("Proofing", large=[self.act_spell_check])
         rev.add_group("Comments", large=[self.act_comment],
@@ -2533,14 +2572,19 @@ class MainWindow(QMainWindow):
         t.add_group("Delete", large=[self.act_tbl_del_row,
                                      self.act_tbl_del_col,
                                      self.act_tbl_delete])
+        t.add_group("Alignment", large=[self.act_tbl_align_l,
+                                        self.act_tbl_align_c,
+                                        self.act_tbl_align_r])
         t.add_group("Table Style", large=[self.act_tbl_plain,
                                           self.act_tbl_booktabs])
+        t.add_group("Caption", large=[self.act_caption])
         pic = rb.add_contextual_tab("Picture", "figure")
         pic.add_group("Arrange", large=[self.act_fig_left,
                                         self.act_fig_center,
                                         self.act_fig_right])
         pic.add_group("Size", large=[self.act_fig_w25, self.act_fig_w50,
                                      self.act_fig_w75, self.act_fig_w100])
+        pic.add_group("Caption", large=[self.act_caption])
         pic.add_group("Picture", large=[self.act_fig_edit,
                                         self.act_fig_delete])
         th = rb.add_contextual_tab("Theorem", "theorem")

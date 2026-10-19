@@ -262,6 +262,19 @@ TIPS: dict[str, tuple[str, str, str]] = {
         "The look most journals ask for: heavier top and bottom rules, "
         "a thin one under the header, no vertical lines.",
         "Uses \\toprule, \\midrule and \\bottomrule (booktabs)."),
+    "act_tbl_align_l": ("Align column left",
+        "Lines up the text of the cursor's column on the left.",
+        "Sets the column to l in the tabular column spec."),
+    "act_tbl_align_c": ("Centre column",
+        "Centres the text of the cursor's column.",
+        "Sets the column to c in the tabular column spec."),
+    "act_tbl_align_r": ("Align column right",
+        "Lines up the cursor's column on the right — best for numbers.",
+        "Sets the column to r in the tabular column spec."),
+    "act_caption": ("Insert Caption",
+        "Adds or edits the numbered caption of the table or picture under "
+        "the cursor (\"Table 2: …\"), and the label cross-references use "
+        "to point at it.", "Becomes \\caption{…} and \\label{…}."),
     # ----- picture tab -----
     "act_fig_left": ("Align picture left",
         "Places the picture against the left margin. The paragraph align "
