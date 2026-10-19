@@ -21,6 +21,12 @@ def _button(action: QAction, large: bool, text: bool) -> QToolButton:
     b = QToolButton()
     b.setDefaultAction(action)
     b.setAutoRaise(True)
+    # A drop-down beside the button (Word's Paste ▾), kept off the action
+    # itself so the action stays a plain item in the menu bar.
+    menu = action.property("ribbon_menu")
+    if menu is not None:
+        b.setMenu(menu)
+        b.setPopupMode(QToolButton.MenuButtonPopup)
     if large:
         b.setIconSize(_LARGE)
         b.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)

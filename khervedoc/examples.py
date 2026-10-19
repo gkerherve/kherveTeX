@@ -14,6 +14,8 @@ keystroke.
 """
 from __future__ import annotations
 
+import re
+
 from .model import (
     Abstract, Author, Citation, CrossRef, DEFAULT_PACKAGES, Document,
     Figure, Footnote, Frame, Keywords, Link, List as ListNode, ListItem,
@@ -2998,6 +3000,26 @@ def meeting_minutes() -> Document:
 def lecture_notes() -> Document:
     """Lecture notes / course notes — definitions, theorems, proofs,
     and examples in a structured format."""
+    return _with_theorem_blocks(_lecture_notes_source())
+
+
+def _with_theorem_blocks(doc: Document) -> Document:
+    """The theorem-like environments are written below as LaTeX for
+    readability; turn them into editable Theorem paragraphs."""
+    from .importers import import_body_fragment
+    out = []
+    for b in doc.children:
+        if isinstance(b, RawLatex) and re.match(
+                r"\s*\\begin\{(theorem|lemma|proposition|corollary|"
+                r"definition|example|remark|proof)\}", b.text):
+            out.extend(import_body_fragment(b.text))
+        else:
+            out.append(b)
+    doc.children = out
+    return doc
+
+
+def _lecture_notes_source() -> Document:
     return Document(
         meta=_meta(
             title="Lecture notes",

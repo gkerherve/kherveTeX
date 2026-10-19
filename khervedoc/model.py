@@ -244,8 +244,31 @@ class Frame:
     type: str = "Frame"
 
 
+# amsthm-style environments, in the order the Insert menu lists them.
+THEOREM_KINDS: dict[str, str] = {
+    "theorem": "Theorem", "lemma": "Lemma", "proposition": "Proposition",
+    "corollary": "Corollary", "definition": "Definition",
+    "example": "Example", "remark": "Remark", "proof": "Proof",
+}
+
+
+@dataclass
+class Theorem:
+    """One paragraph of a theorem-like environment (theorem, lemma,
+    definition, proof...). `start` marks the paragraph that opens the
+    environment; the following Theorem paragraphs of the same kind with
+    start=False continue it, so a multi-paragraph proof is one
+    \\begin{proof}...\\end{proof}. `title` is the optional [name]."""
+    kind: str = "theorem"
+    title: str = ""
+    children: list[Inline] = field(default_factory=list)
+    start: bool = True
+    type: str = "Theorem"
+
+
 Block = Union[Paragraph, Section, MathBlock, List, Figure, Table, RawLatex,
-              Title, Author, Affiliation, Correspondence, Abstract, Keywords, Frame]
+              Title, Author, Affiliation, Correspondence, Abstract, Keywords,
+              Frame, Theorem]
 
 
 # ---------------- Project (multi-chapter) ----------------
@@ -464,6 +487,10 @@ def _build_block(d: dict) -> Block:
         return Keywords(children=_build_inlines(d.get("children", [])))
     if t == "Frame":
         return Frame(children=_build_inlines(d.get("children", [])))
+    if t == "Theorem":
+        return Theorem(kind=d.get("kind", "theorem"), title=d.get("title", ""),
+                       children=_build_inlines(d.get("children", [])),
+                       start=d.get("start", True))
     raise ValueError(f"Unknown block node type: {t!r}")
 
 

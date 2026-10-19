@@ -83,6 +83,9 @@ _SHEET_EDGE = QColor("#b8bcc1")
 # model or the LaTeX (which numbers headings itself).
 HEADING_NUMBER_PROPERTY = QTextFormat.UserProperty + 40
 EQUATION_NUMBER_PROPERTY = QTextFormat.UserProperty + 41
+# "Theorem 1.2 (Name)." drawn before a theorem's first line, like a
+# heading number: part of the layout, not editable text.
+THEOREM_LABEL_PROPERTY = QTextFormat.UserProperty + 42
 
 
 
@@ -807,6 +810,9 @@ class PagedTextEdit(QTextEdit):
         block = doc.firstBlock()
         while block.isValid():
             number = block.blockFormat().property(HEADING_NUMBER_PROPERTY)
+            label = block.blockFormat().property(THEOREM_LABEL_PROPERTY)
+            if label and not number:
+                number = label
             if number:
                 raw = layout.blockBoundingRect(block)
                 line = block.layout().lineAt(0) if block.layout() else None
@@ -821,7 +827,13 @@ class PagedTextEdit(QTextEdit):
                     it = block.begin()
                     if not it.atEnd():
                         cf = it.fragment().charFormat()
-                        painter.setFont(cf.font())
+                        font = cf.font()
+                        if label and number == label:
+                            # amsthm: bold head, italic "Proof."
+                            proof = str(label).startswith("Proof")
+                            font.setBold(not proof)
+                            font.setItalic(proof)
+                        painter.setFont(font)
                         painter.setPen(cf.foreground().color()
                                        if cf.hasProperty(QTextFormat.ForegroundBrush)
                                        else self.palette().text().color())

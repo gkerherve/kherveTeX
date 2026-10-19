@@ -11,7 +11,7 @@ from .model import (
     CrossRef, Document, Figure,
     Footnote, Frame, Highlight, HIGHLIGHT_COLORS, Inline, InlineRaw, Keywords,
     Link, List as ListNode, ListItem, MathBlock, MathInline, Paragraph,
-    RawLatex, Section, Table, Text, Title,
+    RawLatex, Section, Table, Text, Theorem, THEOREM_KINDS, Title,
 )
 
 
@@ -116,6 +116,15 @@ def serialize_block(node: Block) -> str:
             f"{marker} {serialize_inlines(it.children)}\n" for it in node.items
         )
         return items
+
+    if isinstance(node, Theorem):
+        body = serialize_inlines(node.children)
+        if not node.start:
+            return body + "\n"
+        name = THEOREM_KINDS.get(node.kind, node.kind.title())
+        head = f"{name} ({node.title})" if node.title else name
+        style = "_" if node.kind == "proof" else "*"
+        return f"{style}{head}.{style} {body}\n"
 
     if isinstance(node, Figure):
         from .serializer import figure_output_path

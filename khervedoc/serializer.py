@@ -5,13 +5,15 @@ Pure functions; one serializer per node type. No I/O.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 from .model import (
     Abstract, Affiliation, Author, Block,
     Correspondence, ChapterEntry, Citation, Comment, CrossRef,
     Document, Figure, Footnote, Frame, Highlight, HIGHLIGHT_COLORS, Inline,
     InlineRaw, Keywords, Link, List as ListNode, ListItem, MathBlock,
-    MathInline, Paragraph, Project, RawLatex, Section, Table, Text, Title,
+    MathInline, Paragraph, Project, RawLatex, Section, Table, Text, Theorem,
+    THEOREM_KINDS, Title,
 )
 
 
@@ -210,8 +212,69 @@ _ALIGN_ENVS = {"left": "flushleft", "center": "center", "right": "flushright"}
 from .model import class_supports_chapter as _class_supports_chapter
 
 
+@dataclass
+class _TheoremEnv:
+    """Consecutive Theorem paragraphs gathered into one environment."""
+    kind: str
+    title: str
+    paragraphs: list
+
+
+def group_theorems(blocks: list) -> list:
+    """Replace each run of Theorem paragraphs (a start=True paragraph and
+    the start=False ones after it, same kind) by one _TheoremEnv."""
+    out: list = []
+    for b in blocks:
+        if isinstance(b, Theorem):
+            prev = out[-1] if out else None
+            if (not b.start and isinstance(prev, _TheoremEnv)
+                    and prev.kind == b.kind):
+                prev.paragraphs.append(b.children)
+            else:
+                out.append(_TheoremEnv(b.kind, b.title, [b.children]))
+        else:
+            out.append(b)
+    return out
+
+
+def _serialize_theorem(env: _TheoremEnv) -> str:
+    opt = f"[{env.title}]" if env.title else ""
+    body = "\n\n".join(serialize_inlines(p) for p in env.paragraphs)
+    return f"\\begin{{{env.kind}}}{opt}\n{body}\n\\end{{{env.kind}}}\n"
+
+
+def _theorem_preamble(doc: Document) -> str:
+    """\\newtheorem for each kind used, only where neither the class nor
+    the user's preamble defines it already (llncs, svjour3... do)."""
+    kinds = [k for k in THEOREM_KINDS
+             if any(isinstance(b, Theorem) and b.kind == k
+                    for b in doc.children)]
+    if not kinds:
+        return ""
+    lines = [r"\makeatletter"]
+    numbered = [k for k in kinds if k != "proof"]
+    if numbered:
+        lines.append(r"\@ifundefined{theorem}{\newtheorem{theorem}"
+                     r"{Theorem}[section]}{}")
+    for k in numbered:
+        if k != "theorem":
+            lines.append(rf"\@ifundefined{{{k}}}{{\newtheorem{{{k}}}"
+                         rf"[theorem]{{{THEOREM_KINDS[k]}}}}}{{}}")
+    if "proof" in kinds:
+        lines.append(r"\@ifundefined{proof}{\newenvironment{proof}[1]"
+                     r"[Proof]{\par\noindent\textit{#1.}\ }"
+                     r"{\hfill$\square$\par\medskip}}{}")
+    lines.append(r"\makeatother")
+    return "\n".join(lines)
+
+
 def serialize_block(node: Block, *, has_chapters: bool = False,
                     float_h: bool = True) -> str:
+    if isinstance(node, _TheoremEnv):
+        return _serialize_theorem(node)
+    if isinstance(node, Theorem):
+        return _serialize_theorem(
+            _TheoremEnv(node.kind, node.title, [node.children]))
     if isinstance(node, Paragraph):
         body = serialize_inlines(node.children)
         # LaTeX defaults to fully-justified text. If the editor shows the
@@ -742,6 +805,9 @@ def serialize_document(doc: Document) -> str:
     # \providecommand) refuses to redefine an existing macro.
     packages += "\n" + _KSTROKE_PROVIDE
     packages += "\n" + _class_fallbacks(cls_lower)
+    thm = _theorem_preamble(doc)
+    if thm:
+        packages += "\n" + thm
 
     # Review features: highlight colours + todonotes
     hl_colors, has_comments = _collect_review_usage(doc)
@@ -797,6 +863,7 @@ def serialize_document(doc: Document) -> str:
             if isinstance(block, Keywords):
                 keywords_blocks.append(block); continue
             body_blocks.append(block)
+        body_blocks = group_theorems(body_blocks)
 
         front_parts: list[str] = []
         if title_text:
@@ -893,7 +960,7 @@ def serialize_document(doc: Document) -> str:
                 parts.append(f"\\keywords{{{', '.join(kw_terms)}}}\n")
         parts.append("\\maketitle\n")
         emitted_maketitle = True
-    children = doc.children
+    children = group_theorems(doc.children)
     if cls_lower in _ABSTRACT_BEFORE_TITLE:
         front = [b for b in children if isinstance(b, Abstract)]
         rest = [b for b in children if not isinstance(b, Abstract)]
@@ -1027,7 +1094,7 @@ def serialize_chapter_body(doc: Document) -> str:
     has_chapters = _class_supports_chapter(m.documentclass or "")
     is_journal = (m.documentclass or "").lower() not in _STANDARD_SERIALIZER_CLASSES
     parts: list[str] = []
-    children = doc.children
+    children = group_theorems(doc.children)
     n = len(children)
     i = 0
     while i < n:

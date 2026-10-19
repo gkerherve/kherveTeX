@@ -46,6 +46,20 @@ TIPS: dict[str, tuple[str, str, str]] = {
         "Inserts what is on the clipboard. A copied picture, screenshot or "
         "Word / PowerPoint figure becomes a figure in the document.",
         "Pictures become a figure float with \\includegraphics."),
+    "act_paste_special": ("Paste Special",
+        "Chooses how to paste: keep the source formatting, keep the text "
+        "only, paste as a picture, or read copied LaTeX as document "
+        "content (sections, equations, theorems become editable blocks).",
+        ""),
+    "act_theorem": ("Theorem",
+        "Starts a theorem-like block: Theorem, Lemma, Proposition, "
+        "Corollary, Definition, Example, Remark or Proof (use the arrow). "
+        "It is numbered by section, like the PDF; Enter adds a paragraph "
+        "to it, Enter on an empty line ends it.",
+        "Becomes \\begin{theorem}[name] … \\end{theorem} (amsthm style)."),
+    "act_thm_title": ("Theorem name",
+        "The optional name shown in brackets, e.g. Theorem 2.1 "
+        "(Heine–Borel).", "Becomes the [name] after \\begin{theorem}."),
     # ----- font -----
     "act_bold": ("Bold",
         "Makes the selected text bold, or turns bold on for what you "

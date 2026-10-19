@@ -1711,3 +1711,12 @@ def pdf_detach() -> QIcon:
     c.line(13, 11, 19, 5, _blue(), 1.5)
     c.poly([(15.5, 5), (19, 5), (19, 8.5)], color=_blue(), closed=False)
     return c.done()
+
+
+def theorem() -> QIcon:
+    c = _W(); c.rect(3, 3.5, 18, 17, fill=_paper(), r=1.2)
+    c.text((5, 4.5, 15, 8), "Thm", size=6.5, bold=True, color=_blue(),
+           align=Qt.AlignLeft | Qt.AlignVCenter)
+    for y in (14, 17):
+        c.line(5.5, y, 18.5, y, w=1)
+    return c.done()

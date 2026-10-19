@@ -16,6 +16,7 @@ from pathlib import Path
 
 from .model import (
     Abstract, Author, Citation, CrossRef, DEFAULT_PACKAGES, Document, DocMeta,
+    Theorem,
     Figure, Footnote, Frame, InlineRaw, Keywords, Link, List as ListNode,
     ListItem, MathBlock, MathInline, Paragraph, RawLatex, Section, Table,
     Text, Title,
@@ -364,6 +365,8 @@ _BLOCK_DISPATCH = [
     # Sections are handled by _scan_section (balanced braces) — see _parse_blocks.
     # ("section",         _SECTION_RE),  # removed
     ("maketitle",       re.compile(r"\\maketitle\b")),
+    # Theorem-like environments (amsthm): editable Theorem paragraphs.
+    ("theorem_env",     re.compile(r"\\begin\{(theorem|lemma|proposition|corollary|definition|example|remark|proof)\}(?:\[([^\]]*)\])?(.*?)\\end\{\1\}", re.DOTALL)),
     # Last-resort: any other \begin{...}...\end{...} we don't understand
     # gets wrapped in a RawLatex block instead of leaking its body as
     # plain text. Must remain LAST so the specific handlers above win.
@@ -804,6 +807,11 @@ def _dispatch(kind: str, m) -> object:
     if kind == "lstlisting":
         # Preserve the full matched env (including any [caption=...]).
         return RawLatex(text=m.group(0))
+    if kind == "theorem_env":
+        paras = _split_paragraphs(m.group(3)) or [""]
+        return [Theorem(kind=m.group(1), title=(m.group(2) or "").strip(),
+                        children=_parse_inlines(p), start=(i == 0))
+                for i, p in enumerate(paras)]
     if kind == "abstract":
         # Split the abstract body into paragraphs (blank-line separated)
         # and emit one Abstract block per paragraph. Consecutive Abstract

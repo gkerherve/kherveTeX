@@ -20,10 +20,11 @@ from PySide6.QtGui import (
     QAction, QBrush, QColor, QTextFormat, QFont, QFontDatabase, QFontMetricsF, QImage, QKeySequence, QTextBlockFormat,
     QTextCharFormat, QTextCursor, QTextFrameFormat, QTextImageFormat,
     QTextLength, QTextListFormat, QTextOption, QTextTable, QTextTableFormat,
+    QPainter, QTextDocument,
 )
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
+    QApplication, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
     QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox,
     QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget,
 )
@@ -60,6 +61,7 @@ TEMPLATE_CHOICES = [
 
 from .model import (
     Abstract, Affiliation, Author, Citation, Correspondence, Comment, CrossRef, Document, DocMeta, Figure,
+    Theorem, THEOREM_KINDS,
     Footnote, Frame, Highlight, HIGHLIGHT_COLORS, InlineRaw, Keywords, Link,
     List as ListNode, ListItem, MathBlock, MathInline, Paragraph, RawLatex,
     Section, Table, Text, Title,
@@ -349,6 +351,7 @@ _STATE_CHAPTER = 11     # \chapter — only valid in report/book/memoir classes
 _STATE_FRAME = 12       # \begin{frame} — only valid in beamer class
 _STATE_AFFILIATION = 13  # Institution line under the authors
 _STATE_CORRESPONDENCE = 14  # Corresponding-author note (\thanks)
+_STATE_THEOREM = 15     # Paragraph of a theorem / lemma / proof...
 # Unnumbered variants: \section*{}, \subsection*{}, etc.
 # State = 20 + level for headings, 31 for chapter*.
 _STATE_HEADING_STAR_BASE = 20   # 21..25 = heading 1*..5*
@@ -362,7 +365,9 @@ _STATE_RAW = 102
 # Re-export from model so existing imports (tests, etc.) keep working.
 from .model import CHAPTER_CLASSES, class_supports_chapter  # noqa: F401
 from .references import ReferenceResolver
-from .paged_edit import EQUATION_NUMBER_PROPERTY, HEADING_NUMBER_PROPERTY
+from .paged_edit import (
+    EQUATION_NUMBER_PROPERTY, HEADING_NUMBER_PROPERTY, THEOREM_LABEL_PROPERTY,
+)
 
 
 # ---- char-format custom property ids ----
@@ -919,6 +924,9 @@ _P_FIGURE_WIDTH = QTextCharFormat.UserProperty + 32
 _P_FIGURE_SOURCE = QTextCharFormat.UserProperty + 38
 _P_IS_FIGURE = QTextCharFormat.UserProperty + 33
 _P_FIGURE_ALIGN = QTextCharFormat.UserProperty + 39
+_P_THM_KIND = QTextCharFormat.UserProperty + 45    # on a theorem block
+_P_THM_TITLE = QTextCharFormat.UserProperty + 46
+_P_THM_START = QTextCharFormat.UserProperty + 47   # first paragraph?
 
 
 def _make_figure_table_format(dark: bool = False) -> QTextTableFormat:
@@ -1596,6 +1604,13 @@ class DocumentEditor(QWidget):
             for inline in block.children:
                 self._insert_inline(
                     cursor, inline, base_format=self._title_block_fmt(-8 if corr else -7))
+            return
+        if isinstance(block, Theorem):
+            self._make_theorem_block(cursor, block.kind, block.title,
+                                     block.start)
+            body_fmt = self._body_char_format()
+            for inline in block.children:
+                self._insert_inline(cursor, inline, base_format=body_fmt)
             return
         if isinstance(block, Abstract):
             cursor.setBlockFormat(_abstract_block_format())
@@ -2329,6 +2344,12 @@ class DocumentEditor(QWidget):
                 children=self._strip_implicit_marks(children, ["italic"]))
         if state == _STATE_CORRESPONDENCE:
             return Correspondence(children=children)
+        if state == _STATE_THEOREM:
+            bf = block.blockFormat()
+            return Theorem(kind=bf.property(_P_THM_KIND) or "theorem",
+                           title=bf.property(_P_THM_TITLE) or "",
+                           children=children,
+                           start=bool(bf.property(_P_THM_START)))
         if state == _STATE_ABSTRACT:
             return Abstract(children=children)
         if state == _STATE_KEYWORDS:
@@ -2646,7 +2667,153 @@ class DocumentEditor(QWidget):
         if (self.current_equation_block() is not None
                 or self._has_math_at(self._edit.textCursor())):
             return "equation"
+        if self.current_theorem_block() is not None:
+            return "theorem"
         return None
+
+    def _make_theorem_block(self, cursor: QTextCursor, kind: str,
+                            title: str = "", start: bool = True) -> None:
+        bf = QTextBlockFormat()
+        bf.setAlignment(Qt.AlignJustify)
+        bf.setTopMargin(6 if start else 0)
+        bf.setBottomMargin(6)
+        bf.setProperty(_P_THM_KIND, kind)
+        bf.setProperty(_P_THM_TITLE, title)
+        bf.setProperty(_P_THM_START, bool(start))
+        cursor.setBlockFormat(bf)
+        cursor.block().setUserState(_STATE_THEOREM)
+        cursor.setCharFormat(self._body_char_format())
+
+    def current_theorem_block(self):
+        block = self._edit.textCursor().block()
+        return block if block.userState() == _STATE_THEOREM else None
+
+    def insert_theorem(self, kind: str, title: str = "") -> None:
+        """Start a theorem-like environment at the caret: the current
+        line if it is empty, else a new line after it."""
+        cursor = self._edit.textCursor()
+        cursor.beginEditBlock()
+        if cursor.block().text().strip():
+            cursor.movePosition(QTextCursor.EndOfBlock)
+            cursor.insertBlock()
+        self._make_theorem_block(cursor, kind, title, True)
+        cursor.endEditBlock()
+        self._edit.setTextCursor(cursor)
+        self._on_text_changed()
+
+    def set_theorem_kind(self, kind: str) -> None:
+        """Change the environment of the theorem under the caret (all its
+        paragraphs), e.g. a lemma into a proposition."""
+        block = self.current_theorem_block()
+        if block is None:
+            return
+        while (block.previous().isValid()
+               and not block.blockFormat().property(_P_THM_START)
+               and block.previous().userState() == _STATE_THEOREM):
+            block = block.previous()
+        old = block.blockFormat().property(_P_THM_KIND)
+        c = QTextCursor(block)
+        c.beginEditBlock()
+        first = True
+        while block.isValid() and block.userState() == _STATE_THEOREM and (
+                first or (not block.blockFormat().property(_P_THM_START)
+                          and block.blockFormat().property(_P_THM_KIND) == old)):
+            bc = QTextCursor(block)
+            bf = block.blockFormat()
+            bf.setProperty(_P_THM_KIND, kind)
+            bc.setBlockFormat(bf)
+            first = False
+            block = block.next()
+        c.endEditBlock()
+        self._on_text_changed()
+
+    def set_theorem_title(self, title: str) -> None:
+        block = self.current_theorem_block()
+        while (block is not None and block.previous().isValid()
+               and not block.blockFormat().property(_P_THM_START)
+               and block.previous().userState() == _STATE_THEOREM):
+            block = block.previous()
+        if block is None:
+            return
+        c = QTextCursor(block)
+        bf = block.blockFormat()
+        bf.setProperty(_P_THM_TITLE, title)
+        c.setBlockFormat(bf)
+        self._on_text_changed()
+
+    def current_theorem_title(self) -> str:
+        block = self.current_theorem_block()
+        while (block is not None and block.previous().isValid()
+               and not block.blockFormat().property(_P_THM_START)
+               and block.previous().userState() == _STATE_THEOREM):
+            block = block.previous()
+        return (block.blockFormat().property(_P_THM_TITLE) or "") \
+            if block is not None else ""
+
+    def current_theorem_kind(self) -> str:
+        block = self.current_theorem_block()
+        return (block.blockFormat().property(_P_THM_KIND) or "") \
+            if block is not None else ""
+
+    # ----- Paste Special -----
+
+    def paste_options(self) -> list[tuple[str, str]]:
+        """(key, label) of the ways the clipboard can be pasted now."""
+        md = QApplication.clipboard().mimeData()
+        opts = []
+        if md is None:
+            return opts
+        if md.hasHtml() or md.hasText():
+            opts.append(("keep", "Keep Source Formatting"))
+            opts.append(("text", "Keep Text Only"))
+        if md.hasImage() or md.hasHtml() or md.hasText():
+            opts.append(("picture", "Picture"))
+        if md.hasText():
+            opts.append(("latex", "LaTeX (as document content)"))
+        return opts
+
+    def paste_special(self, how: str) -> None:
+        md = QApplication.clipboard().mimeData()
+        if md is None:
+            return
+        if how == "keep":
+            self._edit.paste()
+        elif how == "text":
+            c = self._edit.textCursor()
+            c.insertText(md.text(), self._body_char_format())
+        elif how == "latex":
+            from .importers import import_body_fragment
+            blocks = import_body_fragment(md.text())
+            if blocks:
+                self.insert_blocks(blocks)
+        elif how == "picture":
+            img = md.imageData() if md.hasImage() else None
+            if not isinstance(img, QImage) or img.isNull():
+                img = self._render_clipboard_text(md)
+            path = self._edit._save_qimage(img) if img is not None else None
+            if path is not None:
+                self._on_image_received(str(path))
+
+    def _render_clipboard_text(self, md) -> QImage | None:
+        """Copied text or HTML drawn as an image, like Word's Paste as
+        Picture of formatted text."""
+        doc = QTextDocument()
+        if md.hasHtml():
+            doc.setHtml(md.html())
+        else:
+            doc.setPlainText(md.text())
+        doc.setTextWidth(min(900.0, max(200.0, doc.idealWidth())))
+        size = doc.size().toSize()
+        if size.isEmpty():
+            return None
+        scale = 2
+        img = QImage(size * scale, QImage.Format_ARGB32)
+        img.fill(Qt.white)
+        p = QPainter(img)
+        p.scale(scale, scale)
+        doc.drawContents(p)
+        p.end()
+        return img
 
     def _remove_frame(self, frame) -> None:
         c = QTextCursor(self._edit.document())
@@ -2953,6 +3120,7 @@ class DocumentEditor(QWidget):
             has_chapters = self._has_chapter_blocks() or offset[0] > 0
             counters = list(offset)
             eq = 0
+            thm = 0
             block = doc.firstBlock()
             while block.isValid():
                 if QTextCursor(block).currentTable() is not None:
@@ -3015,6 +3183,39 @@ class DocumentEditor(QWidget):
                                        + fm.height() * 0.8)
                 elif old_number:
                     bfmt.clearProperty(_P_HEADING_NUMBER)
+                    bfmt.setTextIndent(0)
+                if level is not None and level <= (0 if has_chapters else 1):
+                    thm = 0         # \newtheorem{theorem}{...}[section]
+                if state == _STATE_THEOREM:
+                    label = ""
+                    if bfmt.property(_P_THM_START):
+                        kind = bfmt.property(_P_THM_KIND) or "theorem"
+                        name = THEOREM_KINDS.get(kind, kind.title())
+                        if kind != "proof":
+                            thm += 1
+                            start = 0 if has_chapters else 1
+                            sec = ".".join(str(c) for c in counters[start:2])
+                            name += f" {sec}.{thm}" if sec.strip("0.") \
+                                else f" {thm}"
+                        title = bfmt.property(_P_THM_TITLE) or ""
+                        label = f"{name} ({title})." if title else f"{name}."
+                    if label:
+                        bfmt.setProperty(THEOREM_LABEL_PROPERTY, label)
+                        # Measured in the font the label is painted in.
+                        it = block.begin()
+                        f = QFont(it.fragment().charFormat().font()
+                                  if not it.atEnd()
+                                  else self._body_char_format().font())
+                        f.setBold(not label.startswith("Proof"))
+                        f.setItalic(label.startswith("Proof"))
+                        fm = QFontMetricsF(f)
+                        bfmt.setTextIndent(fm.horizontalAdvance(label)
+                                           + fm.height() * 0.4)
+                    else:
+                        bfmt.clearProperty(THEOREM_LABEL_PROPERTY)
+                        bfmt.setTextIndent(0)
+                elif bfmt.hasProperty(THEOREM_LABEL_PROPERTY):
+                    bfmt.clearProperty(THEOREM_LABEL_PROPERTY)
                     bfmt.setTextIndent(0)
                 if state in (_STATE_PARAGRAPH, -1):
                     bfmt.setLineHeight(body_line_px, 2)   # FixedHeight
@@ -3630,6 +3831,8 @@ class DocumentEditor(QWidget):
             return False
         cursor = self._edit.textCursor()
         block = cursor.block()
+        if block.userState() == _STATE_THEOREM:
+            return self._theorem_key(event, key, cursor, block)
         if _style_code(block.userState()) is None:
             return False
         self._in_key_edit = True
@@ -3637,6 +3840,26 @@ class DocumentEditor(QWidget):
             return self._run_block_key(event, key, cursor, block)
         finally:
             self._in_key_edit = False
+
+    def _theorem_key(self, event, key, cursor, block) -> bool:
+        """Enter inside a theorem starts its next paragraph; Enter on an
+        empty one leaves the theorem, like ending a list in Word."""
+        if key not in (Qt.Key_Return, Qt.Key_Enter) \
+                or event.modifiers() & Qt.ShiftModifier:
+            return False
+        bf = block.blockFormat()
+        cursor.beginEditBlock()
+        if not block.text().strip() and not bf.property(_P_THM_START):
+            cursor.setBlockFormat(QTextBlockFormat())
+            self._restyle_block(cursor.block(), _STATE_PARAGRAPH)
+        else:
+            cursor.insertBlock()
+            self._make_theorem_block(cursor, bf.property(_P_THM_KIND),
+                                     bf.property(_P_THM_TITLE) or "", False)
+        cursor.endEditBlock()
+        self._edit.setTextCursor(cursor)
+        self._on_text_changed()
+        return True
 
     def _run_block_key(self, event, key, cursor, block) -> bool:
         if key in (Qt.Key_Return, Qt.Key_Enter):

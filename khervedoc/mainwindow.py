@@ -1231,6 +1231,7 @@ class MainWindow(QMainWindow):
         self._build_actions()
         self._build_menus()
         self._build_toolbar()
+        self._extend_menus()
         tooltips.apply(self)
 
         self._editor.documentChanged.connect(self._on_doc_changed)
@@ -1728,6 +1729,7 @@ class MainWindow(QMainWindow):
         m_edit.addSeparator()
         m_edit.addAction(self.act_cut); m_edit.addAction(self.act_copy)
         m_edit.addAction(self.act_paste); m_edit.addAction(self.act_select_all)
+        self._m_edit = m_edit
         m_edit.addSeparator()
         m_edit.addAction(self.act_find)
         m_edit.addAction(self.act_replace)
@@ -1750,6 +1752,7 @@ class MainWindow(QMainWindow):
             m_heading.addAction(a)
 
         m_insert = mb.addMenu("&Insert")
+        self._m_insert = m_insert
         m_insert.addAction(self.act_math_inline); m_insert.addAction(self.act_math_block)
         m_insert.addAction(self.act_symbol); m_insert.addAction(self.act_equation_builder)
         m_insert.addAction(self.act_chemistry)
@@ -2291,6 +2294,36 @@ class MainWindow(QMainWindow):
                                    e.set_current_equation_numbered, True)
         self.act_eq_delete = act(icons.equation_delete(), "Delete Equation",
                                  e.delete_current_equation)
+        # Paste Special (Word: Ctrl+Alt+V) and its Paste ▾ drop-down.
+        self.act_paste_special = act(icons.paste(), "Paste Special…",
+                                     self._paste_special_dialog)
+        self.act_paste_special.setShortcut(QKeySequence("Ctrl+Alt+V"))
+        self.addAction(self.act_paste_special)
+        paste_menu = QMenu(self)
+        paste_menu.aboutToShow.connect(
+            lambda m=paste_menu: self._fill_paste_menu(m))
+        self.act_paste.setProperty("ribbon_menu", paste_menu)
+        self._paste_menu = paste_menu
+
+        # Theorem-like environments: Insert > Theorem ▾.
+        from .model import THEOREM_KINDS
+        thm_menu = QMenu(self)
+        for kind, name in THEOREM_KINDS.items():
+            thm_menu.addAction(name, lambda k=kind: self._insert_theorem(k))
+        self.act_theorem = act(icons.theorem(), "Theorem",
+                               lambda: self._insert_theorem("theorem"))
+        self.act_theorem.setProperty("ribbon_menu", thm_menu)
+        self._theorem_menu = thm_menu
+        self._thm_kind_group = QActionGroup(self)
+        self._thm_kind_actions = {}
+        for kind, name in THEOREM_KINDS.items():
+            a = act(icons.theorem(), name,
+                    lambda _=False, k=kind: e.set_theorem_kind(k), True)
+            self._thm_kind_group.addAction(a)
+            self._thm_kind_actions[kind] = a
+        self.act_thm_title = act(icons.picture_edit(), "Name…",
+                                 self._edit_theorem_title)
+
         # Ribbon View tab: the Visual / Code / Console pages and where the
         # PDF lives, in place of the tab bar above the page.
         self._page_group = QActionGroup(self)
@@ -2323,7 +2356,51 @@ class MainWindow(QMainWindow):
                        self.act_fig_delete],
             "equation": [self.act_eq_edit, self.act_eq_numbered,
                          self.act_eq_delete],
+            "theorem": [*self._thm_kind_actions.values(),
+                        self.act_thm_title],
         }
+
+    def _extend_menus(self) -> None:
+        """Menu-bar entries for actions made with the toolbar."""
+        edit, insert = self._m_edit, self._m_insert
+        if edit is not None:
+            after = next((a for a in edit.actions()
+                          if a is self.act_select_all), None)
+            edit.insertAction(after, self.act_paste_special)
+        if insert is not None:
+            sub = insert.addMenu(icons.theorem(), "&Theorem-like")
+            for a in self._theorem_menu.actions():
+                sub.addAction(a)
+
+    def _fill_paste_menu(self, menu: QMenu) -> None:
+        menu.clear()
+        for key, label in self._editor.paste_options():
+            menu.addAction(label,
+                           lambda k=key: self._editor.paste_special(k))
+        menu.addSeparator()
+        menu.addAction(self.act_paste_special)
+
+    def _paste_special_dialog(self) -> None:
+        opts = self._editor.paste_options()
+        if not opts:
+            self._status.showMessage("The clipboard is empty.", 3000)
+            return
+        labels = [label for _k, label in opts]
+        choice, ok = QInputDialog.getItem(
+            self, "Paste Special", "Paste the clipboard as:", labels, 0,
+            False)
+        if ok:
+            self._editor.paste_special(opts[labels.index(choice)][0])
+
+    def _insert_theorem(self, kind: str) -> None:
+        self._editor.insert_theorem(kind)
+
+    def _edit_theorem_title(self) -> None:
+        title, ok = QInputDialog.getText(
+            self, "Theorem name", "Name shown in brackets (optional):",
+            text=self._editor.current_theorem_title())
+        if ok:
+            self._editor.set_theorem_title(title.strip())
 
     def _sync_page_actions(self, _idx: int = 0) -> None:
         w = self._tabs.currentWidget()
@@ -2367,6 +2444,10 @@ class MainWindow(QMainWindow):
                             (self.act_fig_center, "center"),
                             (self.act_fig_right, "right")):
                 a.setChecked(align == name)
+        elif ctx == "theorem":
+            kind = e.current_theorem_kind()
+            for k, a in self._thm_kind_actions.items():
+                a.setChecked(k == kind)
         elif ctx == "equation":
             self.act_eq_numbered.blockSignals(True)
             self.act_eq_numbered.setChecked(e.current_equation_numbered())
@@ -2390,7 +2471,8 @@ class MainWindow(QMainWindow):
         b = self._boxed
         home = rb.add_tab("Home")
         home.add_group("Clipboard", large=[self.act_paste],
-                       rows=[[self.act_cut], [self.act_copy]], text=True)
+                       rows=[[self.act_cut], [self.act_copy],
+                             [self.act_paste_special]], text=True)
         home.add_group("Font", rows=[
             [b(self._fontsize_combo), self.act_bold, self.act_italic,
              self.act_underline, self.act_strike],
@@ -2415,6 +2497,7 @@ class MainWindow(QMainWindow):
                       rows=[[self.act_math_inline],
                             [self.act_equation_builder], [self.act_symbol]],
                       text=True)
+        ins.add_group("Theorems", large=[self.act_theorem])
         ins.add_group("Chemistry", large=[self.act_chemistry],
                       rows=[[self.act_chemfig]], text=True)
         lay = rb.add_tab("Layout")
@@ -2460,6 +2543,11 @@ class MainWindow(QMainWindow):
                                      self.act_fig_w75, self.act_fig_w100])
         pic.add_group("Picture", large=[self.act_fig_edit,
                                         self.act_fig_delete])
+        th = rb.add_contextual_tab("Theorem", "theorem")
+        kinds = list(self._thm_kind_actions.values())
+        th.add_group("Type", rows=[kinds[:3], kinds[3:6], kinds[6:]],
+                     text=True)
+        th.add_group("Name", large=[self.act_thm_title])
         eq = rb.add_contextual_tab("Equation", "equation")
         eq.add_group("Equation", large=[self.act_eq_edit,
                                         self.act_eq_numbered,
@@ -2515,7 +2603,8 @@ class MainWindow(QMainWindow):
         self._context_bar = self._new_bar("Object tools")
         for a in self._context_actions["table"] + [None] \
                 + self._context_actions["figure"] + [None] \
-                + self._context_actions["equation"]:
+                + self._context_actions["equation"] + [None] \
+                + self._context_actions["theorem"]:
             if a is None:
                 self._context_bar.addSeparator()
             else:

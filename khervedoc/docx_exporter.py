@@ -210,6 +210,18 @@ def export_docx(doc: M.Document, path: Path,
             para = out.add_paragraph(style=style)
             _add_inlines(para, block.children)
 
+        elif isinstance(block, M.Theorem):
+            para = out.add_paragraph()
+            if block.start:
+                name = M.THEOREM_KINDS.get(block.kind, block.kind.title())
+                head = f"{name} ({block.title}). " if block.title \
+                    else f"{name}. "
+                run = para.add_run(head)
+                proof = block.kind == "proof"
+                run.bold = not proof
+                run.italic = proof
+            _add_inlines(para, block.children)
+
         elif isinstance(block, M.Paragraph):
             para = out.add_paragraph()
             _add_inlines(para, block.children)
@@ -230,8 +242,9 @@ def export_docx(doc: M.Document, path: Path,
             run.font.name = "Cambria Math"
 
         elif isinstance(block, M.Figure):
+            align = _ALIGN_MAP.get(block.align, WD_ALIGN_PARAGRAPH.CENTER)
             para = out.add_paragraph()
-            para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            para.alignment = align
             fig_path = Path(block.path)
             if fig_path.exists():
                 run = para.add_run()
@@ -240,7 +253,7 @@ def export_docx(doc: M.Document, path: Path,
                 para.add_run(f"[Image: {block.path}]")
             if block.caption:
                 cap = out.add_paragraph(block.caption)
-                cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                cap.alignment = align
                 for run in cap.runs:
                     run.italic = True
 

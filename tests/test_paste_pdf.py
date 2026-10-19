@@ -60,3 +60,19 @@ def test_enter_after_pasted_picture_makes_visible_lines(tmp_path):
     y0 = ed._edit.cursorRect().y()
     QTest.keyClick(ed._edit, Qt.Key_Return)
     assert ed._edit.cursorRect().y() > y0
+
+
+def test_paste_special_latex_text_and_picture(tmp_path):
+    from khervedoc.editor import DocumentEditor
+    from khervedoc.model import Document, Figure, Section
+    app = QApplication.instance() or QApplication([])
+    ed = DocumentEditor()
+    ed.set_document_dir(tmp_path)
+    ed.set_document(Document())
+    app.clipboard().setText(r"\section{Results} Some $x^2$ text.")
+    keys = [k for k, _ in ed.paste_options()]
+    assert {"keep", "text", "picture", "latex"} <= set(keys)
+    ed.paste_special("latex")
+    ed.paste_special("picture")
+    kinds = [type(b) for b in ed.get_document().children]
+    assert Section in kinds and Figure in kinds
