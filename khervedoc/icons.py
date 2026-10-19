@@ -1812,3 +1812,46 @@ def repeat_header() -> QIcon:
     _mini_table(c, rows=2, cols=3, x=2.5, y=2, w=19, h=8)
     _mini_table(c, rows=2, cols=3, x=2.5, y=13.5, w=19, h=8)
     return c.done()
+
+
+# ----- help tab -----
+
+def help_icon() -> QIcon:
+    c = _W(); c.pen(_blue(), 1.6).brush(_paper())
+    c.p.drawEllipse(QPointF(12, 12), 9, 9)
+    c.text((3, 3, 18, 18), "?", size=13, bold=True, color=_blue())
+    return c.done()
+
+
+def keyboard_icon() -> QIcon:
+    c = _W(); c.rect(2, 6, 20, 12, fill=_paper(), r=2)
+    for y in (9.5, 12.5):
+        for x in range(5, 20, 3):
+            c.fillrect(x - 0.9, y - 0.9, 1.8, 1.8, _ink())
+    c.line(8, 15.5, 16, 15.5, _blue(), 1.6)
+    return c.done()
+
+
+def welcome_icon() -> QIcon:
+    c = _W()
+    c.poly([(3, 11.5), (12, 3.5), (21, 11.5)], closed=False, lw=1.6)
+    c.poly([(5.5, 10), (5.5, 20.5), (18.5, 20.5), (18.5, 10)],
+           fill=_paper(), closed=False)
+    c.rect(10, 14, 4, 6.5, color=_blue(), fill=_tint(), r=0.5, lw=1.2)
+    return c.done()
+
+
+def update_icon() -> QIcon:
+    c = _W(); c.pen(_blue(), 1.8)
+    c.p.drawArc(QRectF(4, 4, 16, 16), 100 * 16, 300 * 16)
+    c.line(12, 7.5, 12, 15.5, _ink(), 1.6)
+    c.poly([(9, 12.5), (12, 15.5), (15, 12.5)], closed=False, lw=1.6)
+    return c.done()
+
+
+def about_icon() -> QIcon:
+    c = _W(); c.pen(_ink(), 1.5).brush(_paper())
+    c.p.drawEllipse(QPointF(12, 12), 9, 9)
+    c.dot(12, 7.5, 1.3, _blue())
+    c.line(12, 11, 12, 17, _blue(), 2)
+    return c.done()

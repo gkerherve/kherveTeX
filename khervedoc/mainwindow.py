@@ -1933,8 +1933,9 @@ class MainWindow(QMainWindow):
         self._refresh_window_menu()
 
         m_help = mb.addMenu("&Help")
-        m_help.addAction(QAction("&Welcome page\u2026", self,
-                                 triggered=self.show_welcome))
+        self.act_welcome = QAction("&Welcome page\u2026", self,
+                                   triggered=self.show_welcome)
+        m_help.addAction(self.act_welcome)
         m_help.addAction(self.act_help_guide)
         m_help.addAction(self.act_shortcuts)
         m_help.addSeparator()
@@ -2366,6 +2367,15 @@ class MainWindow(QMainWindow):
         self.act_thm_title = act(icons.picture_edit(), "Name…",
                                  self._edit_theorem_title)
 
+        # Help tab and Word's "?" button.
+        self.act_help_guide.setIcon(icons.help_icon())
+        self.act_shortcuts.setIcon(icons.keyboard_icon())
+        self.act_welcome.setIcon(icons.welcome_icon())
+        self.act_about.setIcon(icons.about_icon())
+        self.act_check_updates = act(
+            icons.update_icon(), "Check for Updates",
+            lambda: MainWindow.updater().check_now())
+
         # Ribbon View tab: the Visual / Code / Console pages and where the
         # PDF lives, in place of the tab bar above the page.
         self._page_group = QActionGroup(self)
@@ -2570,7 +2580,8 @@ class MainWindow(QMainWindow):
                        self.act_undo, self.act_redo], Qt.TopLeftCorner)
         rb.set_corner([self.act_compile_range, self.act_skip_images,
                        self.act_auto_compile, self.act_compile_now,
-                       None, self.act_export_pdf, self.act_print],
+                       None, self.act_export_pdf, self.act_print,
+                       None, self.act_help_guide],
                       Qt.TopRightCorner)
         b = self._boxed
         home = rb.add_tab("Home")
@@ -2630,6 +2641,11 @@ class MainWindow(QMainWindow):
         view.add_group("PDF", large=[self.act_pdf_panel,
                                      self.act_pdf_detach])
         view.add_group("Zoom", large=[self.act_fit_page_width])
+        hlp = rb.add_tab("Help")
+        hlp.add_group("Help", large=[self.act_help_guide, self.act_shortcuts,
+                                     self.act_welcome])
+        hlp.add_group("KherveTeX", large=[self.act_check_updates,
+                                          self.act_about])
         # Word's contextual tabs: shown only while the caret is in one.
         td = rb.add_contextual_tab("Table Design", "table")
         td.add_group("Table Style Options", large=[self.act_tbl_header,

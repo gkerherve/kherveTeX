@@ -222,6 +222,20 @@ TIPS: dict[str, tuple[str, str, str]] = {
     "act_hrule": ("Horizontal line",
         "Inserts a thin line across the page to separate sections.",
         "Becomes \\hrulefill."),
+    # ----- help tab -----
+    "act_help_guide": ("Help",
+        "Opens the KherveTeX user guide: how to write, insert equations, "
+        "figures, tables and references, and how the PDF is made.", ""),
+    "act_shortcuts": ("Keyboard Shortcuts",
+        "Lists every keyboard shortcut, most of them the same as Word's.",
+        ""),
+    "act_welcome": ("Welcome page",
+        "Reopens the start page: new document, recent files and examples.",
+        ""),
+    "act_check_updates": ("Check for Updates",
+        "Looks for a newer KherveTeX and offers to install it.", ""),
+    "act_about": ("About KherveTeX",
+        "Version, licence and credits.", ""),
     # ----- view tab -----
     "act_page_visual": ("Visual",
         "The page as it will print, where you write — like Word's Print "
