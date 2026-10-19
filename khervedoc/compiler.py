@@ -267,7 +267,7 @@ def download_tectonic_bundle(on_output=None) -> tuple[bool, str]:
 
     # Packages every kherveDOC document may need.
     _COMMON_PACKAGES = r"""\usepackage{amsmath,amssymb,amsfonts,amsthm}
-\usepackage{graphicx,xcolor,float,multicol}
+\usepackage{graphicx,xcolor,colortbl,float,multicol}
 \usepackage[a4paper]{geometry}
 \usepackage{setspace,hyperref}
 \usepackage{booktabs,longtable,tabularx,multirow}

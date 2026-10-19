@@ -145,11 +145,34 @@ def serialize_block(node: Block) -> str:
         if not node.rows:
             return ""
         cols = max(len(r) for r in node.rows)
+        anchors = {(r, c): (rs, cs) for r, c, rs, cs in node.merges}
+        covered = {(r + dr, c + dc)
+                   for (r, c), (rs, cs) in anchors.items()
+                   for dr in range(rs) for dc in range(cs) if dr or dc}
         cells: list[str] = []
-        for r in node.rows:
+        for ri, r in enumerate(node.rows):
             padded = list(r) + [""] * (cols - len(r))
-            for c in padded:
-                cells.append(f"[{escape_text(c)}]")
+            for ci, c in enumerate(padded):
+                if (ri, ci) in covered:
+                    continue
+                body = escape_text(c)
+                if node.header and ri == 0 and body:
+                    body = f"*{body}*"
+                opts = []
+                rs, cs = anchors.get((ri, ci), (1, 1))
+                if rs > 1:
+                    opts.append(f"rowspan: {rs}")
+                if cs > 1:
+                    opts.append(f"colspan: {cs}")
+                color = node.shading.get(f"{ri},{ci}")
+                if color:
+                    opts.append(f'fill: rgb("{color}")')
+                cells.append(f"table.cell({', '.join(opts)})[{body}]"
+                             if opts else f"[{body}]")
+        if node.header and cells:
+            first = sum(1 for ci in range(cols) if (0, ci) not in covered)
+            cells = ([f"table.header({', '.join(cells[:first])})"]
+                     + cells[first:]) if node.repeat_header else cells
         cells_str = ", ".join(cells)
         cap = escape_text(node.caption)
         lab = _maybe_label(node.label)

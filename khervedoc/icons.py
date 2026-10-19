@@ -1730,3 +1730,85 @@ def caption() -> QIcon:
     c.line(4, 17.5, 20, 17.5, _blue(), 1.6)
     c.line(6.5, 20.5, 17.5, 20.5, w=1.1)
     return c.done()
+
+
+# ----- Table Design / Table Layout -----
+
+def _mini_table(c: _W, rows=4, cols=3, x=2.5, y=3.5, w=19, h=17,
+                lines="h", header=True, stripes=False) -> None:
+    rh, cw = h / rows, w / cols
+    if header:
+        c.fillrect(x, y, w, rh, _tint())
+    if stripes:
+        for r in range(2, rows, 2):
+            c.fillrect(x, y + r * rh, w, rh, QColor("#e9eef7"))
+    if lines in ("h", "grid", "book"):
+        for r in range(rows + 1):
+            heavy = lines == "book" and r in (0, rows)
+            if lines == "book" and 1 < r < rows:
+                continue
+            c.line(x, y + r * rh, x + w, y + r * rh,
+                   w=1.6 if heavy else 0.9)
+    if lines == "grid":
+        for k in range(cols + 1):
+            c.line(x + k * cw, y, x + k * cw, y + h, w=0.9)
+    for r in range(rows):
+        for k in range(cols):
+            c.line(x + k * cw + 1.5, y + r * rh + rh / 2,
+                   x + (k + 1) * cw - 1.5, y + r * rh + rh / 2,
+                   _blue() if (header and r == 0) else QColor("#9a9a9a"), 0.8)
+
+
+def table_style_icon(style: str) -> QIcon:
+    c = _W()
+    _mini_table(c, lines={"": "h", "grid": "grid", "plain": "none",
+                          "booktabs": "book", "striped": "book"}[style],
+                stripes=style == "striped")
+    return c.done()
+
+
+def table_merge() -> QIcon:
+    c = _W(); c.rect(2.5, 5, 19, 14, fill=_paper(), r=0.6, lw=1.2)
+    c.poly([(5, 12), (8, 9.5), (8, 14.5)], color=_blue(), fill=_blue(), lw=1)
+    c.poly([(19, 12), (16, 9.5), (16, 14.5)], color=_blue(), fill=_blue(), lw=1)
+    c.line(8, 12, 16, 12, _blue(), 1.4)
+    return c.done()
+
+
+def table_split() -> QIcon:
+    c = _W(); c.rect(2.5, 5, 19, 14, fill=_paper(), r=0.6, lw=1.2)
+    c.line(12, 5, 12, 19, w=1.2)
+    c.poly([(4.5, 12), (8, 9.5), (8, 14.5)], color=_blue(), fill=_blue(), lw=1)
+    c.poly([(19.5, 12), (16, 9.5), (16, 14.5)], color=_blue(), fill=_blue(), lw=1)
+    return c.done()
+
+
+def sort_icon(descending: bool = False) -> QIcon:
+    c = _W()
+    top, bottom = ("Z", "A") if descending else ("A", "Z")
+    c.text((2, 1, 10, 11), top, size=9, bold=True, color=_blue())
+    c.text((2, 12, 10, 11), bottom, size=9, bold=True)
+    c.line(16, 4, 16, 20, w=1.5)
+    c.poly([(12.5, 16.5), (16, 20.5), (19.5, 16.5)], closed=False, lw=1.5)
+    return c.done()
+
+
+def shading_icon(color: str = "#ffeb3b") -> QIcon:
+    c = _W()
+    c.poly([(9, 3), (19, 13), (12, 20), (2, 10)], fill=_paper(), lw=1.3)
+    c.p.setPen(Qt.NoPen); c.p.setBrush(QColor("#3aa0ff"))
+    c.p.drawEllipse(QPointF(20, 17), 2, 2.5)
+    c.fillrect(2, 21, 20, 2.5, QColor(color))
+    return c.done()
+
+
+def header_row() -> QIcon:
+    c = _W(); _mini_table(c, rows=4, cols=3)
+    return c.done()
+
+
+def repeat_header() -> QIcon:
+    c = _W()
+    _mini_table(c, rows=2, cols=3, x=2.5, y=2, w=19, h=8)
+    _mini_table(c, rows=2, cols=3, x=2.5, y=13.5, w=19, h=8)
+    return c.done()

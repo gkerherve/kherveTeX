@@ -2266,12 +2266,46 @@ class MainWindow(QMainWindow):
                                    e.table_delete_column)
         self.act_tbl_delete = act(icons.table_delete(), "Delete Table",
                                   e.delete_current_table)
-        self.act_tbl_plain = act(icons.table_style_plain(), "Grid lines",
-                                 lambda: e.set_table_style(""), True)
-        self.act_tbl_booktabs = act(icons.table_style_booktabs(),
-                                    "Journal (booktabs)",
-                                    lambda: e.set_table_style("booktabs"),
-                                    True)
+        self._tbl_style_actions = {}
+        for key, name in (("", "Lines"), ("grid", "Grid"),
+                          ("booktabs", "Journal"), ("striped", "Striped"),
+                          ("plain", "No Lines")):
+            self._tbl_style_actions[key] = act(
+                icons.table_style_icon(key), name,
+                lambda _=False, k=key: e.set_table_style(k), True)
+        self.act_tbl_plain = self._tbl_style_actions[""]
+        self.act_tbl_booktabs = self._tbl_style_actions["booktabs"]
+        self.act_tbl_grid = self._tbl_style_actions["grid"]
+        self.act_tbl_striped = self._tbl_style_actions["striped"]
+        self.act_tbl_nolines = self._tbl_style_actions["plain"]
+        self.act_tbl_header = act(icons.header_row(), "Header Row",
+                                  e.set_table_header, True)
+        self.act_tbl_repeat = act(icons.repeat_header(),
+                                  "Repeat Header Rows",
+                                  e.set_table_repeat_header, True)
+        self.act_tbl_merge = act(icons.table_merge(), "Merge Cells",
+                                 self._merge_cells)
+        self.act_tbl_split = act(icons.table_split(), "Split Cells",
+                                 e.table_split_cell)
+        self.act_tbl_sort_up = act(icons.sort_icon(False), "Sort A→Z",
+                                   lambda: self._sort_table(False))
+        self.act_tbl_sort_down = act(icons.sort_icon(True), "Sort Z→A",
+                                     lambda: self._sort_table(True))
+        self.act_tbl_shading = act(icons.shading_icon(), "Shading",
+                                   lambda: e.set_cell_shading(
+                                       self._last_shading))
+        self._last_shading = "#ffeb3b"
+        shade_menu = QMenu(self)
+        shade_menu.addAction("No Color", lambda: e.set_cell_shading(None))
+        for hexc, name in (("#ffeb3b", "Yellow"), ("#fde2e1", "Light red"),
+                           ("#dff0d8", "Light green"),
+                           ("#dce8f7", "Light blue"), ("#eeeeee", "Grey"),
+                           ("#fff2cc", "Cream")):
+            shade_menu.addAction(icons.color_swatch(hexc, 16), name,
+                                 lambda c=hexc: self._shade(c))
+        shade_menu.addSeparator()
+        shade_menu.addAction("More Colors…", self._shade_more)
+        self.act_tbl_shading.setProperty("ribbon_menu", shade_menu)
         self.act_fig_left = act(icons.align_left(), "Left",
                                 lambda: e.set_figure_alignment("left"), True)
         self.act_fig_center = act(icons.align_center(), "Center",
@@ -2356,9 +2390,13 @@ class MainWindow(QMainWindow):
             "table": [self.act_tbl_row_above, self.act_tbl_row_below,
                       self.act_tbl_col_left, self.act_tbl_col_right,
                       self.act_tbl_del_row, self.act_tbl_del_col,
-                      self.act_tbl_delete, self.act_tbl_plain,
-                      self.act_tbl_booktabs, self.act_tbl_align_l,
-                      self.act_tbl_align_c, self.act_tbl_align_r],
+                      self.act_tbl_delete, *self._tbl_style_actions.values(),
+                      self.act_tbl_align_l,
+                      self.act_tbl_align_c, self.act_tbl_align_r,
+                      self.act_tbl_header, self.act_tbl_repeat,
+                      self.act_tbl_merge, self.act_tbl_split,
+                      self.act_tbl_sort_up, self.act_tbl_sort_down,
+                      self.act_tbl_shading],
             "figure": [self.act_fig_left, self.act_fig_center,
                        self.act_fig_right, self.act_fig_w25, self.act_fig_w50,
                        self.act_fig_w75, self.act_fig_w100, self.act_fig_edit,
@@ -2400,6 +2438,28 @@ class MainWindow(QMainWindow):
             False)
         if ok:
             self._editor.paste_special(opts[labels.index(choice)][0])
+
+    def _merge_cells(self) -> None:
+        if not self._editor.table_merge_cells():
+            self._status.showMessage(
+                "Select two or more cells (drag across them) to merge.", 4000)
+
+    def _sort_table(self, descending: bool) -> None:
+        msg = self._editor.sort_table(descending)
+        if msg:
+            QMessageBox.information(self, "Sort", msg)
+
+    def _shade(self, color: str) -> None:
+        self._last_shading = color
+        self.act_tbl_shading.setIcon(icons.shading_icon(color))
+        self._editor.set_cell_shading(color)
+
+    def _shade_more(self) -> None:
+        from PySide6.QtWidgets import QColorDialog
+        c = QColorDialog.getColor(QColor(self._last_shading), self,
+                                  "Shading colour")
+        if c.isValid():
+            self._shade(c.name())
 
     def _insert_caption(self) -> None:
         caption, label = self._editor.current_caption()
@@ -2474,8 +2534,14 @@ class MainWindow(QMainWindow):
                          (self.act_tbl_align_r, "r")):
                 a.setChecked(col == k)
             style = e.current_table_style()
-            self.act_tbl_plain.setChecked(style != "booktabs")
-            self.act_tbl_booktabs.setChecked(style == "booktabs")
+            for k, a in self._tbl_style_actions.items():
+                a.setChecked(k == style)
+            header, repeat = e.table_header()
+            for a, v in ((self.act_tbl_header, header),
+                         (self.act_tbl_repeat, repeat)):
+                a.blockSignals(True)
+                a.setChecked(v)
+                a.blockSignals(False)
         elif ctx == "figure":
             align = e.current_alignment()
             for a, name in ((self.act_fig_left, "left"),
@@ -2565,19 +2631,26 @@ class MainWindow(QMainWindow):
                                      self.act_pdf_detach])
         view.add_group("Zoom", large=[self.act_fit_page_width])
         # Word's contextual tabs: shown only while the caret is in one.
-        t = rb.add_contextual_tab("Table", "table")
-        t.add_group("Rows & Columns", large=[
+        td = rb.add_contextual_tab("Table Design", "table")
+        td.add_group("Table Style Options", large=[self.act_tbl_header,
+                                                   self.act_tbl_repeat])
+        td.add_group("Table Styles",
+                     large=list(self._tbl_style_actions.values()))
+        td.add_group("Shading", large=[self.act_tbl_shading])
+        tl = rb.add_contextual_tab("Table Layout", "table")
+        tl.add_group("Rows & Columns", large=[
             self.act_tbl_row_above, self.act_tbl_row_below,
             self.act_tbl_col_left, self.act_tbl_col_right])
-        t.add_group("Delete", large=[self.act_tbl_del_row,
-                                     self.act_tbl_del_col,
-                                     self.act_tbl_delete])
-        t.add_group("Alignment", large=[self.act_tbl_align_l,
-                                        self.act_tbl_align_c,
-                                        self.act_tbl_align_r])
-        t.add_group("Table Style", large=[self.act_tbl_plain,
-                                          self.act_tbl_booktabs])
-        t.add_group("Caption", large=[self.act_caption])
+        tl.add_group("Merge", large=[self.act_tbl_merge, self.act_tbl_split])
+        tl.add_group("Delete", large=[self.act_tbl_del_row,
+                                      self.act_tbl_del_col,
+                                      self.act_tbl_delete])
+        tl.add_group("Alignment", large=[self.act_tbl_align_l,
+                                         self.act_tbl_align_c,
+                                         self.act_tbl_align_r])
+        tl.add_group("Data", large=[self.act_tbl_sort_up,
+                                    self.act_tbl_sort_down])
+        tl.add_group("Caption", large=[self.act_caption])
         pic = rb.add_contextual_tab("Picture", "figure")
         pic.add_group("Arrange", large=[self.act_fig_left,
                                         self.act_fig_center,

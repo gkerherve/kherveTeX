@@ -916,6 +916,9 @@ _P_TABLE_ALIGNMENT = QTextCharFormat.UserProperty + 22
 _P_TABLE_STYLE = QTextCharFormat.UserProperty + 23
 _P_CELL_RAW = QTextCharFormat.UserProperty + 24       # cell's LaTeX source
 _P_CAPTION_ROW = QTextCharFormat.UserProperty + 25    # on caption cell
+_P_CELL_SHADE = QTextCharFormat.UserProperty + 26     # "#rrggbb" fill
+_P_TABLE_HEADER = QTextCharFormat.UserProperty + 27   # first row = header
+_P_TABLE_REPEAT = QTextCharFormat.UserProperty + 28   # repeat it per page
 
 # Figure-table properties (figures rendered as 1-column QTextTable).
 _P_FIGURE_PATH = QTextCharFormat.UserProperty + 30
@@ -1784,6 +1787,8 @@ class DocumentEditor(QWidget):
         tfmt.setProperty(_P_TABLE_LABEL, table.label or "")
         tfmt.setProperty(_P_TABLE_ALIGNMENT, table.alignment or "")
         tfmt.setProperty(_P_TABLE_STYLE, table.style or "")
+        tfmt.setProperty(_P_TABLE_HEADER, bool(table.header))
+        tfmt.setProperty(_P_TABLE_REPEAT, bool(table.repeat_header))
         has_caption = bool(table.caption)
         total_rows = nrows + (1 if has_caption else 0)
         qtable = cursor.insertTable(total_rows, ncols, tfmt)
@@ -1802,6 +1807,17 @@ class DocumentEditor(QWidget):
                     fmt.setFontItalic(True)
                 cell.firstCursorPosition().insertText(
                     _cell_display_text(raw), fmt)
+        for key, color in (table.shading or {}).items():
+            r, c = (int(v) for v in key.split(","))
+            if r < nrows and c < ncols:
+                cf = qtable.cellAt(r, c).format()
+                cf.setProperty(_P_CELL_SHADE, color)
+                qtable.cellAt(r, c).setFormat(cf)
+        for r, c, rs, cs in table.merges or []:
+            rs = min(rs, nrows - r)
+            cs = min(cs, ncols - c)
+            if r < nrows and c < ncols and (rs > 1 or cs > 1):
+                qtable.mergeCells(r, c, rs, cs)
         if has_caption:
             qtable.mergeCells(nrows, 0, 1, ncols)
             cap_cell = qtable.cellAt(nrows, 0)
@@ -1837,7 +1853,9 @@ class DocumentEditor(QWidget):
         rules where the column spec has '|'. Re-run after row/column
         edits, since the rules depend on which row is first/last."""
         tfmt = qtable.format()
-        booktabs = tfmt.property(_P_TABLE_STYLE) == "booktabs"
+        style = tfmt.property(_P_TABLE_STYLE) or ""
+        booktabs = style in ("booktabs", "striped")
+        header = bool(tfmt.property(_P_TABLE_HEADER))
         ncols = qtable.columns()
         nrows = qtable.rows()
         caption_row = nrows > 1 and bool(
@@ -1847,7 +1865,11 @@ class DocumentEditor(QWidget):
         last = nrows - (2 if caption_row else 1)
         aligns, vrules = _parse_column_spec(
             tfmt.property(_P_TABLE_ALIGNMENT) or "", ncols)
+        if style == "grid":
+            vrules = [True] * (ncols + 1)
         heavy, thin = (1.4, 0.8) if booktabs else (0.8, 0.8)
+        if style == "plain":
+            heavy = thin = 0
         black = QBrush(QColor("#000000"))
         none = QTextFrameFormat.BorderStyle_None
         solid = QTextFrameFormat.BorderStyle_Solid
@@ -1859,7 +1881,8 @@ class DocumentEditor(QWidget):
                 cf.setTopPadding(2); cf.setBottomPadding(2)
                 top = heavy if r == 0 else 0
                 bottom = (heavy if r == last else
-                          thin if r == 0 and last > 0 else 0)
+                          thin if r == 0 and last > 0 else
+                          0.8 if style == "grid" else 0)
                 if r > last:            # caption row: no rules, gap above
                     top = bottom = 0
                     cf.setTopPadding(8)
@@ -1872,12 +1895,28 @@ class DocumentEditor(QWidget):
                     getattr(cf, f"set{side}BorderBrush")(black)
                     getattr(cf, f"set{side}BorderStyle")(
                         solid if width else none)
+                shade = cf.property(_P_CELL_SHADE)
+                if shade:
+                    cf.setBackground(QColor(shade))
+                elif style == "striped" and 0 < r <= last and r % 2 == 0:
+                    cf.setBackground(QColor("#eef3fa"))
+                else:
+                    cf.clearBackground()
                 cell.setFormat(cf)
-                if r <= last:
+                if r <= last and cell.row() == r and cell.column() == c:
                     bc = cell.firstCursorPosition()
                     bf = bc.blockFormat()
                     bf.setAlignment(_CELL_ALIGN[aligns[c]])
                     bc.setBlockFormat(bf)
+                    if r == 0:
+                        # Header row: bold, like the PDF's \textbf cells.
+                        sel = QTextCursor(bc)
+                        sel.setPosition(cell.lastCursorPosition().position(),
+                                        QTextCursor.KeepAnchor)
+                        if header:
+                            fmt = QTextCharFormat()
+                            fmt.setFontWeight(QFont.Bold)
+                            sel.mergeCharFormat(fmt)
 
     def _math_png(self, latex: str, display: bool = True) -> Path | None:
         return _render_math_image(latex, cache_dir=self._equations_dir,
@@ -2512,8 +2551,28 @@ class DocumentEditor(QWidget):
                 else:
                     row.append(shown)
             rows.append(row)
+        merges, shading = [], {}
+        for r in range(data_rows):
+            for c in range(ncols):
+                cell = qtable.cellAt(r, c)
+                if cell.row() != r or cell.column() != c:
+                    continue                # covered by a merged cell
+                rs = min(cell.rowSpan(), data_rows - r)
+                if rs > 1 or cell.columnSpan() > 1:
+                    merges.append([r, c, rs, cell.columnSpan()])
+                color = cell.format().property(_P_CELL_SHADE)
+                if color:
+                    shading[f"{r},{c}"] = color
+        for r, c, rs, cs in merges:
+            for dr in range(rs):
+                for dc in range(cs):
+                    if dr or dc:
+                        rows[r + dr][c + dc] = ""
         return Table(rows=rows, caption=caption, label=label,
-                     alignment=alignment, style=style)
+                     alignment=alignment, style=style, merges=merges,
+                     header=bool(tfmt.property(_P_TABLE_HEADER)),
+                     repeat_header=bool(tfmt.property(_P_TABLE_REPEAT)),
+                     shading=shading)
 
     # ---------- formatting actions (called by mainwindow) ----------
 
@@ -2910,6 +2969,155 @@ class DocumentEditor(QWidget):
         if qtable is not None:
             self._remove_frame(qtable)
 
+    # Word's Table Layout / Table Design tools
+
+    def _selected_cells(self):
+        """(qtable, first_row, n_rows, first_col, n_cols) of the cell
+        selection, or of the caret's cell."""
+        qtable = self.current_data_table()
+        if qtable is None:
+            return None
+        c = self._edit.textCursor()
+        if c.hasComplexSelection():
+            r0, nr, c0, nc = c.selectedTableCells()
+            return qtable, r0, nr, c0, nc
+        cell = qtable.cellAt(c)
+        return qtable, cell.row(), cell.rowSpan(), cell.column(), \
+            cell.columnSpan()
+
+    def table_merge_cells(self) -> bool:
+        sel = self._selected_cells()
+        if sel is None:
+            return False
+        qtable, r0, nr, c0, nc = sel
+        if nr * nc <= 1 or r0 + nr > self._data_rows(qtable):
+            return False
+        # Word keeps the text of every merged cell; join it into the first.
+        texts = []
+        for r in range(r0, r0 + nr):
+            for c in range(c0, c0 + nc):
+                cell = qtable.cellAt(r, c)
+                if cell.row() == r and cell.column() == c:
+                    t = cell.firstCursorPosition().block().text().strip()
+                    if t:
+                        texts.append(t)
+        c = QTextCursor(self._edit.document())
+        c.beginEditBlock()
+        qtable.mergeCells(r0, c0, nr, nc)
+        cell = qtable.cellAt(r0, c0)
+        sel_c = cell.firstCursorPosition()
+        sel_c.setPosition(cell.lastCursorPosition().position(),
+                          QTextCursor.KeepAnchor)
+        sel_c.insertText(" ".join(texts), self._body_char_format())
+        cf = cell.format()
+        cf.clearProperty(_P_CELL_RAW)
+        cell.setFormat(cf)
+        c.endEditBlock()
+        self._apply_table_rules(qtable)
+        self._on_text_changed()
+        return True
+
+    def table_split_cell(self) -> None:
+        qtable = self.current_data_table()
+        if qtable is None:
+            return
+        cell = qtable.cellAt(self._edit.textCursor())
+        if cell.rowSpan() > 1 or cell.columnSpan() > 1:
+            qtable.splitCell(cell.row(), cell.column(), 1, 1)
+            self._apply_table_rules(qtable)
+            self._on_text_changed()
+
+    def table_header(self) -> tuple[bool, bool]:
+        qtable = self.current_data_table()
+        if qtable is None:
+            return False, False
+        f = qtable.format()
+        return (bool(f.property(_P_TABLE_HEADER)),
+                bool(f.property(_P_TABLE_REPEAT)))
+
+    def set_table_header(self, on: bool) -> None:
+        qtable = self.current_data_table()
+        if qtable is None:
+            return
+        tfmt = qtable.format()
+        tfmt.setProperty(_P_TABLE_HEADER, bool(on))
+        if not on:
+            tfmt.setProperty(_P_TABLE_REPEAT, False)
+        qtable.setFormat(tfmt)
+        if not on:
+            for c in range(qtable.columns()):
+                cell = qtable.cellAt(0, c)
+                sel = cell.firstCursorPosition()
+                sel.setPosition(cell.lastCursorPosition().position(),
+                                QTextCursor.KeepAnchor)
+                fmt = QTextCharFormat()
+                fmt.setFontWeight(QFont.Normal)
+                sel.mergeCharFormat(fmt)
+        self._apply_table_rules(qtable)
+        self._on_text_changed()
+
+    def set_table_repeat_header(self, on: bool) -> None:
+        qtable = self.current_data_table()
+        if qtable is None:
+            return
+        tfmt = qtable.format()
+        tfmt.setProperty(_P_TABLE_REPEAT, bool(on))
+        if on:
+            tfmt.setProperty(_P_TABLE_HEADER, True)
+        qtable.setFormat(tfmt)
+        self._apply_table_rules(qtable)
+        self._on_text_changed()
+
+    def set_cell_shading(self, color: str | None) -> None:
+        """Fill the selected cells (or the caret's) with *color*, or
+        clear it with None — Word's Shading."""
+        sel = self._selected_cells()
+        if sel is None:
+            return
+        qtable, r0, nr, c0, nc = sel
+        for r in range(r0, min(r0 + nr, self._data_rows(qtable))):
+            for c in range(c0, c0 + nc):
+                cell = qtable.cellAt(r, c)
+                cf = cell.format()
+                if color:
+                    cf.setProperty(_P_CELL_SHADE, color)
+                else:
+                    cf.clearProperty(_P_CELL_SHADE)
+                cell.setFormat(cf)
+        self._apply_table_rules(qtable)
+        self._on_text_changed()
+
+    def sort_table(self, descending: bool = False) -> str | None:
+        """Sort the data rows by the caret's column, keeping the header
+        row first, numbers in numeric order. Returns an error message
+        when the table cannot be sorted."""
+        qtable, _, col = self._table_cell()
+        if qtable is None:
+            return None
+        model = self._table_from_qtexttable(qtable)
+        start = 1 if model.header else 0
+        if any(r + rs > start for r, c, rs, cs in model.merges):
+            return "Split the merged cells before sorting the table."
+
+        def key(row):
+            text = _cell_display_text(row[col] if col < len(row) else "")
+            try:
+                return (0, float(text.replace(",", "")), "")
+            except ValueError:
+                return (1, 0.0, text.lower())
+
+        order = sorted(range(start, len(model.rows)),
+                       key=lambda i: key(model.rows[i]),
+                       reverse=descending)
+        new_index = {old: new for new, old in
+                     enumerate(list(range(start)) + order)}
+        model.rows = model.rows[:start] + [model.rows[i] for i in order]
+        model.shading = {f"{new_index[int(k.split(',')[0])]},"
+                         f"{k.split(',')[1]}": v
+                         for k, v in model.shading.items()}
+        self._rebuild_frame(qtable, model)
+        return None
+
     def current_table_style(self) -> str:
         qtable = self.current_data_table()
         return (qtable.format().property(_P_TABLE_STYLE) or "") if qtable else ""
@@ -2929,16 +3137,31 @@ class DocumentEditor(QWidget):
         """Replace a table / figure widget by a fresh one built from
         *model* (used when its caption rows change shape)."""
         pos = qtable.firstPosition() - 1
+        here = self._edit.textCursor()
+        cell = qtable.cellAt(here) if here.currentTable() is qtable else None
+        at = (cell.row(), cell.column()) if cell is not None else (0, 0)
         c = QTextCursor(self._edit.document())
         c.beginEditBlock()
         c.setPosition(pos)
         c.setPosition(qtable.lastPosition() + 1, QTextCursor.KeepAnchor)
         c.removeSelectedText()
         if isinstance(model, Figure):
-            self._insert_figure_widget(c, model)
+            new = self._insert_figure_widget(c, model)
         else:
             self._insert_table_widget(c, model)
         c.endEditBlock()
+        if not isinstance(model, Figure):
+            # Frames only show up once the edit block has closed.
+            new = min((f for f in
+                       self._edit.document().rootFrame().childFrames()
+                       if isinstance(f, QTextTable)
+                       and f.firstPosition() > pos),
+                      key=lambda f: f.firstPosition(), default=None)
+        # Keep the caret where it was, so the table's tools stay open.
+        if new is not None:
+            r = min(at[0], new.rows() - 1)
+            col = min(at[1], new.columns() - 1)
+            self._edit.setTextCursor(new.cellAt(r, col).firstCursorPosition())
         self._on_text_changed()
 
     def current_caption(self) -> tuple[str, str]:

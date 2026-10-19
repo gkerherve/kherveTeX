@@ -170,7 +170,18 @@ class Table:
     alignment: str = ""           # e.g. "lcr"; empty = auto (all left)
     # Rule style: "" = \hline rules, "booktabs" = \toprule / \midrule /
     # \bottomrule. Kept so an imported booktabs table round-trips.
+    # Also "grid" (every line), "plain" (no lines) and "striped" (booktabs
+    # with shaded alternate rows) — the Table tab's style gallery.
     style: str = ""
+    # Merged cells: [row, col, rowspan, colspan] for each merged block's
+    # top-left cell; the cells it covers keep "" in `rows`.
+    merges: list[list[int]] = field(default_factory=list)
+    # First row is a header: bold, and repeated on every page when
+    # `repeat_header` (the table then becomes a longtable).
+    header: bool = False
+    repeat_header: bool = False
+    # Cell shading: "row,col" -> "#rrggbb".
+    shading: dict[str, str] = field(default_factory=dict)
     type: str = "Table"
 
 
@@ -470,6 +481,10 @@ def _build_block(d: dict) -> Block:
             label=d.get("label"),
             alignment=d.get("alignment", ""),
             style=d.get("style", ""),
+            merges=[[int(v) for v in m] for m in d.get("merges", [])],
+            header=d.get("header", False),
+            repeat_header=d.get("repeat_header", False),
+            shading={str(k): str(v) for k, v in d.get("shading", {}).items()},
         )
     if t == "RawLatex":
         return RawLatex(text=d["text"])

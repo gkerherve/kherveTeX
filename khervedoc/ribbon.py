@@ -129,12 +129,12 @@ class Ribbon(QTabWidget):
         idx = self.indexOf(tab)
         self.tabBar().setTabTextColor(idx, QColor("#2b579a"))
         self.setTabVisible(idx, False)
-        self._contextual = getattr(self, "_contextual", {})
-        self._contextual[kind] = tab
+        self._contextual = getattr(self, "_contextual", [])
+        self._contextual.append((kind, tab))
         return tab
 
     def show_context(self, kind: str | None) -> None:
-        for k, tab in getattr(self, "_contextual", {}).items():
+        for k, tab in getattr(self, "_contextual", []):
             idx = self.indexOf(tab)
             visible = k == kind
             if self.isTabVisible(idx) != visible:

@@ -963,7 +963,8 @@ Powell & Derivative-free \\
     assert len(tables) == 1
     t = tables[0]
     assert len(t.rows) == 3      # header + 2 data rows
-    assert t.rows[0][0].strip() == r"\textbf{Method}"
+    # An all-bold first row is read as a header row (bold on output).
+    assert t.header and t.rows[0][0].strip() == "Method"
     assert t.caption == "Optimization methods"
 
 

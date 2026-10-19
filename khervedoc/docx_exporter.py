@@ -20,6 +20,25 @@ ProgressCallback = Callable[[int, int], None] | None
 
 # ---- alignment mapping ---------------------------------------------------
 
+def _shade_cell(cell, color: str) -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:color"), "auto")
+    shd.set(qn("w:fill"), color.lstrip("#").upper())
+    cell._tc.get_or_add_tcPr().append(shd)
+
+
+def _repeat_header_row(row) -> None:
+    """Word's "Repeat as header row at the top of each page"."""
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    el = OxmlElement("w:tblHeader")
+    el.set(qn("w:val"), "true")
+    row._tr.get_or_add_trPr().append(el)
+
+
 _ALIGN_MAP = {
     "left": WD_ALIGN_PARAGRAPH.LEFT,
     "center": WD_ALIGN_PARAGRAPH.CENTER,
@@ -266,6 +285,18 @@ def export_docx(doc: M.Document, path: Path,
                     for c_idx, cell_text in enumerate(row):
                         if c_idx < len(tbl.rows[r_idx].cells):
                             tbl.rows[r_idx].cells[c_idx].text = cell_text
+                for (key, color) in block.shading.items():
+                    r_idx, c_idx = (int(v) for v in key.split(","))
+                    if r_idx < len(tbl.rows) and \
+                            c_idx < len(tbl.rows[r_idx].cells):
+                        _shade_cell(tbl.rows[r_idx].cells[c_idx], color)
+                for r_idx, c_idx, rs, cs in block.merges:
+                    a = tbl.cell(r_idx, c_idx)
+                    b = tbl.cell(min(r_idx + rs, len(tbl.rows)) - 1,
+                                 min(c_idx + cs, len(tbl.columns)) - 1)
+                    a.merge(b)
+                if block.repeat_header and len(tbl.rows) > 1:
+                    _repeat_header_row(tbl.rows[0])
                 # Bold the first row (header).
                 if len(block.rows) > 1:
                     for cell in tbl.rows[0].cells:

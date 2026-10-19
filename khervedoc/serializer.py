@@ -336,41 +336,7 @@ def serialize_block(node: Block, *, has_chapters: bool = False,
         )
 
     if isinstance(node, Table):
-        if not node.rows:
-            return ""
-        cols = max(len(r) for r in node.rows)
-        booktabs = node.style == "booktabs"
-        top_rule = "\\toprule" if booktabs else "\\hline"
-        bottom_rule = "\\bottomrule" if booktabs else "\\hline"
-        align = node.alignment.strip()
-        if not align:
-            align = _auto_table_alignment(node.rows, cols)
-        # Pad short rows with empty cells.
-        body_rows: list[str] = []
-        for i, r in enumerate(node.rows):
-            # Table cells are stored as raw LaTeX — emit verbatim.
-            cells = list(r) + [""] * (cols - len(r))
-            row_str = " & ".join(cells) + r" \\"
-            # Rule after the first row (header separator).
-            if i == 0 and len(node.rows) > 1:
-                row_str += " \\midrule" if booktabs else " \\hline"
-            body_rows.append(row_str)
-        body = "\n    ".join(body_rows)
-        cap = node.caption
-        lab = _maybe_label(node.label) if node.label else ""
-        placement = "H" if float_h else "htbp"
-        return (
-            f"\\begin{{table}}[{placement}]\n"
-            "  \\centering\n"
-            f"  \\begin{{tabular}}{{{align}}}\n"
-            f"    {top_rule}\n"
-            f"    {body}\n"
-            f"    {bottom_rule}\n"
-            "  \\end{tabular}\n"
-            f"  \\caption{{{cap}}}\n"
-            f"  {lab}"
-            "\\end{table}\n"
-        )
+        return _serialize_table(node, float_h)
 
     if isinstance(node, RawLatex):
         return node.text + ("\n" if not node.text.endswith("\n") else "")
@@ -405,6 +371,149 @@ def serialize_block(node: Block, *, has_chapters: bool = False,
         return serialize_inlines(node.children)
 
     raise TypeError(f"Unknown block node: {type(node).__name__}")
+
+
+_STRIPE = "EEF3FA"
+_COL_TOKEN_RE = re.compile(r"[lcr]|[pmbX]\{[^}]*\}")
+
+
+def _merge_maps(node: Table):
+    """anchor (r, c) -> (rowspan, colspan), and covered (r, c) -> anchor."""
+    anchors, covered = {}, {}
+    for r, c, rs, cs in node.merges:
+        anchors[(r, c)] = (max(1, rs), max(1, cs))
+        for dr in range(max(1, rs)):
+            for dc in range(max(1, cs)):
+                if dr or dc:
+                    covered[(r + dr, c + dc)] = (r, c)
+    return anchors, covered
+
+
+def _cell_latex(node: Table, r: int, c: int, text: str) -> str:
+    color = node.shading.get(f"{r},{c}")
+    if node.header and r == 0 and text and "\\textbf{" not in text:
+        text = f"\\textbf{{{text}}}"
+    if color:
+        text = f"\\cellcolor[HTML]{{{color.lstrip('#').upper()}}}{text}"
+    return text
+
+
+def _grid_rule(i: int, cols: int, covered: dict) -> str:
+    """\\hline under row i, or \\cline pieces that skip columns where a
+    vertically merged cell carries on into row i+1."""
+    open_cols = [c for c in range(cols)
+                 if (i + 1, c) not in covered or covered[(i + 1, c)][0] == i + 1]
+    if len(open_cols) == cols:
+        return "\\hline"
+    parts, start = [], None
+    for c in range(cols + 1):
+        if c < cols and c in open_cols:
+            start = c if start is None else start
+        elif start is not None:
+            parts.append(f"\\cline{{{start + 1}-{c}}}")
+            start = None
+    return " ".join(parts)
+
+
+def _span_align(grid: bool, c: int) -> str:
+    return ("|c|" if c == 0 else "c|") if grid else "c"
+
+
+def _serialize_table(node: Table, float_h: bool = True) -> str:
+    if not node.rows:
+        return ""
+    cols = max(len(r) for r in node.rows)
+    style = node.style
+    booktabs = style in ("booktabs", "striped")
+    grid = style == "grid"
+    if style == "plain":
+        top_rule = mid_rule = bottom_rule = ""
+    elif booktabs:
+        top_rule, mid_rule, bottom_rule = (
+            "\\toprule", "\\midrule", "\\bottomrule")
+    else:
+        top_rule = mid_rule = bottom_rule = "\\hline"
+    align = node.alignment.strip() or _auto_table_alignment(node.rows, cols)
+    if grid and "|" not in align:
+        align = "|" + "|".join(_COL_TOKEN_RE.findall(align)) + "|"
+    anchors, covered = _merge_maps(node)
+    body_rows: list[str] = []
+    for i, r in enumerate(node.rows):
+        cells = list(r) + [""] * (cols - len(r))
+        out: list[str] = []
+        c = 0
+        while c < cols:
+            if (i, c) in covered:
+                ar, ac = covered[(i, c)]
+                rs, cs = anchors[(ar, ac)]
+                if ar == i:            # inside a colspan: already emitted
+                    c += 1
+                    continue
+                # Below a multirow: empty cells, spanning like the anchor.
+                text = _cell_latex(node, i, c, "")
+                out.append(f"\\multicolumn{{{cs}}}{{{_span_align(grid, c)}}}"
+                           f"{{{text}}}" if cs > 1 else text)
+                c += cs
+                continue
+            text = _cell_latex(node, i, c, cells[c])
+            rs, cs = anchors.get((i, c), (1, 1))
+            if rs > 1:
+                text = f"\\multirow{{{rs}}}{{*}}{{{text}}}"
+            if cs > 1:
+                text = (f"\\multicolumn{{{cs}}}{{{_span_align(grid, c)}}}"
+                        f"{{{text}}}")
+            out.append(text)
+            c += cs
+        row_str = " & ".join(out) + r" \\"
+        if style == "striped" and i > 0 and i % 2 == 0:
+            row_str = f"\\rowcolor[HTML]{{{_STRIPE}}}" + row_str
+        if i == 0 and len(node.rows) > 1 and mid_rule:
+            row_str += " " + mid_rule
+        elif grid and i < len(node.rows) - 1:
+            row_str += " " + _grid_rule(i, cols, covered)
+        body_rows.append(row_str)
+    cap = node.caption
+    lab = _maybe_label(node.label) if node.label else ""
+    if node.repeat_header and len(body_rows) > 1:
+        # longtable repeats everything before \endhead on each page.
+        head = "\n".join(x for x in (top_rule, body_rows[0]) if x)
+        cap_line = (f"\\caption{{{cap}}}{lab.strip()}\\\\\n" if cap
+                    else "")
+        rest = "\n".join(body_rows[1:])
+        return (f"\\begin{{longtable}}{{{align}}}\n{cap_line}{head}\n"
+                f"\\endhead\n{rest}\n"
+                + (f"{bottom_rule}\n" if bottom_rule else "")
+                + "\\end{longtable}\n")
+    body = "\n    ".join(body_rows)
+    placement = "H" if float_h else "htbp"
+    rule = lambda x: f"    {x}\n" if x else ""  # noqa: E731
+    return (
+        f"\\begin{{table}}[{placement}]\n"
+        "  \\centering\n"
+        f"  \\begin{{tabular}}{{{align}}}\n"
+        f"{rule(top_rule)}"
+        f"    {body}\n"
+        f"{rule(bottom_rule)}"
+        "  \\end{tabular}\n"
+        f"  \\caption{{{cap}}}\n"
+        f"  {lab}"
+        "\\end{table}\n"
+    )
+
+
+def _table_packages(doc: Document) -> list[str]:
+    """Packages the document's tables need beyond the defaults."""
+    need: list[str] = []
+    for b in doc.children:
+        if not isinstance(b, Table):
+            continue
+        if any(m[2] > 1 for m in b.merges) and "multirow" not in need:
+            need.append("multirow")
+        if (b.shading or b.style == "striped") and "colortbl" not in need:
+            need.append("colortbl")
+        if b.repeat_header and "longtable" not in need:
+            need.append("longtable")
+    return need
 
 
 def _with_url_breaking(packages: str, *scanned: str) -> str:
@@ -731,7 +840,7 @@ def _with_natbib(packages: str, m) -> str:
 def _uses_booktabs(doc: Document) -> bool:
     def walk(blocks):
         for b in blocks:
-            if isinstance(b, Table) and b.style == "booktabs":
+            if isinstance(b, Table) and b.style in ("booktabs", "striped"):
                 return True
             kids = getattr(b, "children", None)
             if isinstance(kids, list) and walk(
@@ -788,6 +897,11 @@ def serialize_document(doc: Document) -> str:
     if (_uses_booktabs(doc) and "booktabs" not in pkg_list
             and "{booktabs}" not in m.preamble_extras):
         pkg_list.append("booktabs")
+    for p in _table_packages(doc):
+        if p == "colortbl" and "xcolor" not in pkg_list:
+            pkg_list.append("xcolor")       # \cellcolor[HTML]{...}
+        if p not in pkg_list and f"{{{p}}}" not in m.preamble_extras:
+            pkg_list.append(p)
     pkg_lines = "\n".join(f"\\usepackage{{{p}}}" for p in pkg_list)
     packages = (geometry + "\n" + pkg_lines).strip() if geometry else pkg_lines
     if preamble_extras:

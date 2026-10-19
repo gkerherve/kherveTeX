@@ -365,6 +365,7 @@ _BLOCK_DISPATCH = [
     # Sections are handled by _scan_section (balanced braces) — see _parse_blocks.
     # ("section",         _SECTION_RE),  # removed
     ("maketitle",       re.compile(r"\\maketitle\b")),
+    ("longtable",       re.compile(r"\\begin\{longtable\}\{((?:[^{}]|\{[^{}]*\})*)\}(.*?)\\end\{longtable\}", re.DOTALL)),
     # Theorem-like environments (amsthm): editable Theorem paragraphs.
     ("theorem_env",     re.compile(r"\\begin\{(theorem|lemma|proposition|corollary|definition|example|remark|proof)\}(?:\[([^\]]*)\])?(.*?)\\end\{\1\}", re.DOTALL)),
     # Last-resort: any other \begin{...}...\end{...} we don't understand
@@ -807,6 +808,27 @@ def _dispatch(kind: str, m) -> object:
     if kind == "lstlisting":
         # Preserve the full matched env (including any [caption=...]).
         return RawLatex(text=m.group(0))
+    if kind == "longtable":
+        body = m.group(2)
+        caption, label = "", None
+        cap = re.search(r"\\caption\{", body)
+        if cap:
+            text, end = _consume_braced(body, cap.end() - 1)
+            caption = (text or "").strip()
+            body = body[:cap.start()] + body[end:]
+        lab = re.search(r"\\label\{([^}]*)\}", body)
+        if lab:
+            label = lab.group(1)
+            body = body[:lab.start()] + body[lab.end():]
+        head, sep, rest = body.partition("\\endhead")
+        if sep:
+            body = head + "\\\\" + rest
+        body = re.sub(r"\\end(first)?head|\\end(last)?foot", "", body)
+        body = re.sub(r"^\s*\\\\", "", body.strip())
+        table = _parse_tabular(m.group(1), body)
+        table.caption, table.label = caption, label
+        table.repeat_header = True
+        return table
     if kind == "theorem_env":
         paras = _split_paragraphs(m.group(3)) or [""]
         return [Theorem(kind=m.group(1), title=(m.group(2) or "").strip(),
@@ -939,13 +961,55 @@ def _parse_table_env(body: str) -> object:
     return table
 
 
+def _unwrap(text: str, command: str, n_args: int):
+    """If *text* starts with \\command{a1}...{an}{X}, return
+    ([a1..an], X); else None."""
+    t = text.strip()
+    if not t.startswith(command + "{"):
+        return None
+    i = len(command)
+    args = []
+    for _ in range(n_args + 1):
+        while i < len(t) and t[i] in " \t":
+            i += 1
+        val, i = _consume_braced(t, i)
+        if val is None:
+            return None
+        args.append(val)
+    if t[i:].strip():
+        return None
+    return args[:-1], args[-1]
+
+
+def _table_cell_features(raw: str):
+    """(text, rowspan, colspan, colour) of one tabular cell."""
+    text, rs, cs, color = raw.strip(), 1, 1, None
+    got = _unwrap(text, "\\multicolumn", 2)
+    if got:
+        cs, text = int(got[0][0] or 1), got[1].strip()
+    got = _unwrap(text, "\\multirow", 2)
+    if got:
+        rs, text = int(got[0][0] or 1), got[1].strip()
+    m = re.match(r"\\cellcolor\[HTML\]\{([0-9A-Fa-f]{6})\}\s*", text)
+    if m:
+        color, text = "#" + m.group(1).lower(), text[m.end():]
+    return text, rs, cs, color
+
+
 def _parse_tabular(align_spec: str, body: str) -> Table:
     """Turn a tabular body into a Table model node. Cells are stored as
     plain text strings (matching the model); embedded LaTeX inside a cell
     is preserved verbatim because the existing serializer escapes only
-    plain-text cell content."""
+    plain-text cell content. Merged cells (\\multicolumn / \\multirow),
+    \\cellcolor shading, a bold header row and the grid / striped styles
+    the serializer writes are read back into the model."""
+    striped = bool(re.search(r"\\rowcolor\[HTML\]\{EEF3FA\}", body, re.I))
+    body = re.sub(r"\\rowcolor(\[[^\]]*\])?\{[^}]*\}", "", body)
+    n_hline = len(re.findall(r"\\hline\b", body))
     style = "booktabs" if re.search(
         r"\\(toprule|midrule|bottomrule)\b", body) else ""
+    if striped and style == "booktabs":
+        style = "striped"
     # Drop common line-rule commands so they don't survive into cell text.
     body = re.sub(r"\\hline\b", "", body)
     body = re.sub(r"\\toprule|\\midrule|\\bottomrule|\\cline\{[^}]*\}", "", body)
@@ -958,10 +1022,36 @@ def _parse_tabular(align_spec: str, body: str) -> Table:
             continue
         cells = [c.strip() for c in line.split("&")]
         rows.append(cells)
+    merges, shading, out_rows = [], {}, []
+    for r, cells in enumerate(rows):
+        out: list[str] = []
+        for raw in cells:
+            text, rs, cs, color = _table_cell_features(raw)
+            c = len(out)
+            if rs > 1 or cs > 1:
+                if text or rs > 1:
+                    merges.append([r, c, rs, cs])
+            if color:
+                shading[f"{r},{c}"] = color
+            out.append(text)
+            out.extend([""] * (cs - 1))
+        out_rows.append(out)
+    header = bool(out_rows) and len(out_rows) > 1 and all(
+        re.fullmatch(r"\\textbf\{.*\}", c, re.S) for c in out_rows[0] if c) \
+        and any(out_rows[0])
+    if header:
+        out_rows[0] = [c[len("\\textbf{"):-1] if c else c
+                       for c in out_rows[0]]
     # Preserve the raw alignment spec — p{0.55\columnwidth} and the
     # vertical-rule pipes both round-trip, and the editor draws the rules.
     alignment = align_spec.strip()
-    return Table(rows=rows, alignment=alignment or "", style=style)
+    if not style and n_hline >= 3 and re.fullmatch(
+            r"\|(?:(?:[lcr]|[pmb]\{[^}]*\})\|)+", alignment):
+        style = "grid"
+    elif not style and n_hline == 0 and out_rows:
+        style = "plain"
+    return Table(rows=out_rows, alignment=alignment or "", style=style,
+                 merges=merges, header=header, shading=shading)
 
 
 _INCLUDE_RE = re.compile(
