@@ -2099,10 +2099,11 @@ class MainWindow(QMainWindow):
 
         # Laid out like Word: file actions and undo / redo, then the Home
         # tab's Font, Paragraph and Styles groups, then Review.
-        def group(*items) -> None:
+        def group(*items, bar=None) -> None:
+            bar = bar or tb
             for it in items:
-                (tb.addWidget if isinstance(it, QWidget) else tb.addAction)(it)
-            tb.addSeparator()
+                (bar.addWidget if isinstance(it, QWidget) else bar.addAction)(it)
+            bar.addSeparator()
 
         group(self.act_new, self.act_open, self.act_save,
               self.act_export_pdf, self.act_print, self.act_open_project)
@@ -2114,11 +2115,28 @@ class MainWindow(QMainWindow):
         group(self.act_bullet, self.act_numbered, self.act_align_left,
               self.act_align_center, self.act_align_right,
               self.act_align_justify, self.act_show_marks)
-        group(style_gallery, self._numbered_cb)
-        group(class_gallery, self._pagesize_combo)
+        # Inside a plain widget so the toolbar's 24 px icon size does not
+        # shrink the tile.
+        numbered_box = QWidget(self)
+        nb = QHBoxLayout(numbered_box)
+        nb.setContentsMargins(0, 0, 0, 0)
+        nb.addWidget(self._numbered_cb)
+        # Styles, document and review do not fit beside the Home groups:
+        # a second row, as Word's ribbon is two rows tall.
+        self.addToolBarBreak()
+        tb2 = QToolBar("Document and review", self)
+        tb2.setMovable(False)
+        tb2.setIconSize(tb.iconSize())
+        self.addToolBar(tb2)
+        class_box = QWidget(self)
+        cb = QHBoxLayout(class_box)
+        cb.setContentsMargins(0, 0, 0, 0)
+        cb.addWidget(class_gallery)
+        group(style_gallery, numbered_box, bar=tb2)
+        group(class_box, self._pagesize_combo, bar=tb2)
         group(self.act_spell_check, self.act_comment,
-              self.act_accept_comment, self.act_reject_comment)
-        group(self.act_commit_now, self.act_history)
+              self.act_accept_comment, self.act_reject_comment, bar=tb2)
+        group(self.act_commit_now, self.act_history, bar=tb2)
 
         # Right-aligned compile buttons: push them to the far right
         # with a stretching spacer widget.
@@ -2127,11 +2145,11 @@ class MainWindow(QMainWindow):
         sp.setHorizontalStretch(1)
         sp.setHorizontalPolicy(sp.Policy.Expanding)
         spacer.setSizePolicy(sp)
-        tb.addWidget(spacer)
-        tb.addAction(self.act_compile_range)
-        tb.addAction(self.act_skip_images)
-        tb.addAction(self.act_compile_now)
-        tb.addAction(self.act_auto_compile)
+        tb2.addWidget(spacer)
+        tb2.addAction(self.act_compile_range)
+        tb2.addAction(self.act_skip_images)
+        tb2.addAction(self.act_compile_now)
+        tb2.addAction(self.act_auto_compile)
 
         # Left vertical toolbar for Insert / layout actions. Matches
         # the top toolbar's 24px icon size for a consistent look.

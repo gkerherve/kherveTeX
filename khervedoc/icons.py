@@ -5,7 +5,7 @@ image files. Every icon function returns a QIcon.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt
+from PySide6.QtCore import QPointF, QRect, QRectF, Qt
 from PySide6.QtGui import (
     QBrush, QColor, QFont, QFontMetricsF, QIcon, QPainter, QPainterPath,
     QPen, QPixmap, QPolygonF,
@@ -38,22 +38,6 @@ def _new_canvas() -> tuple[QPixmap, QPainter]:
     p.setRenderHint(QPainter.Antialiasing, True)
     p.setRenderHint(QPainter.TextAntialiasing, True)
     return px, p
-
-
-def _glyph_icon(letter: str, *, bold=False, italic=False, underline=False,
-                strike=False, color: QColor | None = None) -> QIcon:
-    px, p = _new_canvas()
-    f = QFont("Georgia")
-    f.setPointSize(15)
-    f.setBold(bold)
-    f.setItalic(italic)
-    f.setUnderline(underline)
-    f.setStrikeOut(strike)
-    p.setFont(f)
-    p.setPen(color if color is not None else _fg())
-    p.drawText(QRect(0, 0, _SIZE, _SIZE), Qt.AlignCenter, letter)
-    p.end()
-    return QIcon(px)
 
 
 # The classic "LaTeX" logo drawn on the page: L, a raised small A, T, a
@@ -181,64 +165,8 @@ def app_icon() -> QIcon:
 
 # ----- text formatting -----
 
-def bold() -> QIcon:       return _glyph_icon("B", bold=True)
-def italic() -> QIcon:     return _glyph_icon("I", italic=True)
-def underline() -> QIcon:  return _glyph_icon("U", underline=True)
-def strike() -> QIcon:     return _glyph_icon("S", strike=True)
-def code() -> QIcon:
-    px, p = _new_canvas()
-    p.setPen(QPen(_fg(), _LINE_W, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    p.drawPolyline([QPointF(9, 6), QPointF(4, 12), QPointF(9, 18)])
-    p.drawPolyline([QPointF(15, 6), QPointF(20, 12), QPointF(15, 18)])
-    p.end()
-    return QIcon(px)
-def smallcaps() -> QIcon:
-    px, p = _new_canvas()
-    f1 = QFont("Georgia"); f1.setPointSize(15); f1.setBold(True)
-    f2 = QFont("Georgia"); f2.setPointSize(11); f2.setBold(True)
-    p.setPen(_fg())
-    p.setFont(f1)
-    p.drawText(QRect(2, 0, 12, _SIZE), Qt.AlignCenter, "A")
-    p.setFont(f2)
-    p.drawText(QRect(12, 0, 12, _SIZE), Qt.AlignCenter, "A")
-    p.end()
-    return QIcon(px)
-def superscript() -> QIcon:
-    px, p = _new_canvas()
-    p.setPen(_fg())
-    f1 = QFont("Georgia"); f1.setPointSize(13); f1.setBold(True)
-    p.setFont(f1)
-    p.drawText(QRect(0, 4, 16, 20), Qt.AlignCenter, "X")
-    f2 = QFont("Georgia"); f2.setPointSize(10); f2.setBold(True)
-    p.setFont(f2)
-    p.drawText(QRect(12, 0, 12, 12), Qt.AlignLeft | Qt.AlignTop, "2")
-    p.end()
-    return QIcon(px)
-
-
-def subscript() -> QIcon:
-    px, p = _new_canvas()
-    p.setPen(_fg())
-    f1 = QFont("Georgia"); f1.setPointSize(13); f1.setBold(True)
-    p.setFont(f1)
-    p.drawText(QRect(0, 0, 16, 20), Qt.AlignCenter, "X")
-    f2 = QFont("Georgia"); f2.setPointSize(10); f2.setBold(True)
-    p.setFont(f2)
-    p.drawText(QRect(12, 12, 12, 12), Qt.AlignLeft | Qt.AlignTop, "2")
-    p.end()
-    return QIcon(px)
-
 
 # ----- headings -----
-
-def heading(level: int) -> QIcon:
-    px, p = _new_canvas()
-    f = QFont("Georgia"); f.setBold(True)
-    f.setPointSize({1: 14, 2: 13, 3: 12, 4: 11, 5: 10}.get(level, 12))
-    p.setFont(f); p.setPen(_fg())
-    p.drawText(QRect(0, 0, _SIZE, _SIZE), Qt.AlignCenter, f"H{level}")
-    p.end()
-    return QIcon(px)
 
 
 # Word's Styles gallery: a sample in the style's own look over its name.
@@ -290,586 +218,14 @@ def style_tile(level: int, name: str, w: int = 74, h: int = 46) -> QIcon:
 
 # ----- math -----
 
-def math_inline() -> QIcon:
-    px, p = _new_canvas()
-    f = QFont("Cambria Math"); f.setPointSize(15); f.setItalic(True)
-    p.setFont(f); p.setPen(_accent())
-    p.drawText(QRect(0, 0, _SIZE, _SIZE), Qt.AlignCenter, "ƒx")
-    p.end()
-    return QIcon(px)
-
-
-def math_block() -> QIcon:
-    px, p = _new_canvas()
-    f = QFont("Cambria Math"); f.setPointSize(13); f.setItalic(True)
-    p.setFont(f); p.setPen(_accent())
-    p.drawText(QRect(0, 0, _SIZE, _SIZE), Qt.AlignCenter, "Σxᵢ")
-    p.end()
-    return QIcon(px)
-
 
 # ----- structure -----
-
-def bullet_list() -> QIcon:
-    px, p = _new_canvas()
-    p.setBrush(QBrush(_fg())); p.setPen(Qt.NoPen)
-    for y in (6, 12, 18):
-        p.drawEllipse(QRect(4, y - 2, 4, 4))
-    p.setPen(QPen(_fg(), _LINE_W, Qt.SolidLine, Qt.RoundCap))
-    for y in (6, 12, 18):
-        p.drawLine(11, y, 21, y)
-    p.end()
-    return QIcon(px)
-
-
-def numbered_list() -> QIcon:
-    px, p = _new_canvas()
-    f = QFont("Arial"); f.setPointSize(7); f.setBold(True)
-    p.setFont(f); p.setPen(_fg())
-    for i, y in enumerate((6, 12, 18), start=1):
-        p.drawText(QRect(2, y - 6, 8, 12), Qt.AlignCenter, f"{i}.")
-    p.setPen(QPen(_fg(), _LINE_W, Qt.SolidLine, Qt.RoundCap))
-    for y in (6, 12, 18):
-        p.drawLine(11, y, 21, y)
-    p.end()
-    return QIcon(px)
-
-
-def link() -> QIcon:
-    px, p = _new_canvas()
-    p.setPen(QPen(_accent(), 2.2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    p.drawArc(3, 8, 10, 10, 90 * 16, 180 * 16)
-    p.drawArc(11, 6, 10, 10, -90 * 16, 180 * 16)
-    p.drawLine(9, 12, 15, 12)
-    p.end()
-    return QIcon(px)
-
-
-def footnote() -> QIcon:
-    px, p = _new_canvas()
-    f1 = QFont("Georgia"); f1.setPointSize(14)
-    f2 = QFont("Georgia"); f2.setPointSize(9); f2.setBold(True)
-    p.setPen(_fg())
-    p.setFont(f1); p.drawText(QRect(0, 4, 14, _SIZE), Qt.AlignLeft | Qt.AlignVCenter, "T")
-    p.setFont(f2); p.drawText(QRect(12, 0, 10, _SIZE), Qt.AlignLeft | Qt.AlignTop, "1")
-    p.end()
-    return QIcon(px)
-
-
-def citation() -> QIcon:
-    px, p = _new_canvas()
-    f = QFont("Arial"); f.setPointSize(11); f.setBold(True)
-    p.setFont(f); p.setPen(_fg())
-    p.drawText(QRect(0, 0, _SIZE, _SIZE), Qt.AlignCenter, "[1]")
-    p.end()
-    return QIcon(px)
-
-
-def cross_ref() -> QIcon:
-    px, p = _new_canvas()
-    p.setPen(QPen(_accent2(), 2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    p.drawLine(5, 14, 19, 14)
-    p.drawPolyline([QPointF(15, 10), QPointF(19, 14), QPointF(15, 18)])
-    f = QFont("Georgia"); f.setPointSize(8); f.setBold(True)
-    p.setFont(f); p.setPen(_fg())
-    p.drawText(QRect(0, 0, _SIZE, 10), Qt.AlignCenter, "ref")
-    p.end()
-    return QIcon(px)
-
-
-def figure() -> QIcon:
-    px, p = _new_canvas()
-    p.setPen(QPen(_fg(), 1.6))
-    p.setBrush(QBrush(QColor("#3a3a3a") if _dark else QColor("#f4f4f4")))
-    p.drawRect(3, 5, 18, 14)
-    p.setBrush(QBrush(_accent2())); p.setPen(Qt.NoPen)
-    p.drawEllipse(QRect(15, 8, 4, 4))
-    p.setBrush(QBrush(_accent())); p.setPen(Qt.NoPen)
-    p.drawPolygon([QPointF(4, 18), QPointF(10, 11), QPointF(14, 15), QPointF(20, 18)])
-    p.end()
-    return QIcon(px)
-
-
-def table() -> QIcon:
-    px, p = _new_canvas()
-    p.setPen(QPen(_fg(), 1.4))
-    p.setBrush(Qt.NoBrush)
-    rect = QRect(3, 5, 18, 14)
-    p.drawRect(rect)
-    p.drawLine(3, 10, 21, 10)
-    p.drawLine(3, 14, 21, 14)
-    p.drawLine(9, 5, 9, 19)
-    p.drawLine(15, 5, 15, 19)
-    header_bg = QColor("#2a3a5a") if _dark else QColor("#e8efff")
-    p.setBrush(QBrush(header_bg)); p.setPen(Qt.NoPen)
-    p.drawRect(QRect(4, 6, 16, 3))
-    p.end()
-    return QIcon(px)
-
-
-def drawing() -> QIcon:
-    """Pencil over a small wavy line — "freehand drawing"."""
-    px, p = _new_canvas()
-    # Wavy line below to suggest a sketch.
-    p.setPen(QPen(_accent(), 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    path = QPainterPath()
-    path.moveTo(3, 18)
-    path.cubicTo(QPointF(7, 14), QPointF(11, 22), QPointF(15, 18))
-    path.cubicTo(QPointF(18, 16), QPointF(20, 20), QPointF(22, 18))
-    p.drawPath(path)
-    # Pencil — angled rectangle + triangular tip.
-    p.setPen(QPen(_fg(), 1.4, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    p.setBrush(QBrush(_accent2()))
-    pencil = QPolygonF([
-        QPointF(15, 3), QPointF(19, 7), QPointF(9, 17),
-        QPointF(5, 13),
-    ])
-    p.drawPolygon(pencil)
-    # Pencil tip
-    p.setBrush(QBrush(_fg()))
-    p.drawPolygon(QPolygonF([
-        QPointF(5, 13), QPointF(9, 17), QPointF(4, 18),
-    ]))
-    p.end()
-    return QIcon(px)
 
 
 # ----- file ops + history -----
 
-def formatting_marks() -> QIcon:
-    """Pilcrow (¶), as Word's Show formatting marks button."""
-    px, p = _new_canvas()
-    p.setRenderHint(QPainter.Antialiasing, True)
-    p.setPen(QPen(_fg(), 1.6)); p.setBrush(QBrush(_fg()))
-    p.drawEllipse(QRectF(6, 4, 7, 8))
-    p.drawLine(QPointF(13, 4), QPointF(18, 4))
-    p.drawLine(QPointF(12.5, 4), QPointF(12.5, 20))
-    p.drawLine(QPointF(16.5, 4), QPointF(16.5, 20))
-    p.end()
-    return QIcon(px)
-
-
-def file_new() -> QIcon:
-    px, p = _new_canvas()
-    page_bg = QColor("#2d2d2d") if _dark else Qt.white
-    p.setPen(QPen(_fg(), 1.6)); p.setBrush(QBrush(page_bg))
-    p.drawPolygon([QPointF(5, 3), QPointF(15, 3), QPointF(19, 7),
-                   QPointF(19, 21), QPointF(5, 21)])
-    p.drawPolyline([QPointF(15, 3), QPointF(15, 7), QPointF(19, 7)])
-    p.setPen(QPen(_accent(), 2)); p.drawLine(12, 11, 12, 17); p.drawLine(9, 14, 15, 14)
-    p.end()
-    return QIcon(px)
-
-
-def project_open() -> QIcon:
-    """Folder with stacked pages — represents a multi-chapter project."""
-    px, p = _new_canvas()
-    p.setRenderHint(QPainter.Antialiasing, True)
-    pen = QPen(_fg(), 1.4)
-    p.setPen(pen)
-    # Back page
-    p.setBrush(QBrush(QColor("#c8daf0") if not _dark else QColor("#3a4a60")))
-    p.drawRect(QRect(7, 4, 13, 16))
-    # Front page
-    p.setBrush(QBrush(QColor("#e8f0fe") if not _dark else QColor("#4a5a70")))
-    p.drawRect(QRect(4, 6, 13, 16))
-    # Lines on front page
-    p.setPen(QPen(_fg(), 0.8))
-    for y in (10, 13, 16, 19):
-        p.drawLine(6, y, 15, y)
-    p.end()
-    return QIcon(px)
-
-
-def file_open() -> QIcon:
-    px, p = _new_canvas()
-    p.setPen(QPen(_fg(), 1.6)); p.setBrush(QBrush(QColor("#ffd073")))
-    p.drawPolygon([QPointF(3, 8), QPointF(9, 8), QPointF(11, 6),
-                   QPointF(20, 6), QPointF(20, 19), QPointF(3, 19)])
-    p.end()
-    return QIcon(px)
-
-
-def file_save() -> QIcon:
-    px, p = _new_canvas()
-    p.setPen(QPen(_fg(), 1.6)); p.setBrush(QBrush(_accent()))
-    p.drawPolygon([QPointF(4, 4), QPointF(17, 4), QPointF(20, 7),
-                   QPointF(20, 20), QPointF(4, 20)])
-    p.setBrush(QBrush(Qt.white)); p.setPen(Qt.NoPen)
-    p.drawRect(QRect(7, 4, 8, 5))
-    p.drawRect(QRect(7, 13, 10, 7))
-    p.end()
-    return QIcon(px)
-
-
-def undo() -> QIcon:
-    px, p = _new_canvas()
-    p.setRenderHint(QPainter.Antialiasing, True)
-    p.setPen(QPen(_fg(), 2.2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    p.setBrush(Qt.NoBrush)
-    path = QPainterPath()
-    path.moveTo(6, 8)
-    path.lineTo(13, 8)
-    path.cubicTo(21, 8, 21, 19, 13, 19)
-    path.lineTo(9, 19)
-    p.drawPath(path)
-    p.setBrush(QBrush(_fg())); p.setPen(Qt.NoPen)
-    p.drawPolygon([QPointF(2, 8), QPointF(8, 3.5), QPointF(8, 12.5)])
-    p.end()
-    return QIcon(px)
-
-
-def redo() -> QIcon:
-    px, p = _new_canvas()
-    p.setRenderHint(QPainter.Antialiasing, True)
-    p.setPen(QPen(_fg(), 2.2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    p.setBrush(Qt.NoBrush)
-    path = QPainterPath()
-    path.moveTo(18, 8)
-    path.lineTo(11, 8)
-    path.cubicTo(3, 8, 3, 19, 11, 19)
-    path.lineTo(15, 19)
-    p.drawPath(path)
-    p.setBrush(QBrush(_fg())); p.setPen(Qt.NoPen)
-    p.drawPolygon([QPointF(22, 8), QPointF(16, 3.5), QPointF(16, 12.5)])
-    p.end()
-    return QIcon(px)
-
-
-def export_pdf() -> QIcon:
-    px, p = _new_canvas()
-    page_bg = QColor("#2d2d2d") if _dark else Qt.white
-    p.setPen(QPen(_fg(), 1.6)); p.setBrush(QBrush(page_bg))
-    p.drawPolygon([QPointF(5, 3), QPointF(15, 3), QPointF(19, 7),
-                   QPointF(19, 21), QPointF(5, 21)])
-    f = QFont("Arial"); f.setPointSize(7); f.setBold(True)
-    p.setFont(f); p.setPen(QColor("#ff5555") if _dark else QColor("#c00"))
-    p.drawText(QRect(5, 10, 14, 10), Qt.AlignCenter, "PDF")
-    p.end()
-    return QIcon(px)
-
-
-def _draw_printer(p) -> None:
-    paper = QColor("#2d2d2d") if _dark else Qt.white
-    p.setPen(QPen(_fg(), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    p.setBrush(QBrush(paper))
-    p.drawRect(QRectF(7, 3, 10, 6))                      # paper in
-    p.setBrush(QBrush(_fg()))
-    p.drawRoundedRect(QRectF(3, 9, 18, 8), 2, 2)         # body
-    p.setBrush(QBrush(paper))
-    p.drawRect(QRectF(7, 14, 10, 7))                     # page out
-    p.setPen(QPen(_accent(), 1.4))
-    p.drawLine(QPointF(9, 17), QPointF(15, 17))
-    p.drawLine(QPointF(9, 19), QPointF(13, 19))
-
-
-def printer() -> QIcon:
-    px, p = _new_canvas()
-    _draw_printer(p)
-    p.end()
-    return QIcon(px)
-
-
-def print_preview() -> QIcon:
-    """A printed page under a magnifying glass."""
-    px, p = _new_canvas()
-    paper = QColor("#2d2d2d") if _dark else Qt.white
-    p.setPen(QPen(_fg(), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    p.setBrush(QBrush(paper))
-    p.drawPolygon([QPointF(4, 3), QPointF(13, 3), QPointF(17, 7),
-                   QPointF(17, 21), QPointF(4, 21)])
-    p.setPen(QPen(_fg(), 1.0))
-    for y in (8, 11, 14):
-        p.drawLine(QPointF(7, y), QPointF(13, y))
-    p.setPen(QPen(_accent(), 2.0, Qt.SolidLine, Qt.RoundCap))
-    p.setBrush(QBrush(paper))
-    p.drawEllipse(QRectF(10, 11, 7, 7))
-    p.drawLine(QPointF(16.5, 17.5), QPointF(20.5, 21.5))
-    p.end()
-    return QIcon(px)
-
-
-def history() -> QIcon:
-    px, p = _new_canvas()
-    p.setPen(QPen(_fg(), 2, Qt.SolidLine, Qt.RoundCap)); p.setBrush(Qt.NoBrush)
-    p.drawEllipse(QRect(4, 4, 16, 16))
-    p.drawLine(12, 8, 12, 12)
-    p.drawLine(12, 12, 16, 14)
-    p.end()
-    return QIcon(px)
-
-
-def commit() -> QIcon:
-    px, p = _new_canvas()
-    dot_bg = QColor("#2d2d2d") if _dark else Qt.white
-    p.setPen(QPen(_fg(), 2)); p.setBrush(QBrush(dot_bg))
-    p.drawLine(12, 3, 12, 8); p.drawLine(12, 16, 12, 21)
-    p.drawEllipse(QRect(7, 8, 10, 10))
-    p.end()
-    return QIcon(px)
-
-
-def branch() -> QIcon:
-    """Git branch icon — a forking line with two dots."""
-    px, p = _new_canvas()
-    col = _accent()
-    p.setPen(QPen(col, 2.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    p.setBrush(Qt.NoBrush)
-    # Main trunk
-    p.drawLine(8, 4, 8, 20)
-    # Fork line
-    p.drawLine(8, 12, 16, 6)
-    # Dots
-    p.setPen(Qt.NoPen)
-    p.setBrush(QBrush(col))
-    p.drawEllipse(QRect(5, 17, 6, 6))  # trunk tip
-    p.drawEllipse(QRect(13, 3, 6, 6))  # fork tip
-    p.end()
-    return QIcon(px)
-
-
-def spell_check() -> QIcon:
-    """ABC with a red wavy underline — the universal "spell check"
-    toolbar glyph. Renders cleanly at 24×24 in both light and dark
-    themes; the underline is the same red the highlighter uses."""
-    px, p = _new_canvas()
-    f = QFont("Arial"); f.setPointSize(11); f.setBold(True)
-    p.setFont(f); p.setPen(_fg())
-    p.drawText(QRect(0, 0, _SIZE, 18), Qt.AlignCenter, "ABC")
-    # Wavy red underline: a three-bump zigzag, hand-drawn so it
-    # reads as the same squiggle Qt's SpellCheckUnderline produces.
-    p.setPen(QPen(QColor("#d8000c"), 1.4, Qt.SolidLine, Qt.RoundCap,
-                  Qt.RoundJoin))
-    y_top = 18
-    y_bot = 21
-    xs = [4, 7, 10, 13, 16, 19]
-    pts: list[QPointF] = []
-    for i, x in enumerate(xs):
-        pts.append(QPointF(x, y_bot if i % 2 == 0 else y_top))
-    p.drawPolyline(pts)
-    p.end()
-    return QIcon(px)
-
-
-def page_break() -> QIcon:
-    px, p = _new_canvas()
-    page_bg = QColor("#2d2d2d") if _dark else Qt.white
-    p.setPen(QPen(_fg(), 1.6)); p.setBrush(QBrush(page_bg))
-    p.drawRect(QRect(4, 3, 16, 7))
-    p.drawRect(QRect(4, 14, 16, 7))
-    p.setPen(QPen(_accent(), 2, Qt.DashLine))
-    p.drawLine(2, 12, 22, 12)
-    p.end()
-    return QIcon(px)
-
-
-def horizontal_rule() -> QIcon:
-    px, p = _new_canvas()
-    p.setPen(QPen(_fg(), 2.5, Qt.SolidLine, Qt.RoundCap))
-    p.drawLine(3, 12, 21, 12)
-    p.end()
-    return QIcon(px)
-
 
 # ----- alignment -----
-
-def _alignment_icon(lines: list[tuple[int, int, int]]) -> QIcon:
-    px, p = _new_canvas()
-    p.setPen(QPen(_fg(), 2.0, Qt.SolidLine, Qt.RoundCap))
-    for y, x1, x2 in lines:
-        p.drawLine(x1, y, x2, y)
-    p.end()
-    return QIcon(px)
-
-
-def align_left() -> QIcon:
-    return _alignment_icon([(6, 3, 21), (11, 3, 16), (16, 3, 19), (21, 3, 14)])
-
-
-def align_center() -> QIcon:
-    return _alignment_icon([(6, 3, 21), (11, 7, 17), (16, 5, 19), (21, 6, 18)])
-
-
-def align_right() -> QIcon:
-    return _alignment_icon([(6, 3, 21), (11, 8, 21), (16, 5, 21), (21, 10, 21)])
-
-
-def align_justify() -> QIcon:
-    return _alignment_icon([(6, 3, 21), (11, 3, 21), (16, 3, 21), (21, 3, 21)])
-
-
-def _columns_icon(n: int) -> QIcon:
-    px, p = _new_canvas()
-    p.setPen(QPen(_fg(), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    p.setBrush(Qt.NoBrush)
-    outer = QRect(3, 3, 18, 18)
-    p.drawRect(outer)
-    if n >= 2:
-        col_w = outer.width() / n
-        p.setPen(QPen(_accent(), 1.4, Qt.SolidLine, Qt.RoundCap))
-        for c in range(n):
-            x0 = outer.left() + int(col_w * c) + 2
-            x1 = outer.left() + int(col_w * (c + 1)) - 2
-            for dy in (7, 11, 15, 19):
-                p.drawLine(x0, dy - 1, x1, dy - 1)
-        p.setPen(QPen(_fg(), 1.2, Qt.DashLine))
-        for c in range(1, n):
-            x = outer.left() + int(col_w * c)
-            p.drawLine(x, outer.top() + 2, x, outer.bottom() - 2)
-    else:
-        p.setPen(QPen(_accent(), 1.4, Qt.SolidLine, Qt.RoundCap))
-        for dy in (7, 11, 15, 19):
-            p.drawLine(outer.left() + 2, dy - 1, outer.right() - 2, dy - 1)
-    p.end()
-    return QIcon(px)
-
-
-def one_column() -> QIcon:   return _columns_icon(1)
-def two_columns() -> QIcon:  return _columns_icon(2)
-def three_columns() -> QIcon: return _columns_icon(3)
-
-
-def zoom_in() -> QIcon:
-    px, p = _new_canvas()
-    p.setPen(QPen(_fg(), 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    p.setBrush(Qt.NoBrush)
-    p.drawEllipse(QRect(4, 4, 12, 12))
-    p.drawLine(15, 15, 20, 20)
-    p.drawLine(7, 10, 13, 10); p.drawLine(10, 7, 10, 13)
-    p.end()
-    return QIcon(px)
-
-
-def symbol() -> QIcon:
-    px, p = _new_canvas()
-    f = QFont("Cambria Math")
-    f.setPointSize(17); f.setItalic(True)
-    p.setFont(f); p.setPen(_accent())
-    p.drawText(QRect(0, 0, _SIZE, _SIZE), Qt.AlignCenter, "\u03b1")
-    p.end()
-    return QIcon(px)
-
-
-def equation_builder() -> QIcon:
-    px, p = _new_canvas()
-    p.setRenderHint(QPainter.Antialiasing, True)
-    p.setPen(QPen(_accent(), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    p.drawLine(4, 5, 4, 19); p.drawLine(4, 5, 6, 5); p.drawLine(4, 19, 6, 19)
-    p.drawLine(20, 5, 20, 19); p.drawLine(20, 5, 18, 5); p.drawLine(20, 19, 18, 19)
-    f = QFont("Cambria Math"); f.setPointSize(8); f.setItalic(True)
-    p.setFont(f); p.setPen(_fg())
-    p.drawText(QRect(6, 3, 12, 10), Qt.AlignCenter, "x")
-    p.drawText(QRect(6, 13, 12, 10), Qt.AlignCenter, "y")
-    p.setPen(QPen(_fg(), 1.4)); p.drawLine(7, 12, 17, 12)
-    p.end()
-    return QIcon(px)
-
-
-def chemistry() -> QIcon:
-    """Erlenmeyer flask with an accent-coloured liquid."""
-    px, p = _new_canvas()
-    p.setRenderHint(QPainter.Antialiasing, True)
-
-    body = QPainterPath()
-    body.moveTo(9.5, 4)
-    body.lineTo(9.5, 9.5)
-    body.lineTo(4, 19.5)
-    body.lineTo(20, 19.5)
-    body.lineTo(14.5, 9.5)
-    body.lineTo(14.5, 4)
-
-    liquid = QPainterPath()
-    liquid.moveTo(6.9, 14.5)
-    liquid.lineTo(4, 19.5)
-    liquid.lineTo(20, 19.5)
-    liquid.lineTo(17.1, 14.5)
-    liquid.closeSubpath()
-    p.setPen(Qt.NoPen)
-    p.setBrush(_accent())
-    p.drawPath(liquid)
-
-    p.setBrush(Qt.NoBrush)
-    p.setPen(QPen(_fg(), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    p.drawPath(body)
-    p.drawLine(8, 4, 16, 4)  # lip
-    p.end()
-    return QIcon(px)
-
-
-def chemfig_structure() -> QIcon:
-    """A benzene hexagon with the accent-coloured aromatic ring inside —
-    the chemical-structure editor."""
-    import math as _math
-    px, p = _new_canvas()
-    p.setRenderHint(QPainter.Antialiasing, True)
-    cx, cy, r = 12.0, 12.0, 8.0
-    pts = [QPointF(cx + r * _math.cos(_math.radians(60 * i - 90)),
-                   cy + r * _math.sin(_math.radians(60 * i - 90)))
-           for i in range(6)]
-    hexagon = QPolygonF(pts)
-    p.setPen(QPen(_fg(), 1.7, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    p.setBrush(Qt.NoBrush)
-    p.drawPolygon(hexagon)
-    # inner aromatic ring
-    p.setPen(QPen(_accent(), 1.4))
-    p.drawEllipse(QPointF(cx, cy), r * 0.5, r * 0.5)
-    p.end()
-    return QIcon(px)
-
-
-def flowchart_builder() -> QIcon:
-    """A tiny flowchart: a rounded start box, an arrow, a decision diamond,
-    an arrow, a process box — the flowchart builder."""
-    px, p = _new_canvas()
-    p.setPen(QPen(_fg(), 1.3, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    p.setBrush(QBrush(_accent()))
-    p.drawRoundedRect(QRectF(7, 1.5, 10, 4.5), 2.2, 2.2)
-    p.drawLine(QPointF(12, 6), QPointF(12, 8))
-    p.setBrush(Qt.NoBrush)
-    p.drawPolygon(QPolygonF([QPointF(12, 8), QPointF(17, 11.5),
-                             QPointF(12, 15), QPointF(7, 11.5)]))
-    p.drawLine(QPointF(12, 15), QPointF(12, 17.5))
-    p.drawLine(QPointF(17, 11.5), QPointF(21, 11.5))
-    p.drawLine(QPointF(21, 11.5), QPointF(21, 19.5))
-    p.setBrush(QBrush(_accent2()))
-    p.drawRect(QRectF(7, 17.5, 10, 4.5))
-    p.setBrush(QBrush(_fg()))
-    p.setPen(Qt.NoPen)
-    p.drawPolygon(QPolygonF([QPointF(12, 17.5), QPointF(10.6, 15.9),
-                             QPointF(13.4, 15.9)]))
-    p.end()
-    return QIcon(px)
-
-
-def zoom_out() -> QIcon:
-    px, p = _new_canvas()
-    p.setPen(QPen(_fg(), 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    p.setBrush(Qt.NoBrush)
-    p.drawEllipse(QRect(4, 4, 12, 12))
-    p.drawLine(15, 15, 20, 20)
-    p.drawLine(7, 10, 13, 10)
-    p.end()
-    return QIcon(px)
-
-
-def fit_width() -> QIcon:
-    """Double-headed horizontal arrow between two vertical bars."""
-    px, p = _new_canvas()
-    p.setRenderHint(QPainter.Antialiasing, True)
-    pen = QPen(_fg(), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
-    p.setPen(pen)
-    # Left bar
-    p.drawLine(4, 5, 4, 19)
-    # Right bar
-    p.drawLine(20, 5, 20, 19)
-    # Horizontal arrow shaft
-    p.drawLine(6, 12, 18, 12)
-    # Left arrowhead
-    p.drawLine(6, 12, 9, 9); p.drawLine(6, 12, 9, 15)
-    # Right arrowhead
-    p.drawLine(18, 12, 15, 9); p.drawLine(18, 12, 15, 15)
-    p.end()
-    return QIcon(px)
 
 
 # ---- equation builder category icons ----
@@ -1003,176 +359,8 @@ def eq_environments() -> QIcon:
 
 # ----- review -----
 
-def highlight(color: str = "#FFFF00") -> QIcon:
-    """Marker pen icon filled with the given highlight colour."""
-    px, p = _new_canvas()
-    # Marker pen body (tilted rectangle)
-    pen_path = QPainterPath()
-    pen_path.moveTo(6, 18)
-    pen_path.lineTo(10, 4)
-    pen_path.lineTo(18, 6)
-    pen_path.lineTo(14, 20)
-    pen_path.closeSubpath()
-    p.setBrush(QBrush(QColor(color)))
-    p.setPen(QPen(_fg(), 1.2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    p.drawPath(pen_path)
-    # Tip
-    p.setPen(QPen(_fg(), 1.5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    p.drawLine(QPointF(6, 18), QPointF(4, 22))
-    p.end()
-    return QIcon(px)
-
-
-def comment() -> QIcon:
-    """Speech bubble icon for reviewer comments."""
-    px, p = _new_canvas()
-    p.setPen(QPen(_fg(), 1.5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    p.setBrush(QBrush(QColor("#e0ecff") if not _dark else QColor("#2a4060")))
-    # Bubble body
-    bubble = QPainterPath()
-    bubble.addRoundedRect(QRectF(2, 3, 20, 14), 3, 3)
-    p.drawPath(bubble)
-    # Tail
-    tail = QPolygonF([QPointF(6, 17), QPointF(10, 17), QPointF(5, 22)])
-    p.drawPolygon(tail)
-    # Lines inside bubble
-    p.setPen(QPen(_fg(), 1.0, Qt.SolidLine, Qt.RoundCap))
-    p.drawLine(6, 8, 18, 8)
-    p.drawLine(6, 12, 15, 12)
-    p.end()
-    return QIcon(px)
-
-
-def accept_change() -> QIcon:
-    """Green checkmark for accepting a comment/change."""
-    px, p = _new_canvas()
-    p.setPen(QPen(QColor("#2e7d32"), 2.5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    p.drawPolyline([QPointF(5, 13), QPointF(10, 18), QPointF(19, 6)])
-    p.end()
-    return QIcon(px)
-
-
-def reject_change() -> QIcon:
-    """Red X for rejecting a comment/change."""
-    px, p = _new_canvas()
-    p.setPen(QPen(QColor("#c62828"), 2.5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    p.drawLine(QPointF(6, 6), QPointF(18, 18))
-    p.drawLine(QPointF(18, 6), QPointF(6, 18))
-    p.end()
-    return QIcon(px)
-
-
-def prev_comment() -> QIcon:
-    """Left arrow for navigating to previous comment."""
-    px, p = _new_canvas()
-    p.setPen(QPen(_fg(), 2.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    p.drawPolyline([QPointF(14, 6), QPointF(7, 12), QPointF(14, 18)])
-    p.drawLine(QPointF(7, 12), QPointF(20, 12))
-    p.end()
-    return QIcon(px)
-
-
-def next_comment() -> QIcon:
-    """Right arrow for navigating to next comment."""
-    px, p = _new_canvas()
-    p.setPen(QPen(_fg(), 2.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    p.drawPolyline([QPointF(10, 6), QPointF(17, 12), QPointF(10, 18)])
-    p.drawLine(QPointF(4, 12), QPointF(17, 12))
-    p.end()
-    return QIcon(px)
-
 
 # ----- compile / auto-compile -----
-
-def compile_pdf() -> QIcon:
-    """Play-triangle over a small PDF page — "compile now" button."""
-    px, p = _new_canvas()
-    page_bg = QColor("#2d2d2d") if _dark else Qt.white
-    p.setPen(QPen(_fg(), 1.2)); p.setBrush(QBrush(page_bg))
-    p.drawPolygon([QPointF(3, 2), QPointF(13, 2), QPointF(16, 5),
-                   QPointF(16, 18), QPointF(3, 18)])
-    green = QColor("#5fba7d") if _dark else QColor("#2a8c4a")
-    p.setPen(Qt.NoPen); p.setBrush(QBrush(green))
-    p.drawPolygon([QPointF(13, 8), QPointF(13, 20), QPointF(22, 14)])
-    p.end()
-    return QIcon(px)
-
-
-def auto_compile_on() -> QIcon:
-    """Circular arrow (sync) — auto-compile is ON."""
-    px, p = _new_canvas()
-    green = QColor("#5fba7d") if _dark else QColor("#2a8c4a")
-    p.setPen(QPen(green, 2.2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    p.setBrush(Qt.NoBrush)
-    path = QPainterPath()
-    path.arcMoveTo(QRectF(4, 4, 16, 16), 60)
-    path.arcTo(QRectF(4, 4, 16, 16), 60, -300)
-    p.drawPath(path)
-    tip = path.currentPosition()
-    p.setPen(Qt.NoPen); p.setBrush(QBrush(green))
-    p.drawPolygon([QPointF(tip.x() - 4, tip.y() - 1),
-                   QPointF(tip.x() + 1, tip.y() - 5),
-                   QPointF(tip.x() + 1, tip.y() + 3)])
-    p.end()
-    return QIcon(px)
-
-
-def auto_compile_off() -> QIcon:
-    """Circular arrow (sync) with a diagonal strike — auto-compile is OFF."""
-    px, p = _new_canvas()
-    grey = QColor("#888") if _dark else QColor("#999")
-    p.setPen(QPen(grey, 2.2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    p.setBrush(Qt.NoBrush)
-    path = QPainterPath()
-    path.arcMoveTo(QRectF(4, 4, 16, 16), 60)
-    path.arcTo(QRectF(4, 4, 16, 16), 60, -300)
-    p.drawPath(path)
-    tip = path.currentPosition()
-    p.setPen(Qt.NoPen); p.setBrush(QBrush(grey))
-    p.drawPolygon([QPointF(tip.x() - 4, tip.y() - 1),
-                   QPointF(tip.x() + 1, tip.y() - 5),
-                   QPointF(tip.x() + 1, tip.y() + 3)])
-    red = QColor("#ff5555") if _dark else QColor("#c00")
-    p.setPen(QPen(red, 2.4, Qt.SolidLine, Qt.RoundCap))
-    p.drawLine(QPointF(5, 5), QPointF(19, 19))
-    p.end()
-    return QIcon(px)
-
-
-def compile_no_images() -> QIcon:
-    """Page with a crossed-out image icon — compile without images."""
-    px, p = _new_canvas()
-    page_bg = QColor("#2d2d2d") if _dark else Qt.white
-    p.setPen(QPen(_fg(), 1.2)); p.setBrush(QBrush(page_bg))
-    p.drawPolygon([QPointF(3, 2), QPointF(13, 2), QPointF(16, 5),
-                   QPointF(16, 18), QPointF(3, 18)])
-    # Small "mountain + sun" image icon on the page
-    grey = QColor("#999") if _dark else QColor("#888")
-    p.setPen(QPen(grey, 1.0)); p.setBrush(Qt.NoBrush)
-    p.drawRect(5, 7, 8, 6)
-    # Diagonal cross-out
-    red = QColor("#ff5555") if _dark else QColor("#c00")
-    p.setPen(QPen(red, 2.0, Qt.SolidLine, Qt.RoundCap))
-    p.drawLine(QPointF(4, 6), QPointF(14, 14))
-    p.end()
-    return QIcon(px)
-
-
-def compile_range() -> QIcon:
-    """Page with two horizontal bracket lines — compile-range toggle."""
-    px, p = _new_canvas()
-    page_bg = QColor("#2d2d2d") if _dark else Qt.white
-    p.setPen(QPen(_fg(), 1.2)); p.setBrush(QBrush(page_bg))
-    p.drawPolygon([QPointF(3, 2), QPointF(13, 2), QPointF(16, 5),
-                   QPointF(16, 18), QPointF(3, 18)])
-    green = QColor("#5fba7d") if _dark else QColor("#2a8c4a")
-    p.setPen(QPen(green, 1.8, Qt.SolidLine, Qt.RoundCap))
-    p.drawLine(QPointF(5, 8), QPointF(14, 8))
-    red = QColor("#ff5555") if _dark else QColor("#c00")
-    p.setPen(QPen(red, 1.8, Qt.SolidLine, Qt.RoundCap))
-    p.drawLine(QPointF(5, 14), QPointF(14, 14))
-    p.end()
-    return QIcon(px)
 
 
 # ----- drawing dialog (paint tools) -----
@@ -1726,3 +914,609 @@ def numbered_heading_tile(w: int = 70, h: int = 40) -> QIcon:
     p.drawText(QRect(0, h - 14, w, 14), Qt.AlignCenter, "Numbered")
     p.end()
     return QIcon(px)
+
+
+# =====================================================================
+# Word-style toolbar icons
+# ---------------------------------------------------------------------
+# Drawn in the look of Office's Fluent icons so Word users recognise
+# them: thin grey outlines, Word blue for the meaningful part, a single
+# light fill. Painted at 2x so they stay crisp on high-DPI screens.
+# =====================================================================
+
+_WORD_BLUE = "#2b579a"
+
+
+def _ink() -> QColor:
+    return QColor("#d6d6d6") if _dark else QColor("#424242")
+
+
+def _blue() -> QColor:
+    return QColor("#7aa7e8") if _dark else QColor(_WORD_BLUE)
+
+
+def _paper() -> QColor:
+    return QColor("#3a3a3a") if _dark else QColor("#ffffff")
+
+
+def _tint() -> QColor:
+    return QColor("#2f4a70") if _dark else QColor("#dce8f7")
+
+
+class _W:
+    """A 24-unit canvas drawn at 2x, with Fluent-style strokes."""
+
+    def __init__(self) -> None:
+        self.px = QPixmap(_SIZE * 2, _SIZE * 2)
+        self.px.setDevicePixelRatio(2.0)
+        self.px.fill(Qt.transparent)
+        self.p = QPainter(self.px)
+        self.p.setRenderHint(QPainter.Antialiasing, True)
+        self.p.setRenderHint(QPainter.TextAntialiasing, True)
+
+    def pen(self, color=None, w: float = 1.5) -> "_W":
+        self.p.setPen(QPen(color or _ink(), w, Qt.SolidLine, Qt.RoundCap,
+                           Qt.RoundJoin))
+        return self
+
+    def brush(self, color=None) -> "_W":
+        self.p.setBrush(color if color is not None else Qt.NoBrush)
+        return self
+
+    def line(self, x1, y1, x2, y2, color=None, w: float = 1.5) -> None:
+        self.pen(color, w)
+        self.p.drawLine(QPointF(x1, y1), QPointF(x2, y2))
+
+    def rect(self, x, y, w, h, color=None, fill=None, r: float = 1.5,
+             lw: float = 1.5) -> None:
+        self.pen(color, lw).brush(fill)
+        self.p.drawRoundedRect(QRectF(x, y, w, h), r, r)
+
+    def fillrect(self, x, y, w, h, color) -> None:
+        self.p.setPen(Qt.NoPen); self.p.setBrush(color)
+        self.p.drawRect(QRectF(x, y, w, h))
+
+    def poly(self, pts, color=None, fill=None, lw: float = 1.5,
+             closed: bool = True) -> None:
+        self.pen(color, lw).brush(fill)
+        poly = QPolygonF([QPointF(x, y) for x, y in pts])
+        if closed:
+            self.p.drawPolygon(poly)
+        else:
+            self.p.drawPolyline(poly)
+
+    def dot(self, x, y, r=1.4, color=None) -> None:
+        self.p.setPen(Qt.NoPen); self.p.setBrush(color or _ink())
+        self.p.drawEllipse(QPointF(x, y), r, r)
+
+    def text(self, rect, s: str, *, size: float = 15, bold=False,
+             italic=False, color=None, family="Segoe UI",
+             align=Qt.AlignCenter) -> None:
+        f = QFont(family)
+        f.setStyleHint(QFont.SansSerif)
+        f.setPixelSize(int(size)); f.setBold(bold); f.setItalic(italic)
+        self.p.setFont(f); self.p.setPen(color or _ink())
+        self.p.drawText(QRectF(*rect), align, s)
+
+    def page(self, x=5, y=2.5, w=14, h=19, fold: float = 4) -> None:
+        """Document sheet with a folded corner."""
+        self.poly([(x, y), (x + w - fold, y), (x + w, y + fold),
+                   (x + w, y + h), (x, y + h)], fill=_paper())
+        self.poly([(x + w - fold, y), (x + w - fold, y + fold),
+                   (x + w, y + fold)], closed=False)
+
+    def done(self) -> QIcon:
+        self.p.end()
+        return QIcon(self.px)
+
+
+# ----- file -----
+
+def file_new() -> QIcon:
+    c = _W(); c.page()
+    c.line(16, 15, 16, 21, _blue(), 1.8); c.line(13, 18, 19, 18, _blue(), 1.8)
+    return c.done()
+
+
+def file_open() -> QIcon:
+    c = _W()
+    c.poly([(2.5, 6), (8.5, 6), (10.5, 8), (20, 8), (20, 19.5), (2.5, 19.5)],
+           fill=QColor("#f6c85f") if not _dark else QColor("#a8862e"))
+    c.poly([(2.5, 19.5), (5.5, 11.5), (22, 11.5), (19.5, 19.5)],
+           fill=QColor("#ffdd80") if not _dark else QColor("#c9a040"))
+    return c.done()
+
+
+def file_save() -> QIcon:
+    c = _W()
+    c.poly([(3.5, 3.5), (17, 3.5), (20.5, 7), (20.5, 20.5), (3.5, 20.5)],
+           fill=_blue(), color=_blue())
+    c.fillrect(7, 4.5, 9, 5.5, _paper())
+    c.fillrect(13, 5.3, 1.8, 3.6, _blue())
+    c.rect(6.5, 13, 11, 7, color=_paper(), fill=_paper(), r=0.6, lw=0.8)
+    return c.done()
+
+
+def export_pdf() -> QIcon:
+    c = _W(); c.page(4, 2.5, 14, 19)
+    c.rect(9, 11, 13, 8, color=QColor("#c43e1c"), fill=QColor("#c43e1c"),
+           r=1.2, lw=1)
+    c.text((9, 11, 13, 8), "PDF", size=6.5, bold=True, color=QColor("white"))
+    return c.done()
+
+
+def _printer(c: _W) -> None:
+    c.rect(6.5, 3, 11, 6, fill=_paper())
+    c.rect(2.5, 8.5, 19, 9, fill=_tint())
+    c.rect(6.5, 14, 11, 7, fill=_paper())
+    c.line(8.5, 17, 15.5, 17, w=1); c.line(8.5, 19, 13.5, 19, w=1)
+    c.dot(18.3, 11.3, 0.9, _blue())
+
+
+def printer() -> QIcon:
+    c = _W(); _printer(c)
+    return c.done()
+
+
+def print_preview() -> QIcon:
+    c = _W(); c.page(3, 2.5, 13, 18)
+    c.pen(_blue(), 1.6).brush(_paper())
+    c.p.drawEllipse(QPointF(15, 15), 4, 4)
+    c.line(18, 18, 21.5, 21.5, _blue(), 2)
+    return c.done()
+
+
+def project_open() -> QIcon:
+    c = _W()
+    c.page(8, 2.5, 12, 15, 3)
+    c.page(4, 6, 12, 15.5, 3)
+    for y in (12, 14.5, 17):
+        c.line(6.5, y, 13, y, _blue(), 1)
+    return c.done()
+
+
+def undo() -> QIcon:
+    c = _W(); c.pen(_blue(), 1.8)
+    path = QPainterPath(); path.moveTo(5, 9)
+    path.lineTo(14, 9); path.cubicTo(21, 9, 21, 19.5, 14, 19.5)
+    path.lineTo(9, 19.5)
+    c.p.drawPath(path)
+    c.poly([(9, 4.5), (4.5, 9), (9, 13.5)], color=_blue(), closed=False,
+           lw=1.8)
+    return c.done()
+
+
+def redo() -> QIcon:
+    c = _W(); c.pen(_blue(), 1.8)
+    path = QPainterPath(); path.moveTo(19, 9)
+    path.lineTo(10, 9); path.cubicTo(3, 9, 3, 19.5, 10, 19.5)
+    path.lineTo(15, 19.5)
+    c.p.drawPath(path)
+    c.poly([(15, 4.5), (19.5, 9), (15, 13.5)], color=_blue(), closed=False,
+           lw=1.8)
+    return c.done()
+
+
+# ----- font group: Office draws letters in a plain sans -----
+
+def _letter(s: str, **kw) -> QIcon:
+    c = _W(); c.text((0, 0, 24, 23), s, size=kw.pop("size", 17), **kw)
+    return c.done()
+
+
+def bold() -> QIcon:
+    return _letter("B", bold=True)
+
+
+def italic() -> QIcon:
+    return _letter("I", italic=True, family="Georgia")
+
+
+def underline() -> QIcon:
+    c = _W(); c.text((0, 0, 24, 20), "U", size=15)
+    c.line(6, 20.5, 18, 20.5, w=1.6)
+    return c.done()
+
+
+def strike() -> QIcon:
+    c = _W(); c.text((0, 0, 24, 23), "ab", size=14)
+    c.line(3.5, 12.5, 20.5, 12.5, _blue(), 1.6)
+    return c.done()
+
+
+def subscript() -> QIcon:
+    c = _W(); c.text((1, 1, 16, 20), "X", size=15)
+    c.text((13, 10, 10, 13), "2", size=9, bold=True, color=_blue())
+    return c.done()
+
+
+def superscript() -> QIcon:
+    c = _W(); c.text((1, 4, 16, 20), "X", size=15)
+    c.text((13, 0, 10, 12), "2", size=9, bold=True, color=_blue())
+    return c.done()
+
+
+def smallcaps() -> QIcon:
+    c = _W(); c.text((0, 0, 14, 23), "A", size=16)
+    c.text((11, 3, 13, 20), "A", size=11, color=_blue())
+    return c.done()
+
+
+def code() -> QIcon:
+    c = _W()
+    c.poly([(8.5, 6), (3.5, 12), (8.5, 18)], closed=False, lw=1.7)
+    c.poly([(15.5, 6), (20.5, 12), (15.5, 18)], closed=False, lw=1.7)
+    c.line(13.3, 5, 10.7, 19, _blue(), 1.5)
+    return c.done()
+
+
+def highlight() -> QIcon:
+    c = _W()
+    c.poly([(13.5, 3), (19, 8.5), (11, 16.5), (5.5, 11)], fill=_paper())
+    c.poly([(5.5, 11), (11, 16.5), (8, 17.5), (4.5, 14)], fill=_tint())
+    c.fillrect(2.5, 19.5, 19, 3, QColor("#ffeb3b"))
+    return c.done()
+
+
+# ----- paragraph group -----
+
+def bullet_list() -> QIcon:
+    c = _W()
+    for y in (6, 12, 18):
+        c.dot(5, y, 1.6, _blue()); c.line(9.5, y, 20.5, y)
+    return c.done()
+
+
+def numbered_list() -> QIcon:
+    c = _W()
+    for k, y in enumerate((6, 12, 18), 1):
+        c.text((1, y - 5, 7, 10), str(k), size=7.5, bold=True, color=_blue())
+        c.line(9.5, y, 20.5, y)
+    return c.done()
+
+
+def _align(widths) -> QIcon:
+    c = _W()
+    for k, (x1, x2) in enumerate(widths):
+        c.line(x1, 5 + k * 4.6, x2, 5 + k * 4.6)
+    return c.done()
+
+
+def align_left() -> QIcon:
+    return _align([(3.5, 20.5), (3.5, 14), (3.5, 20.5), (3.5, 12)])
+
+
+def align_center() -> QIcon:
+    return _align([(3.5, 20.5), (7, 17), (3.5, 20.5), (8, 16)])
+
+
+def align_right() -> QIcon:
+    return _align([(3.5, 20.5), (10, 20.5), (3.5, 20.5), (12, 20.5)])
+
+
+def align_justify() -> QIcon:
+    return _align([(3.5, 20.5)] * 4)
+
+
+def formatting_marks() -> QIcon:
+    return _letter("¶", size=17, color=_blue())
+
+
+def spell_check() -> QIcon:
+    c = _W(); c.text((0, 0, 24, 15), "ABC", size=8.5, bold=True)
+    c.poly([(5, 16.5), (9.5, 20.5), (19, 11.5)], color=_blue(), closed=False,
+           lw=2)
+    return c.done()
+
+
+# ----- review -----
+
+def comment() -> QIcon:
+    c = _W()
+    c.poly([(3, 4), (21, 4), (21, 16), (11, 16), (6.5, 20.5), (6.5, 16),
+            (3, 16)], fill=_paper())
+    c.line(6.5, 8.5, 17.5, 8.5, _blue(), 1.2)
+    c.line(6.5, 11.8, 14, 11.8, _blue(), 1.2)
+    return c.done()
+
+
+def accept_change() -> QIcon:
+    c = _W()
+    c.poly([(4.5, 12.5), (9.5, 17.5), (19.5, 6.5)], closed=False,
+           color=QColor("#107c10"), lw=2.4)
+    return c.done()
+
+
+def reject_change() -> QIcon:
+    c = _W()
+    c.line(6, 6, 18, 18, QColor("#c42b1c"), 2.4)
+    c.line(18, 6, 6, 18, QColor("#c42b1c"), 2.4)
+    return c.done()
+
+
+def prev_comment() -> QIcon:
+    c = _W()
+    c.poly([(5, 4), (19, 4), (19, 13), (5, 13)], fill=_paper(), lw=1.2)
+    c.poly([(7, 21), (12, 16), (17, 21)], color=_blue(), closed=False, lw=1.8)
+    return c.done()
+
+
+def next_comment() -> QIcon:
+    c = _W()
+    c.poly([(5, 11), (19, 11), (19, 20), (5, 20)], fill=_paper(), lw=1.2)
+    c.poly([(7, 3), (12, 8), (17, 3)], color=_blue(), closed=False, lw=1.8)
+    return c.done()
+
+
+def history() -> QIcon:
+    c = _W(); c.pen(_ink(), 1.5).brush(_paper())
+    c.p.drawEllipse(QPointF(12.5, 12.5), 8.5, 8.5)
+    c.line(12.5, 7.5, 12.5, 12.5, _blue(), 1.7)
+    c.line(12.5, 12.5, 16, 14.5, _blue(), 1.7)
+    return c.done()
+
+
+def commit() -> QIcon:
+    """Snapshot uploaded: a cloud with an up arrow."""
+    c = _W(); c.pen(_ink(), 1.5).brush(_paper())
+    path = QPainterPath(); path.moveTo(6.5, 18.5)
+    path.cubicTo(1.5, 18.5, 1.5, 11, 6.5, 11)
+    path.cubicTo(7.5, 5, 16.5, 5, 17.5, 10)
+    path.cubicTo(22.5, 10, 22.5, 18.5, 17.5, 18.5)
+    path.closeSubpath()
+    c.p.drawPath(path)
+    c.line(12, 20.5, 12, 11.5, _blue(), 1.8)
+    c.poly([(9, 14.5), (12, 11.5), (15, 14.5)], color=_blue(), closed=False,
+           lw=1.8)
+    return c.done()
+
+
+def branch() -> QIcon:
+    c = _W()
+    c.line(7, 5, 7, 19, w=1.5)
+    c.pen(_ink(), 1.5)
+    path = QPainterPath(); path.moveTo(17, 8); path.cubicTo(17, 14, 7, 12, 7, 17)
+    c.p.drawPath(path)
+    for x, y in ((7, 5), (7, 19), (17, 7)):
+        c.pen(_blue(), 1.5).brush(_paper())
+        c.p.drawEllipse(QPointF(x, y), 2.2, 2.2)
+    return c.done()
+
+
+# ----- compile -----
+
+def compile_pdf() -> QIcon:
+    c = _W(); c.page(3, 2.5, 13, 18)
+    c.poly([(13, 11), (21.5, 16), (13, 21)], color=QColor("#107c10"),
+           fill=QColor("#107c10"), lw=1)
+    return c.done()
+
+
+def auto_compile_on() -> QIcon:
+    c = _W(); c.pen(QColor("#107c10"), 1.8)
+    c.p.drawArc(QRectF(4, 4, 16, 16), 60 * 16, 290 * 16)
+    c.poly([(16, 2.5), (19.5, 6), (15, 8)], color=QColor("#107c10"),
+           fill=QColor("#107c10"), lw=1)
+    c.dot(12, 12, 2, QColor("#107c10"))
+    return c.done()
+
+
+def auto_compile_off() -> QIcon:
+    c = _W(); c.pen(_ink(), 1.8)
+    c.p.drawArc(QRectF(4, 4, 16, 16), 60 * 16, 290 * 16)
+    c.line(4, 20, 20, 4, QColor("#c42b1c"), 1.8)
+    return c.done()
+
+
+def compile_no_images() -> QIcon:
+    c = _W(); _picture(c)
+    c.line(3, 21, 21, 3, QColor("#c42b1c"), 1.8)
+    return c.done()
+
+
+def compile_range() -> QIcon:
+    c = _W(); c.page(5, 2.5, 14, 19)
+    c.fillrect(6, 8, 12, 7, _tint())
+    c.line(3, 8, 21, 8, _blue(), 1.4); c.line(3, 15, 21, 15, _blue(), 1.4)
+    return c.done()
+
+
+# ----- insert -----
+
+def _picture(c: _W) -> None:
+    c.rect(3, 4.5, 18, 15, fill=_paper())
+    c.poly([(4.5, 18), (10, 11), (14, 15.5), (16.5, 13), (19.5, 18)],
+           color=_blue(), fill=_tint(), lw=1.2)
+    c.dot(16, 8.5, 1.8, QColor("#f2b01e"))
+
+
+def figure() -> QIcon:
+    c = _W(); _picture(c)
+    return c.done()
+
+
+def table() -> QIcon:
+    c = _W()
+    c.rect(3, 4, 18, 16, fill=_paper(), r=1)
+    c.fillrect(3.8, 4.8, 16.4, 4, _tint())
+    c.line(3, 9, 21, 9, w=1); c.line(3, 14.5, 21, 14.5, w=1)
+    c.line(9, 4, 9, 20, w=1); c.line(15, 4, 15, 20, w=1)
+    return c.done()
+
+
+def drawing() -> QIcon:
+    c = _W()
+    c.pen(_blue(), 1.5).brush(_tint())
+    c.p.drawEllipse(QRectF(3, 3, 9, 9))
+    c.rect(11, 11, 10, 9, color=_ink(), fill=_paper(), r=0.8)
+    c.poly([(5, 21), (9, 14), (13, 21)], color=_ink(), fill=_paper())
+    return c.done()
+
+
+def flowchart_builder() -> QIcon:
+    c = _W()
+    c.rect(7, 2.5, 10, 5, fill=_tint(), color=_blue(), r=1)
+    c.line(12, 7.5, 12, 10.5, w=1.2)
+    c.poly([(12, 10.5), (16.5, 13.5), (12, 16.5), (7.5, 13.5)], fill=_paper())
+    c.line(12, 16.5, 12, 18.5, w=1.2)
+    c.rect(7, 18.5, 10, 3.5, fill=_tint(), color=_blue(), r=1)
+    return c.done()
+
+
+def link() -> QIcon:
+    c = _W(); c.pen(_blue(), 1.8).brush(Qt.NoBrush)
+    c.p.drawRoundedRect(QRectF(2.5, 8.5, 11, 7), 3.5, 3.5)
+    c.pen(_ink(), 1.8)
+    c.p.drawRoundedRect(QRectF(10.5, 8.5, 11, 7), 3.5, 3.5)
+    return c.done()
+
+
+def footnote() -> QIcon:
+    c = _W(); c.text((0, 0, 17, 15), "ab", size=11)
+    c.text((14, 0, 9, 9), "1", size=7.5, bold=True, color=_blue())
+    c.line(3, 17, 11, 17, w=1)
+    c.line(3, 20.5, 20, 20.5, _blue(), 1.2)
+    return c.done()
+
+
+def citation() -> QIcon:
+    c = _W()
+    c.rect(4, 3, 15, 18, fill=_tint(), color=_blue(), r=1)
+    c.line(7, 3, 7, 21, _blue(), 1.2)
+    c.text((7, 4, 12, 15), "“”", size=13, bold=True, color=_blue(),
+           family="Georgia")
+    return c.done()
+
+
+def cross_ref() -> QIcon:
+    c = _W()
+    c.poly([(6, 3), (18, 3), (18, 21), (12, 16.5), (6, 21)], fill=_tint(),
+           color=_blue())
+    c.line(9, 8, 15, 8, w=1)
+    return c.done()
+
+
+def math_inline() -> QIcon:
+    c = _W(); c.text((0, 0, 24, 22), "π", size=17, color=_blue(),
+                     family="Georgia")
+    return c.done()
+
+
+def math_block() -> QIcon:
+    c = _W()
+    c.rect(2.5, 4.5, 19, 15, fill=_paper())
+    c.text((2.5, 4.5, 19, 14), "π", size=13, color=_blue(),
+           family="Georgia")
+    return c.done()
+
+
+def symbol() -> QIcon:
+    return _letter("Ω", size=17, family="Georgia")
+
+
+def equation_builder() -> QIcon:
+    c = _W()
+    c.text((1, 0, 22, 13), "x", size=10, italic=True, family="Georgia",
+           color=_blue())
+    c.line(5, 12, 19, 12, w=1.3)
+    c.text((1, 12, 22, 12), "y", size=10, italic=True, family="Georgia",
+           color=_blue())
+    c.rect(2, 2, 20, 20, color=_ink(), r=2, lw=1)
+    return c.done()
+
+
+def chemistry() -> QIcon:
+    c = _W()
+    c.poly([(9, 3), (15, 3)], closed=False, lw=1.5)
+    c.poly([(10, 3), (10, 9), (4.5, 19.5), (5.5, 21), (18.5, 21),
+            (19.5, 19.5), (14, 9), (14, 3)], fill=_paper(), closed=False)
+    c.poly([(7, 15), (17, 15), (19, 19.5), (5, 19.5)], color=_blue(),
+           fill=_tint(), lw=0.8)
+    return c.done()
+
+
+def chemfig_structure() -> QIcon:
+    import math
+    c = _W()
+    pts = [(12 + 8 * math.cos(math.radians(90 + 60 * k)),
+            12 + 8 * math.sin(math.radians(90 + 60 * k))) for k in range(6)]
+    c.poly(pts, fill=_paper())
+    inner = [(12 + 5 * math.cos(math.radians(90 + 60 * k)),
+              12 + 5 * math.sin(math.radians(90 + 60 * k))) for k in range(6)]
+    for k in (0, 2, 4):
+        c.line(*inner[k], *inner[k + 1], _blue(), 1.3)
+    return c.done()
+
+
+def _columns(n: int) -> QIcon:
+    c = _W(); c.rect(3, 3, 18, 18, fill=_paper(), r=1, lw=1.2)
+    gap = 1.8
+    w = (14 - gap * (n - 1)) / n
+    for k in range(n):
+        x = 5 + k * (w + gap)
+        for y in (6.5, 9.5, 12.5, 15.5, 18.5):
+            c.line(x, y, x + w, y, _blue(), 1)
+    return c.done()
+
+
+def one_column() -> QIcon:
+    return _columns(1)
+
+
+def two_columns() -> QIcon:
+    return _columns(2)
+
+
+def three_columns() -> QIcon:
+    return _columns(3)
+
+
+def page_break() -> QIcon:
+    c = _W()
+    c.poly([(5, 2.5), (19, 2.5), (19, 9), (5, 9)], fill=_paper(), closed=False)
+    c.poly([(5, 21.5), (5, 15), (19, 15), (19, 21.5)], fill=_paper(),
+           closed=False)
+    c.pen(_blue(), 1.3)
+    c.p.setPen(QPen(_blue(), 1.3, Qt.DashLine))
+    c.p.drawLine(QPointF(2, 12), QPointF(22, 12))
+    return c.done()
+
+
+def horizontal_rule() -> QIcon:
+    c = _W()
+    c.line(4, 6, 20, 6, w=1); c.line(4, 18, 20, 18, w=1)
+    c.line(2.5, 12, 21.5, 12, _blue(), 2)
+    return c.done()
+
+
+# ----- view -----
+
+def zoom_in() -> QIcon:
+    c = _W(); c.pen(_ink(), 1.6).brush(_paper())
+    c.p.drawEllipse(QPointF(10, 10), 6.5, 6.5)
+    c.line(15, 15, 21, 21, w=2)
+    c.line(7, 10, 13, 10, _blue(), 1.6); c.line(10, 7, 10, 13, _blue(), 1.6)
+    return c.done()
+
+
+def zoom_out() -> QIcon:
+    c = _W(); c.pen(_ink(), 1.6).brush(_paper())
+    c.p.drawEllipse(QPointF(10, 10), 6.5, 6.5)
+    c.line(15, 15, 21, 21, w=2)
+    c.line(7, 10, 13, 10, _blue(), 1.6)
+    return c.done()
+
+
+def fit_width() -> QIcon:
+    c = _W(); c.rect(6, 3, 12, 18, fill=_paper(), r=1, lw=1.2)
+    c.line(2, 12, 22, 12, _blue(), 1.5)
+    c.poly([(5, 9.5), (2, 12), (5, 14.5)], color=_blue(), closed=False)
+    c.poly([(19, 9.5), (22, 12), (19, 14.5)], color=_blue(), closed=False)
+    return c.done()
+
+
+def heading(level: int) -> QIcon:
+    c = _W()
+    c.text((0, 0, 24, 23), f"H{level}", size={1: 14, 2: 13, 3: 12}.get(level, 11),
+           bold=True, color=_blue())
+    return c.done()
