@@ -100,7 +100,22 @@ class Ribbon(QTabWidget):
         super().__init__(parent)
         self.setDocumentMode(True)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.setFixedHeight(118)
+        self.setFixedHeight(122)
+        # Word for Mac: flat text tabs, no boxes; the open tab is bold with
+        # a short coloured bar under it, and the groups sit on a plain band.
+        self.setStyleSheet("""
+            QTabWidget::pane { border: none;
+                border-top: 1px solid palette(midlight); top: -1px; }
+            QTabBar { qproperty-drawBase: 0; }
+            QTabBar::tab { background: transparent; border: none;
+                padding: 7px 11px 5px 11px; margin: 0 1px;
+                font-size: 13px; }
+            QTabBar::tab:hover { background: palette(midlight);
+                border-radius: 4px; }
+            QTabBar::tab:selected { font-weight: 600;
+                border-bottom: 3px solid #2b579a;
+                padding-bottom: 2px; }
+        """)
 
     def add_tab(self, name: str) -> RibbonTab:
         tab = RibbonTab()
