@@ -1334,9 +1334,9 @@ class MainWindow(QMainWindow):
                                 shortcut=QKeySequence.Undo, triggered=text.undo)
         self.act_redo = QAction(icons.redo(), "&Redo", self,
                                 shortcut=QKeySequence.Redo, triggered=text.redo)
-        self.act_cut = QAction("Cu&t", self, shortcut=QKeySequence.Cut, triggered=text.cut)
-        self.act_copy = QAction("&Copy", self, shortcut=QKeySequence.Copy, triggered=text.copy)
-        self.act_paste = QAction("&Paste", self, shortcut=QKeySequence.Paste, triggered=text.paste)
+        self.act_cut = QAction(icons.cut(), "Cu&t", self, shortcut=QKeySequence.Cut, triggered=text.cut)
+        self.act_copy = QAction(icons.copy(), "&Copy", self, shortcut=QKeySequence.Copy, triggered=text.copy)
+        self.act_paste = QAction(icons.paste(), "&Paste", self, shortcut=QKeySequence.Paste, triggered=text.paste)
         self.act_select_all = QAction("Select &All", self,
                                       shortcut=QKeySequence.SelectAll, triggered=text.selectAll)
         self.act_clear_fmt = QAction("Clear &formatting", self,
@@ -1823,6 +1823,20 @@ class MainWindow(QMainWindow):
         m_view.addSeparator()
         m_view.addAction(self.act_fit_page_width)
         m_view.addSeparator()
+        self.act_style_word = QAction(
+            "&Word ribbon", self, checkable=True,
+            statusTip="Tabs of grouped buttons, like Microsoft Word",
+            triggered=lambda: self._apply_toolbar_style("word"))
+        self.act_style_classic = QAction(
+            "&Classic toolbars", self, checkable=True,
+            statusTip="Two toolbar rows and a vertical Insert bar",
+            triggered=lambda: self._apply_toolbar_style("classic"))
+        style_group = QActionGroup(self)
+        m_tb = m_view.addMenu("&Toolbar style")
+        for a in (self.act_style_word, self.act_style_classic):
+            style_group.addAction(a)
+            m_tb.addAction(a)
+        m_view.addSeparator()
         m_view.addAction(self.act_spell_check)
         m_theme = m_view.addMenu("&Theme")
         for name in themes.THEME_NAMES:
@@ -2026,10 +2040,6 @@ class MainWindow(QMainWindow):
     # ----- toolbar -----
 
     def _build_toolbar(self) -> None:
-        tb = QToolBar("Main toolbar", self)
-        tb.setMovable(False)
-        self.addToolBar(tb)
-
         self._heading_combo = QComboBox(self)
         # Order matches Word's paragraph-style picker.
         self._heading_combo.addItem("Body text", 0)
@@ -2072,7 +2082,7 @@ class MainWindow(QMainWindow):
         self._template_combo.setToolTip("LaTeX document class")
         self._template_combo.currentIndexChanged.connect(self._on_template_changed)
         self._template_combo.hide()
-        class_gallery = self._build_class_gallery()
+        self._build_class_gallery()
 
         # Body-text font size — affects only the default body size; headings
         # keep their canonical sizes. Editable so users can type 11.5 etc.
@@ -2097,12 +2107,123 @@ class MainWindow(QMainWindow):
         self._pagesize_combo.setToolTip("Page size")
         self._pagesize_combo.currentIndexChanged.connect(self._on_pagesize_changed)
 
-        # Laid out like Word: file actions and undo / redo, then the Home
-        # tab's Font, Paragraph and Styles groups, then Review.
-        def group(*items, bar=None) -> None:
-            bar = bar or tb
+        self._style_gallery = style_gallery
+        self._toolbars: list[QToolBar] = []
+        self._toolbar_style = self._settings.value("toolbar_style", "word")
+        self._apply_toolbar_style(self._toolbar_style)
+
+    # Widgets both layouts show; each layout wraps them in throwaway boxes
+    # so removing a layout (which deletes its boxes) never deletes them.
+    def _shared_toolbar_widgets(self) -> list[QWidget]:
+        return [self._style_gallery, self._numbered_cb, self._class_button,
+                self._fontsize_combo, self._pagesize_combo]
+
+    def _boxed(self, w: QWidget) -> QWidget:
+        box = QWidget()
+        lay = QHBoxLayout(box)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(w)
+        w.show()
+        return box
+
+    def _apply_toolbar_style(self, style: str) -> None:
+        """Swap between the Word ribbon and the classic toolbars."""
+        for w in self._shared_toolbar_widgets():
+            w.setParent(self)
+            w.hide()
+        for bar in self._toolbars:
+            self.removeToolBar(bar)
+            bar.deleteLater()
+        self._toolbars = []
+        self._toolbar_style = "classic" if style == "classic" else "word"
+        if self._toolbar_style == "classic":
+            self._build_classic_toolbars()
+        else:
+            self._build_ribbon()
+        self._settings.setValue("toolbar_style", self._toolbar_style)
+        for name, act in (("word", getattr(self, "act_style_word", None)),
+                          ("classic", getattr(self, "act_style_classic", None))):
+            if act is not None:
+                act.setChecked(name == self._toolbar_style)
+
+    def _new_bar(self, title: str, area=Qt.TopToolBarArea) -> QToolBar:
+        bar = QToolBar(title, self)
+        bar.setMovable(False)
+        self.addToolBar(area, bar)
+        self._toolbars.append(bar)
+        return bar
+
+    def _build_ribbon(self) -> None:
+        from .ribbon import Ribbon
+        rb = Ribbon()
+        rb.set_corner([self.act_new, self.act_open, self.act_save, None,
+                       self.act_undo, self.act_redo], Qt.TopLeftCorner)
+        rb.set_corner([self.act_compile_range, self.act_skip_images,
+                       self.act_auto_compile, self.act_compile_now,
+                       None, self.act_export_pdf, self.act_print],
+                      Qt.TopRightCorner)
+        b = self._boxed
+        home = rb.add_tab("Home")
+        home.add_group("Clipboard", large=[self.act_paste],
+                       rows=[[self.act_cut], [self.act_copy]], text=True)
+        home.add_group("Font", rows=[
+            [b(self._fontsize_combo), self.act_bold, self.act_italic,
+             self.act_underline, self.act_strike],
+            [self.act_sub, self.act_super, self.act_smallcaps, self.act_code,
+             self.act_highlight]])
+        home.add_group("Paragraph", rows=[
+            [self.act_bullet, self.act_numbered, self.act_show_marks],
+            [self.act_align_left, self.act_align_center,
+             self.act_align_right, self.act_align_justify]])
+        home.add_group("Styles", large=[b(self._style_gallery),
+                                        b(self._numbered_cb)])
+        ins = rb.add_tab("Insert")
+        ins.add_group("Pages", large=[self.act_pagebreak],
+                      rows=[[self.act_hrule]], text=True)
+        ins.add_group("Tables", large=[self.act_table])
+        ins.add_group("Illustrations", large=[self.act_figure],
+                      rows=[[self.act_drawing], [self.act_flowchart]],
+                      text=True)
+        ins.add_group("Links", rows=[[self.act_link], [self.act_crossref]],
+                      text=True)
+        ins.add_group("Equations", large=[self.act_math_block],
+                      rows=[[self.act_math_inline],
+                            [self.act_equation_builder], [self.act_symbol]],
+                      text=True)
+        ins.add_group("Chemistry", large=[self.act_chemistry],
+                      rows=[[self.act_chemfig]], text=True)
+        lay = rb.add_tab("Layout")
+        lay.add_group("Document type", large=[b(self._class_button)])
+        lay.add_group("Page setup", rows=[[b(self._pagesize_combo)]])
+        lay.add_group("Columns", large=[self.act_cols_1, self.act_cols_2,
+                                        self.act_cols_3])
+        ref = rb.add_tab("References")
+        ref.add_group("Citations", large=[self.act_citation])
+        ref.add_group("Footnotes", large=[self.act_footnote])
+        ref.add_group("Cross-references", large=[self.act_crossref])
+        rev = rb.add_tab("Review")
+        rev.add_group("Proofing", large=[self.act_spell_check])
+        rev.add_group("Comments", large=[self.act_comment],
+                      rows=[[self.act_accept_comment],
+                            [self.act_reject_comment]], text=True)
+        rev.add_group("Marks", large=[self.act_show_marks])
+        hist = rb.add_tab("History")
+        hist.add_group("Versions", large=[self.act_commit_now,
+                                          self.act_history])
+        bar = self._new_bar("Ribbon")
+        bar.addWidget(rb)
+        self._ribbon = rb
+
+    def _build_classic_toolbars(self) -> None:
+        b = self._boxed
+        tb = self._new_bar("Main toolbar")
+
+        def group(*items, bar=tb) -> None:
             for it in items:
-                (bar.addWidget if isinstance(it, QWidget) else bar.addAction)(it)
+                if isinstance(it, QWidget):
+                    bar.addWidget(b(it))
+                else:
+                    bar.addAction(it)
             bar.addSeparator()
 
         group(self.act_new, self.act_open, self.act_save,
@@ -2115,73 +2236,38 @@ class MainWindow(QMainWindow):
         group(self.act_bullet, self.act_numbered, self.act_align_left,
               self.act_align_center, self.act_align_right,
               self.act_align_justify, self.act_show_marks)
-        # Inside a plain widget so the toolbar's 24 px icon size does not
-        # shrink the tile.
-        numbered_box = QWidget(self)
-        nb = QHBoxLayout(numbered_box)
-        nb.setContentsMargins(0, 0, 0, 0)
-        nb.addWidget(self._numbered_cb)
-        # Styles, document and review do not fit beside the Home groups:
-        # a second row, as Word's ribbon is two rows tall.
+        # A second row, as the rest does not fit beside the Home groups.
         self.addToolBarBreak()
-        tb2 = QToolBar("Document and review", self)
-        tb2.setMovable(False)
+        tb2 = self._new_bar("Document and review")
         tb2.setIconSize(tb.iconSize())
-        self.addToolBar(tb2)
-        class_box = QWidget(self)
-        cb = QHBoxLayout(class_box)
-        cb.setContentsMargins(0, 0, 0, 0)
-        cb.addWidget(class_gallery)
-        group(style_gallery, numbered_box, bar=tb2)
-        group(class_box, self._pagesize_combo, bar=tb2)
+        group(self._style_gallery, self._numbered_cb, bar=tb2)
+        group(self._class_button, self._pagesize_combo, bar=tb2)
         group(self.act_spell_check, self.act_comment,
               self.act_accept_comment, self.act_reject_comment, bar=tb2)
         group(self.act_commit_now, self.act_history, bar=tb2)
-
-        # Right-aligned compile buttons: push them to the far right
-        # with a stretching spacer widget.
         spacer = QWidget()
-        sp = spacer.sizePolicy()
-        sp.setHorizontalStretch(1)
-        sp.setHorizontalPolicy(sp.Policy.Expanding)
-        spacer.setSizePolicy(sp)
+        spacer.setSizePolicy(spacer.sizePolicy().Policy.Expanding,
+                             spacer.sizePolicy().Policy.Preferred)
         tb2.addWidget(spacer)
-        tb2.addAction(self.act_compile_range)
-        tb2.addAction(self.act_skip_images)
-        tb2.addAction(self.act_compile_now)
-        tb2.addAction(self.act_auto_compile)
+        for a in (self.act_compile_range, self.act_skip_images,
+                  self.act_compile_now, self.act_auto_compile):
+            tb2.addAction(a)
 
-        # Left vertical toolbar for Insert / layout actions. Matches
-        # the top toolbar's 24px icon size for a consistent look.
-        self._side_tb = QToolBar("Insert", self)
-        self._side_tb.setMovable(False)
-        self._side_tb.setOrientation(Qt.Vertical)
-        self._side_tb.setIconSize(tb.iconSize())
-        self.addToolBar(Qt.LeftToolBarArea, self._side_tb)
-
-        self._side_tb.addAction(self.act_math_inline)
-        self._side_tb.addAction(self.act_math_block)
-        self._side_tb.addAction(self.act_symbol)
-        self._side_tb.addAction(self.act_equation_builder)
-        self._side_tb.addAction(self.act_chemistry)
-        self._side_tb.addAction(self.act_chemfig)
-        self._side_tb.addSeparator()
-        self._side_tb.addAction(self.act_link)
-        self._side_tb.addAction(self.act_footnote)
-        self._side_tb.addAction(self.act_citation)
-        self._side_tb.addAction(self.act_crossref)
-        self._side_tb.addSeparator()
-        self._side_tb.addAction(self.act_figure)
-        self._side_tb.addAction(self.act_table)
-        self._side_tb.addAction(self.act_drawing)
-        self._side_tb.addAction(self.act_flowchart)
-        self._side_tb.addSeparator()
-        self._side_tb.addAction(self.act_cols_1)
-        self._side_tb.addAction(self.act_cols_2)
-        self._side_tb.addAction(self.act_cols_3)
-        self._side_tb.addSeparator()
-        self._side_tb.addAction(self.act_pagebreak)
-        self._side_tb.addAction(self.act_hrule)
+        side = self._new_bar("Insert", Qt.LeftToolBarArea)
+        side.setOrientation(Qt.Vertical)
+        side.setIconSize(tb.iconSize())
+        for grp in ((self.act_math_inline, self.act_math_block,
+                     self.act_symbol, self.act_equation_builder,
+                     self.act_chemistry, self.act_chemfig),
+                    (self.act_link, self.act_footnote, self.act_citation,
+                     self.act_crossref),
+                    (self.act_figure, self.act_table, self.act_drawing,
+                     self.act_flowchart),
+                    (self.act_cols_1, self.act_cols_2, self.act_cols_3),
+                    (self.act_pagebreak, self.act_hrule)):
+            for a in grp:
+                side.addAction(a)
+            side.addSeparator()
 
     # ----- title -----
 

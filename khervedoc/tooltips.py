@@ -37,6 +37,15 @@ TIPS: dict[str, tuple[str, str, str]] = {
         "Only affects the editor; saved versions stay in the history."),
     "act_redo": ("Redo",
         "Puts back the change you just undid.", ""),
+    "act_cut": ("Cut",
+        "Removes the selection and keeps it on the clipboard to paste "
+        "elsewhere.", ""),
+    "act_copy": ("Copy",
+        "Copies the selection to the clipboard.", ""),
+    "act_paste": ("Paste",
+        "Inserts what is on the clipboard. A copied picture, screenshot or "
+        "Word / PowerPoint figure becomes a figure in the document.",
+        "Pictures become a figure float with \\includegraphics."),
     # ----- font -----
     "act_bold": ("Bold",
         "Makes the selected text bold, or turns bold on for what you "

@@ -1520,3 +1520,30 @@ def heading(level: int) -> QIcon:
     c.text((0, 0, 24, 23), f"H{level}", size={1: 14, 2: 13, 3: 12}.get(level, 11),
            bold=True, color=_blue())
     return c.done()
+
+
+# ----- clipboard -----
+
+def paste() -> QIcon:
+    c = _W()
+    c.rect(4, 4.5, 14, 17, fill=QColor("#c8a76a") if not _dark else QColor("#8a7040"), r=1.5)
+    c.rect(8, 2.5, 6, 4, fill=_paper(), r=1)
+    c.page(10, 9, 11, 13, 3)
+    c.line(12, 15, 18, 15, _blue(), 1); c.line(12, 17.5, 16.5, 17.5, _blue(), 1)
+    return c.done()
+
+
+def cut() -> QIcon:
+    c = _W()
+    c.line(8, 3, 15.5, 15, w=1.6); c.line(16, 3, 8.5, 15, w=1.6)
+    c.pen(_blue(), 1.6).brush(_paper())
+    c.p.drawEllipse(QPointF(7, 18), 3, 3)
+    c.p.drawEllipse(QPointF(17, 18), 3, 3)
+    return c.done()
+
+
+def copy() -> QIcon:
+    c = _W()
+    c.page(8, 2.5, 12, 15, 3)
+    c.page(4, 6.5, 12, 15, 3)
+    return c.done()
