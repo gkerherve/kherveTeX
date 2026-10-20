@@ -233,3 +233,76 @@ def test_columns_split_the_visual_page(qapp):
     ed.set_meta(meta)
     assert edit.columns() == 1
     assert edit.document().pageSize().width() == edit.viewport().width()
+
+
+def test_class_change_renumbers_and_splits_title_page(qapp):
+    from PySide6.QtGui import QTextFormat
+    from khervedoc.editor import _P_HEADING_NUMBER
+    from khervedoc.model import Title
+    ed = DocumentEditor()
+    ed.set_fit_to_width(False)
+    ed.set_document(Document(children=[
+        Title(children=[Text("My title")]),
+        Section(level=1, children=[Text("A")]),
+        Paragraph(children=[Text("Body.")]),
+    ]))
+    sec = _blocks(ed)[1]
+    assert sec.blockFormat().property(_P_HEADING_NUMBER) == "1"
+    meta = ed.meta()
+    meta.documentclass = "report"
+    ed.set_meta(meta)
+    # report sets Heading 1 as \chapter: bigger, and "Chapter 1".
+    sec = _blocks(ed)[1]
+    assert sec.blockFormat().property(_P_HEADING_NUMBER) == "Chapter 1"
+    size = sec.begin().fragment().charFormat().font().pointSizeF()
+    assert size == pytest.approx(
+        12 * 24.88 / 12 * ed.zoom_percent() / 100)
+    assert sec.blockFormat().pageBreakPolicy() \
+        & QTextFormat.PageBreak_AlwaysBefore
+
+
+def test_pasted_picture_gets_a_label(qapp, tmp_path):
+    from PySide6.QtGui import QImage, QColor
+    img = QImage(20, 10, QImage.Format_RGB32)
+    img.fill(QColor("red"))
+    path = tmp_path / "img_001.png"
+    img.save(str(path))
+    ed = DocumentEditor()
+    ed._on_image_received(str(path))
+    figs = [b for b in ed.get_document().children
+            if type(b).__name__ == "Figure"]
+    assert figs and figs[0].label == "fig:img_001"
+
+
+def test_unnumbering_an_align_stars_its_environment(qapp):
+    from khervedoc.model import MathBlock
+    ed = DocumentEditor()
+    ed.set_document(Document(children=[MathBlock(
+        latex="\\begin{align}\na &= b \\\\\nc &= d\n\\end{align}",
+        numbered=True)]))
+    block = next(b for b in _blocks(ed) if "align" in b.text())
+    ed.set_math_block_numbered(block, False)
+    m = [b for b in ed.get_document().children
+         if type(b).__name__ == "MathBlock"][0]
+    assert "\\begin{align*}" in m.latex and "\\end{align*}" in m.latex
+    block = next(b for b in _blocks(ed) if "align" in b.text())
+    ed.set_math_block_numbered(block, True)
+    m = [b for b in ed.get_document().children
+         if type(b).__name__ == "MathBlock"][0]
+    assert "\\begin{align}" in m.latex and "\\end{align}" in m.latex
+
+
+def test_footnotes_and_book_running_heads_are_painted(qapp):
+    from khervedoc.model import Footnote
+    ed = DocumentEditor()
+    ed.set_document(Document(meta=DocMeta(documentclass="book"), children=[
+        Section(level=1, children=[Text("Intro")]),
+        Section(level=2, children=[Text("Part")]),
+        Paragraph(children=[Text("Body"),
+                            Footnote(children=[Text("A note")])]),
+    ]))
+    heads = ed._edit._running_heads
+    assert [h[2] for h in heads] == ["Chapter 1. Intro", "1.1 Part"]
+    notes = ed._edit._footnotes_by_sheet()
+    assert [(n, t) for n, t, *_ in notes[0]] == [(1, "A note")]
+    ed._edit.grab()                     # paints without raising

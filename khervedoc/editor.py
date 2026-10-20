@@ -500,6 +500,9 @@ _HEADING_SPACING = {0: (3.0, 2.0), 1: (1.5, 1.0), 2: (1.4, 0.65),
 # Levels LaTeX numbers by default (secnumdepth 3 in article).
 _NUMBERED_HEADING_LEVELS = (0, 1, 2, 3)
 _P_HEADING_NUMBER = HEADING_NUMBER_PROPERTY
+# Multi-line math environments numbered unless starred.
+_NUMBERABLE_ENV_RE = _re.compile(
+    r"\\begin\{((?:align|gather|multline|flalign|alignat|eqnarray)\*?)\}")
 
 # Bidirectional mapping for paragraph alignment.
 _QT_ALIGNMENT = {
@@ -554,6 +557,13 @@ def screen_font_for(meta: DocMeta) -> str:
         if family in installed:
             return family
     return chosen or "Georgia"
+
+
+def _math_block_is_numbered(block) -> bool:
+    m = _NUMBERABLE_ENV_RE.search(block.text())
+    if m is not None:
+        return not m.group(1).endswith("*")
+    return bool(block.blockFormat().property(_P_MATH_NUMBERED))
 
 
 def _style_code(state: int) -> int | None:
@@ -1338,8 +1348,25 @@ class DocumentEditor(QWidget):
             self._apply_page_size(page_sizes.by_code(meta.page_size))
         if screen_font_for(meta) != prev_vfont:
             self._apply_visual_font(screen_font_for(meta))
+        # The caller often edits the current meta in place, so compare with
+        # what the heading fonts were last sized for.
+        if class_supports_chapter(meta.documentclass) \
+                != getattr(self, "_fonts_for_chapters", False):
+            self._conform_all_fonts()
         self._apply_page_layout()
         self._on_text_changed()
+
+    def _conform_all_fonts(self) -> None:
+        self._fonts_for_chapters = class_supports_chapter(
+            self._meta.documentclass)
+        self._building = True
+        try:
+            block = self._edit.document().firstBlock()
+            while block.isValid():
+                self._conform_fonts(block)
+                block = block.next()
+        finally:
+            self._building = False
 
     def set_page_size(self, code: str) -> None:
         self._meta.page_size = code
@@ -1410,6 +1437,8 @@ class DocumentEditor(QWidget):
         self._building = True
         try:
             self._meta = doc.meta
+            self._fonts_for_chapters = class_supports_chapter(
+                doc.meta.documentclass)
             if screen_font_for(doc.meta) != self._visual_font_family:
                 self._visual_font_family = screen_font_for(doc.meta)
                 f = QFont(self._visual_font_family)
@@ -3234,8 +3263,7 @@ class DocumentEditor(QWidget):
 
     def current_equation_numbered(self) -> bool:
         block = self.current_equation_block()
-        return bool(block is not None
-                    and block.blockFormat().property(_P_MATH_NUMBERED))
+        return block is not None and _math_block_is_numbered(block)
 
     def set_current_equation_numbered(self, on: bool) -> None:
         block = self.current_equation_block()
@@ -3349,6 +3377,10 @@ class DocumentEditor(QWidget):
         self._on_text_changed()
 
     def _heading_fmt(self, level: int) -> QTextCharFormat:
+        """Format for Heading *level* (0 = chapter); in report / book
+        Heading 1 is a chapter, so every level looks one step bigger."""
+        if level >= 1 and class_supports_chapter(self._meta.documentclass):
+            level -= 1
         zoom = self._zoom_percent / 100 if self._zoom_percent else 1.0
         return _heading_char_format(level, self._body_font_pt * zoom,
                                     self._visual_font_family)
@@ -3419,7 +3451,13 @@ class DocumentEditor(QWidget):
             pdf_breaks = (self._pdf_page_start_blocks()
                           if self._edit.columns() <= 1 else set())
             offset = self._heading_offset
-            has_chapters = self._has_chapter_blocks() or offset[0] > 0
+            # report / book number sections under the chapter counter even
+            # with no \chapter (0.1, 0.2), as the PDF shows.
+            class_chapters = class_supports_chapter(m.documentclass)
+            has_chapters = (self._has_chapter_blocks() or offset[0] > 0
+                            or class_chapters)
+            heads: list = []
+            title_breaks = self._title_page_breaks()
             counters = list(offset)
             eq = 0
             thm = 0
@@ -3435,10 +3473,18 @@ class DocumentEditor(QWidget):
                 bfmt.setPageBreakPolicy(
                     QTextFormat.PageBreak_AlwaysBefore
                     if block.blockNumber() in pdf_breaks
+                    or block.blockNumber() in title_breaks
                     else QTextFormat.PageBreak_Auto)
                 number = ""
                 level = 0 if state == _STATE_CHAPTER else (
                     state if 1 <= state <= 5 else None)
+                # report / book serialise Heading 1 as \chapter.
+                if class_chapters and level:
+                    level -= 1
+                if level == 0 and block.text().strip() \
+                        and doc.firstBlock() != block:
+                    bfmt.setPageBreakPolicy(
+                        QTextFormat.PageBreak_AlwaysBefore)
                 if level is not None:
                     if level == 0:
                         eq = 0
@@ -3449,14 +3495,23 @@ class DocumentEditor(QWidget):
                         start = 0 if has_chapters else 1
                         number = ".".join(
                             str(c) for c in counters[start:level + 1])
+                    if level <= 1 and block.text().strip():
+                        heads.append((block, level == 0, (
+                            f"Chapter {number}. " if level == 0 else
+                            f"{number} " if number else "")
+                            + block.text().strip()))
+                    if level == 0:
+                        number = f"Chapter {number}"
                 any_level = level
                 if _STATE_HEADING_STAR_BASE < state <= _STATE_HEADING_STAR_BASE + 5:
                     any_level = state - _STATE_HEADING_STAR_BASE
+                    if class_chapters:
+                        any_level = max(0, any_level - 1)
                 elif state == _STATE_CHAPTER_STAR:
                     any_level = 0
                 eq_number = ""
                 if state == _STATE_MATH_BLOCK \
-                        and bfmt.property(_P_MATH_NUMBERED):
+                        and _math_block_is_numbered(block):
                     eq += 1
                     eq_number = (f"({counters[0]}.{eq})" if has_chapters
                                  else f"({eq})")
@@ -3473,12 +3528,17 @@ class DocumentEditor(QWidget):
                     bfmt.setTopMargin(above * em_px)
                     bfmt.setBottomMargin(below * em_px)
                 old_number = bfmt.property(_P_HEADING_NUMBER) or ""
-                if number:
+                if number.startswith("Chapter "):
+                    # "Chapter 1" sits on its own line above the title.
+                    bfmt.setProperty(_P_HEADING_NUMBER, number)
+                    bfmt.setTextIndent(0)
+                    bfmt.setTopMargin(bfmt.topMargin() + 2.2 * em_px)
+                elif number:
                     bfmt.setProperty(_P_HEADING_NUMBER, number)
                     it = block.begin()
                     font = (it.fragment().charFormat().font()
-                            if not it.atEnd() else self._heading_fmt(
-                                level).font())
+                            if not it.atEnd() else _heading_char_format(
+                                level, self._body_font_pt).font())
                     fm = QFontMetricsF(font)
                     # LaTeX leaves 1em between the number and the title.
                     bfmt.setTextIndent(fm.horizontalAdvance(number)
@@ -3543,6 +3603,10 @@ class DocumentEditor(QWidget):
         finally:
             edit.endEditBlock()
             self._building = was_building
+        # book's default page style is `headings`: running heads on top.
+        book = (m.documentclass or "").lower().split(",")[0].strip() \
+            in ("book", "scrbook", "memoir")
+        self._edit.set_running_heads(heads if book else [])
 
     def zoom_percent(self) -> int:
         return self._zoom_percent
@@ -3913,7 +3977,10 @@ class DocumentEditor(QWidget):
         """Slot for PagedTextEdit.imageReceived. Drops a Figure block at
         the cursor pointing at the freshly-saved image."""
         c = self._edit.textCursor()
-        fig = Figure(path=path, caption="", label=None, width="0.6\\textwidth")
+        # A label from the start, so the picture can be cross-referenced
+        # and the page shows what \ref{} will point at.
+        fig = Figure(path=path, caption="", label=f"fig:{Path(path).stem}",
+                     width="0.6\\textwidth")
         # Leave the caret on a real body-text line after the picture: the
         # bare block Qt leaves there has no style or font, so Enter adds
         # lines of zero height and nothing seems to happen until you type.
@@ -4437,6 +4504,24 @@ class DocumentEditor(QWidget):
 
     def set_math_block_numbered(self, block, numbered: bool) -> None:
         c = QTextCursor(block)
+        # align / gather / multline… are kept verbatim, so the star on the
+        # environment itself is what numbers them, not the block flag.
+        text = block.text()
+        m = _NUMBERABLE_ENV_RE.search(text)
+        if m is not None:
+            name = m.group(1).rstrip("*") + ("" if numbered else "*")
+            for tag in ("end", "begin"):
+                at = text.rfind(f"\\{tag}{{{m.group(1)}}}") if tag == "end" \
+                    else m.start()
+                if at < 0:
+                    continue
+                at += len(tag) + 2
+                rc = QTextCursor(block)
+                rc.setPosition(block.position() + at)
+                rc.setPosition(block.position() + at + len(m.group(1)),
+                               QTextCursor.KeepAnchor)
+                rc.insertText(name, rc.charFormat())
+            block = c.block()
         bfmt = block.blockFormat()
         bfmt.setProperty(_P_MATH_NUMBERED, numbered)
         c.setBlockFormat(bfmt)
@@ -4688,8 +4773,7 @@ class DocumentEditor(QWidget):
             if mblock.userState() == _STATE_MATH_BLOCK:
                 num = QAction("Numbered equation", menu)
                 num.setCheckable(True)
-                num.setChecked(bool(
-                    mblock.blockFormat().property(_P_MATH_NUMBERED)))
+                num.setChecked(_math_block_is_numbered(mblock))
                 num.toggled.connect(
                     lambda on, b=mblock: self.set_math_block_numbered(b, on))
                 menu.insertAction(first, num)
@@ -4965,6 +5049,32 @@ class DocumentEditor(QWidget):
         pages start."""
         self._apply_page_layout()
         self._resize_to_document()
+
+    def _title_page_breaks(self) -> set[int]:
+        """Blocks that start a page because report / book set \\maketitle
+        (and report its abstract) on a page of their own."""
+        m = self._meta
+        if not class_supports_chapter(m.documentclass) \
+                or "notitlepage" in (m.class_options or ""):
+            return set()
+        out: set[int] = set()
+        phase = 0          # 0 before title, 1 in title, 2 in abstract
+        block = self._edit.document().firstBlock()
+        while block.isValid():
+            if QTextCursor(block).currentTable() is None and block.text():
+                code = _style_code(block.userState())
+                if code in (-1, -2, -7, -8):
+                    phase = phase or 1
+                elif phase == 1:
+                    out.add(block.blockNumber())
+                    if code not in (-3, -4):
+                        break
+                    phase = 2
+                elif phase == 2 and code not in (-3, -4):
+                    out.add(block.blockNumber())
+                    break
+            block = block.next()
+        return out
 
     def _pdf_page_start_blocks(self) -> set[int]:
         """Blocks the last compiled PDF starts a page with.
