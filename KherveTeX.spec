@@ -83,6 +83,7 @@ a = Analysis(
         "pymupdf",
         "docx",
         "spellchecker",
+        "fontTools.ttLib",       # latex_fonts renames Latin Modern's cuts
         "matplotlib",
         "matplotlib.figure",
         "matplotlib.backends.backend_agg",

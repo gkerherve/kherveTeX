@@ -12,6 +12,8 @@ from __future__ import annotations
 import re
 import shutil
 import unicodedata
+import json
+import re
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, QSizeF, Qt, Signal
@@ -87,6 +89,15 @@ EQUATION_NUMBER_PROPERTY = QTextFormat.UserProperty + 41
 # "Theorem 1.2 (Name)." drawn before a theorem's first line, like a
 # heading number: part of the layout, not editable text.
 THEOREM_LABEL_PROPERTY = QTextFormat.UserProperty + 42
+# Lines the PDF prints that are not document text, as JSON: the date and
+# "Abstract" above a block, "Chapter 1" above its title.
+ABOVE_LABELS_PROPERTY = QTextFormat.UserProperty + 60
+# "Abstract." or "Keywords:" in front of a block's first line, as JSON.
+RUN_IN_LABEL_PROPERTY = QTextFormat.UserProperty + 61
+# The heading's number is one of its above-labels, not painted beside it.
+NUMBER_ABOVE_PROPERTY = QTextFormat.UserProperty + 62
+# "{title}" and the like in a measured header or footer.
+_FIELD_RE = re.compile(r"\{(\w+)\}")
 # Char-format property holding a footnote's text (editor's _P_FOOTNOTE).
 FOOTNOTE_PROPERTY = QTextFormat.UserProperty + 3
 
@@ -292,9 +303,14 @@ class PagedTextEdit(QTextEdit):
         # Printed number of the first sheet: a project document continues
         # from the pages of the documents before it.
         self._first_page = 1
-        # Running heads for the `headings` page style (book): a list of
-        # (block, is_chapter, text) set by the editor; empty = plain style.
+        # The document's headings, for the running heads: a list of (block,
+        # is_chapter, text, level, title, number) set by the editor.
         self._running_heads: list = []
+        # The class's headers and footers: {pages, fields, pt_px}; see
+        # DocumentEditor._furniture_for_screen.
+        self._furniture: dict | None = None
+        self._col_right = 0.0
+        self.verticalScrollBar().valueChanged.connect(self._hold_columns_still)
         self._images_dir: Path | None = None
         self._image_counter = 0
         self._overlay = _PageBreakOverlay(self)
@@ -428,6 +444,8 @@ class PagedTextEdit(QTextEdit):
             self._columns, self._col_gap, self._col_left, self._col_width)
         self._columns, self._col_gap = n, gap_px
         self._col_left, self._col_width = left_px, col_w
+        self._col_right = right_px
+        self._hold_columns_still(self.verticalScrollBar().value())
         if n > 1:
             self._caret_timer.start(530)
         else:
@@ -438,6 +456,12 @@ class PagedTextEdit(QTextEdit):
 
     def columns(self) -> int:
         return self._columns
+
+    def _hold_columns_still(self, value: int) -> None:
+        # Columns stack on one sheet, so the layout is taller than the
+        # sheet; scrolling it would slide the page inside its own frame.
+        if self._columns > 1 and value:
+            self.verticalScrollBar().setValue(0)
 
     def text_width_px(self) -> float:
         """Width available to a line of text (a column, when split)."""
@@ -731,10 +755,60 @@ class PagedTextEdit(QTextEdit):
             super().paintEvent(ev)
         self._paint_sheets()
         self._paint_heading_numbers()
+        self._paint_block_labels()
         self._paint_equation_numbers()
         self._paint_footnotes()
-        self._paint_running_heads()
+        self._paint_furniture()
         self._paint_image_handles()
+
+    def set_furniture(self, data: dict | None) -> None:
+        if data != self._furniture:
+            self._furniture = data
+            self.viewport().update()
+
+    def _paint_block_labels(self) -> None:
+        """Lines the class prints around a block that are not its text."""
+        doc = self.document()
+        layout = doc.documentLayout()
+        visible = self.viewport().rect()
+        painter = None
+        block = doc.firstBlock()
+        while block.isValid():
+            bf = block.blockFormat()
+            above = bf.property(ABOVE_LABELS_PROPERTY)
+            run_in = bf.property(RUN_IN_LABEL_PROPERTY)
+            if above or run_in:
+                raw = layout.blockBoundingRect(block)
+                line = block.layout().lineAt(0) if block.layout() else None
+                if line is not None and line.isValid():
+                    at = self.doc_to_view(raw.left(), raw.top() + line.y())
+                    if at.y() + raw.height() >= visible.top() - 200 \
+                            and at.y() <= visible.bottom() + 200:
+                        painter = painter or QPainter(self.viewport())
+                        base = at.y() + line.ascent()
+                        for item in json.loads(above) if above else []:
+                            self._draw_label(painter, item, at.x(), raw.width(),
+                                             base - item["up"], line)
+                        if run_in:
+                            item = json.loads(run_in)
+                            x = at.x() + line.naturalTextRect().left() \
+                                - bf.textIndent() + item.get("left", 0)
+                            self._draw_label(painter, item, x, 0, base, None)
+            block = block.next()
+        if painter is not None:
+            painter.end()
+
+    def _draw_label(self, painter, item, x, width, baseline, line) -> None:
+        f = QFont(item["family"])
+        f.setBold(item["bold"])
+        f.setItalic(item["italic"])
+        f.setPointSizeF(item["size"])
+        painter.setFont(f)
+        painter.setPen(QColor(item["color"]) if item.get("color")
+                       else self.palette().text().color())
+        if item.get("centred") and width:
+            x += (width - QFontMetricsF(f).horizontalAdvance(item["text"])) / 2
+        painter.drawText(QPointF(x, baseline), item["text"])
 
     def set_running_heads(self, heads: list) -> None:
         self._running_heads = list(heads)
@@ -823,63 +897,93 @@ class PagedTextEdit(QTextEdit):
                 y += fm.height()
         p.end()
 
-    def _paint_running_heads(self) -> None:
-        """book's `headings` style: the chapter on left-hand pages, the
-        section on right-hand ones, and the page number on the outer
-        edge. A page that opens a chapter keeps the plain footer."""
+    def _paint_furniture(self) -> None:
+        """The headers and footers this class prints: what each page shows
+        was measured from its PDF, filled in with this document's words."""
         H = self._page_height_px
-        if H <= 0 or not self._running_heads:
+        data = self._furniture
+        if H <= 0 or not data:
             return
         sheets = self.sheet_count()
-        starts: dict[int, list[tuple[bool, str]]] = {}
-        for block, is_chapter, text in self._running_heads:
-            if block.isValid():
-                starts.setdefault(self._sheet_of_block(block), []).append(
-                    (is_chapter, text))
+        starts: dict[int, list] = {}
+        for head in self._running_heads:
+            if head[0].isValid():
+                starts.setdefault(self._sheet_of_block(head[0]), []).append(head)
         dy = -self.verticalScrollBar().value()
         w = self.viewport().width()
         ff = self.document().rootFrame().frameFormat()
         left = ff.leftMargin() or self._col_left
-        right = ff.rightMargin() or self._col_left
+        right = ff.rightMargin() or self._col_right
         labels = self._sheet_labels(sheets)
+        pt = data["pt_px"]
+        fields = dict(data["fields"], pages=str(sheets))
+        fields.update(h1="", h2="", num1="", num2="")
         p = QPainter(self.viewport())
-        font = self.font()
-        font.setItalic(True)
-        font.setPointSizeF(max(6.0, font.pointSizeF() * 0.9))
-        p.setFont(font)
-        fm = p.fontMetrics()
-        chapter = section = ""
         for k in range(sheets):
             opens_chapter = False
-            for is_chapter, text in starts.get(k, []):
-                if is_chapter:
-                    chapter, section, opens_chapter = text, "", True
-                else:
-                    section = text
-            top = k * H + dy + (self.page_gap_px() / 2 if k else 0)
-            if opens_chapter or top > self.viewport().height() \
-                    or top + H < 0:
+            first_h2 = None
+            for _block, is_chapter, _text, level, title, number in starts.get(k, []):
+                if level == 1:
+                    fields.update(h1=title, num1=number, h2="", num2="")
+                    opens_chapter = opens_chapter or is_chapter
+                elif first_h2 is None:
+                    first_h2 = (title, number)
+            shown = dict(fields)
+            # LaTeX's right mark is the first section on the page, and later
+            # pages carry on from the last one.
+            if first_h2:
+                shown.update(h2=first_h2[0], num2=first_h2[1])
+                fields.update(h2=first_h2[0], num2=first_h2[1])
+                for _b, _c, _t, level, title, number in starts.get(k, []):
+                    if level != 1:
+                        fields.update(h2=title, num2=number)
+            label = labels[k]
+            if "cont" in label:
+                continue            # the sheet painter marks those itself
+            number = label.split(" ")[0]
+            top = k * H + dy
+            if top > self.viewport().height() or top + H < 0:
                 continue
-            number = labels[k].split(" ")[0]
-            odd = number.isdigit() and int(number) % 2 == 1
-            head = (section or chapter) if odd else chapter
-            # Hide the plain footer number the sheet painter drew.
-            bottom_margin = ff.bottomMargin()
-            g = self.page_gap_px() / 2 if k < sheets - 1 else 1
-            p.fillRect(QRectF(1, (k + 1) * H + dy - g - bottom_margin / 2
-                              - fm.height(), w - 2, fm.height() * 1.6),
-                       QColor("white"))
-            y = top + ff.topMargin() / 2 + fm.ascent() / 2
-            p.setPen(self.palette().text().color())
-            if odd:
-                p.drawText(QPointF(left, y), head.upper())
-                p.drawText(QPointF(w - right - fm.horizontalAdvance(number),
-                                   y), number)
-            else:
-                p.drawText(QPointF(left, y), number)
-                p.drawText(QPointF(w - right - fm.horizontalAdvance(
-                    head.upper()), y), head.upper())
+            page_no = int(number) if number.isdigit() else k + 1
+            kind = ("first" if k == 0 else
+                    "chapter" if opens_chapter and "chapter" in data["pages"]
+                    else "even" if page_no % 2 == 0 else "odd")
+            shown["page"] = number
+            for item in data["pages"].get(kind, []):
+                self._draw_furniture_item(p, item, shown, top, w, left, right, pt)
         p.end()
+
+    def _draw_furniture_item(self, p, item, fields, top, w, left, right,
+                             pt) -> None:
+        y = top + item["y"] * pt
+        if item.get("rule"):
+            p.setPen(QPen(self.palette().text().color(),
+                          max(0.5, item["width"] * pt)))
+            p.drawLine(QPointF(left, y), QPointF(w - right, y))
+            return
+        text = item["text"]
+        names = _FIELD_RE.findall(text)
+        # A header that only names what this document does not have.
+        if names and not any(fields.get(n) for n in names) \
+                and not _FIELD_RE.sub("", text).strip(" .:"):
+            return
+        text = _FIELD_RE.sub(lambda m: fields.get(m.group(1), ""), text).strip()
+        if item.get("upper"):
+            text = text.upper()
+        f = QFont(item["family"])
+        f.setBold(item["bold"])
+        f.setItalic(item["italic"])
+        f.setPointSizeF(item["size"])
+        p.setFont(f)
+        p.setPen(QColor(item["color"]) if item.get("color")
+                 else self.palette().text().color())
+        advance = QFontMetricsF(f).horizontalAdvance(text)
+        anchor = item["anchor"]
+        x = (left if anchor == "left" else
+             w - right - advance if anchor == "right" else
+             (left + w - right - advance) / 2 if anchor == "center" else
+             item["x"] * pt)
+        p.drawText(QPointF(x, y), text)
 
     def set_first_page_number(self, n: int) -> None:
         n = max(1, int(n or 1))
@@ -946,6 +1050,9 @@ class PagedTextEdit(QTextEdit):
             number = labels[k]
             p.setPen(QColor(90, 90, 90) if "cont" not in number
                      else QColor(170, 120, 60))
+            # Other sheets' numbers are the class's, in _paint_furniture.
+            if "cont" not in number and self._furniture:
+                continue
             y = (k + 1) * H + dy - bottom_margin / 2 + fm.ascent() / 2
             if k < pages - 1:
                 y -= g / 2
@@ -990,16 +1097,13 @@ class PagedTextEdit(QTextEdit):
                         painter.setPen(cf.foreground().color()
                                        if cf.hasProperty(QTextFormat.ForegroundBrush)
                                        else self.palette().text().color())
-                    if str(number).startswith("Chapter "):
-                        f = painter.font()
-                        f.setPointSizeF(f.pointSizeF() * 0.83)
-                        painter.setFont(f)
-                        painter.drawText(QPointF(
-                            at.x(), at.y() - line.height() * 0.6), str(number))
-                    else:
+                    if not block.blockFormat().property(NUMBER_ABOVE_PROPERTY):
+                        # Before the text wherever the block's alignment
+                        # has put it, centred headings included.
+                        x = at.x() + line.naturalTextRect().left() \
+                            - block.blockFormat().textIndent()
                         painter.drawText(
-                            QPointF(at.x(), at.y() + line.ascent()),
-                            str(number))
+                            QPointF(x, at.y() + line.ascent()), str(number))
             block = block.next()
         if painter is not None:
             painter.end()

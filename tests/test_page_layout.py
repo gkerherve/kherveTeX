@@ -71,8 +71,10 @@ def test_line_spacing_applied(qapp):
     z = ed.zoom_percent() / 100
     fmt = _blocks(ed)[1].blockFormat()
     assert fmt.lineHeightType() == 2      # FixedHeight
+    # The class's measured \\baselineskip, stretched as setspace does it.
     assert fmt.lineHeight() == pytest.approx(
-        baselineskip_pt(12, 2.0) * 96 / 72 * z)
+        14.4 * baselineskip_pt(12, 2.0) / baselineskip_pt(12, 1.0)
+        * 96 / 72 * z)
     assert baselineskip_pt(12, 1.0) == pytest.approx(14.5)
     assert baselineskip_pt(12, 2.0) == pytest.approx(14.5 * 1.655)
 
@@ -122,7 +124,7 @@ def test_headings_scale_like_latex_and_are_numbered(qapp):
     blocks = _blocks(ed)
     z = ed.zoom_percent() / 100
     size = blocks[0].begin().fragment().charFormat().font().pointSizeF()
-    assert size == pytest.approx(12 * 17.28 / 12 * z)
+    assert size == pytest.approx(17.22 * z)
     numbers = [b.blockFormat().property(_P_HEADING_NUMBER) for b in blocks]
     assert numbers == ["1", "1.1", None, "2"]
     assert blocks[0].blockFormat().textIndent() > 0
@@ -256,7 +258,7 @@ def test_class_change_renumbers_and_splits_title_page(qapp):
     assert sec.blockFormat().property(_P_HEADING_NUMBER) == "Chapter 1"
     size = sec.begin().fragment().charFormat().font().pointSizeF()
     assert size == pytest.approx(
-        12 * 24.88 / 12 * ed.zoom_percent() / 100)
+        24.79 * ed.zoom_percent() / 100)
     assert sec.blockFormat().pageBreakPolicy() \
         & QTextFormat.PageBreak_AlwaysBefore
 

@@ -21,7 +21,7 @@ from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from khervedoc.editor import (  # noqa: E402
-    DocumentEditor, _HEADING_SCALE, _STATE_PARAGRAPH, _style_code,
+    DocumentEditor, _STATE_PARAGRAPH, _style_code,
 )
 from khervedoc.model import (  # noqa: E402
     Document, Paragraph, Section, Text, Title,
@@ -69,11 +69,14 @@ def _body_pt(ed):
 
 
 def _expected_pt(ed, code):
+    """The size the class's PDF prints this style at."""
     if code == 0:
-        return _body_pt(ed)
-    if code >= 1:
+        return ed._body_char_format().fontPointSize()
+    if code == -1:
+        return ed._title_fmt().fontPointSize()
+    if code is not None and code >= 1:
         return ed._heading_fmt(code).fontPointSize()
-    return None                          # title etc.: own sizes, not checked
+    return None
 
 
 def _text_frags(block):

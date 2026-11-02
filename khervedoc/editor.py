@@ -10,6 +10,7 @@ LaTeX from the property.
 """
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
 
@@ -29,8 +30,12 @@ from PySide6.QtWidgets import (
     QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget,
 )
 
-from . import page_sizes
-from .paged_edit import PagedTextEdit
+from . import latex_fonts, page_sizes
+from .page_look import look_for, number_label
+from .paged_edit import (
+    ABOVE_LABELS_PROPERTY, NUMBER_ABOVE_PROPERTY, PagedTextEdit,
+    RUN_IN_LABEL_PROPERTY,
+)
 
 
 # LaTeX document classes shown in the toolbar combo. Order = display order.
@@ -493,12 +498,10 @@ _MATH_SEP = "\u200b"
 # \large, and body size below that.
 _HEADING_SCALE = {0: 24.88 / 12, 1: 17.28 / 12, 2: 14.4 / 12,
                   3: 1.0, 4: 1.0, 5: 1.0}
-# Space above / below headings in body ems, after article.cls
-# (\section 3.5ex / 2.3ex, \subsection 3.25ex / 1.5ex; 1ex ~ 0.43em).
-_HEADING_SPACING = {0: (3.0, 2.0), 1: (1.5, 1.0), 2: (1.4, 0.65),
-                    3: (1.4, 0.65), 4: (1.4, 0.0), 5: (1.4, 0.0)}
-# Levels LaTeX numbers by default (secnumdepth 3 in article).
-_NUMBERED_HEADING_LEVELS = (0, 1, 2, 3)
+_NUMBERED_HEADING_LEVELS = (0, 1, 2, 3, 4, 5)
+# Where Qt puts the baseline within a fixed-height line, from the line's top
+# (Latin Modern's ascent over its line height, and near enough for the rest).
+BASELINE_AT = 0.79
 _P_HEADING_NUMBER = HEADING_NUMBER_PROPERTY
 # Multi-line math environments numbered unless starred.
 _NUMBERABLE_ENV_RE = _re.compile(
@@ -520,8 +523,6 @@ _ALIGNMENT_FROM_QT = {
     Qt.AlignRight: "right",
     Qt.AlignJustify: "justify",
 }
-_TITLE_SCALE = 20.74 / 12   # \maketitle uses \LARGE
-
 _PX_PER_CM = 96 / 2.54
 
 # Screen stand-ins for the LaTeX body fonts, best match first. Georgia
@@ -549,9 +550,8 @@ def screen_font_for(meta: DocMeta) -> str:
     if chosen and chosen != "Georgia":
         return chosen
     if meta.body_font_family == "default":
-        from . import latex_fonts
-        if latex_fonts.ensure_loaded(meta.body_font_pt):
-            return latex_fonts.FAMILY
+        look = look_for(meta.documentclass, meta.body_font_pt)
+        return latex_fonts.pdf_font(look["body"]["font"])[0]
     installed = set(QFontDatabase.families())
     for family in _SCREEN_FONTS_FOR_LATEX.get(meta.body_font_family, []):
         if family in installed:
@@ -584,16 +584,6 @@ def _style_code(state: int) -> int | None:
     return None
 
 
-def _heading_char_format(level: int, body_pt: float = 12,
-                         family: str | None = None) -> QTextCharFormat:
-    fmt = QTextCharFormat()
-    f = QFont(family) if family else QFont()
-    f.setBold(True)
-    f.setPointSizeF(body_pt * _HEADING_SCALE.get(level, 1.0))
-    fmt.setFont(f)
-    return fmt
-
-
 def _frame_char_format() -> QTextCharFormat:
     fmt = QTextCharFormat()
     f = QFont()
@@ -604,103 +594,31 @@ def _frame_char_format() -> QTextCharFormat:
     return fmt
 
 
-def _title_char_format(body_pt: float = 12,
-                       family: str | None = None) -> QTextCharFormat:
-    fmt = QTextCharFormat()
-    f = QFont(family) if family else QFont()
-    f.setBold(True)
-    f.setPointSizeF(body_pt * _TITLE_SCALE)
-    fmt.setFont(f)
-    return fmt
-
-
 def _title_block_format() -> QTextBlockFormat:
     bfmt = QTextBlockFormat()
     bfmt.setAlignment(Qt.AlignHCenter)
-    bfmt.setTopMargin(8); bfmt.setBottomMargin(8)
     return bfmt
 
 
-# Title-block line sizes relative to body text, matching \maketitle's
-# \large author and \small affiliation so the page looks like the PDF.
-# The abstract and keywords are \small too (10.95pt under 12pt body).
-_TITLE_BLOCK_SCALE = {-2: 1.2, -3: 0.9, -4: 0.9, -7: 0.9, -8: 0.8}
-
-
-def _author_char_format(body_pt: float = 12,
-                        family: str | None = None) -> QTextCharFormat:
-    fmt = QTextCharFormat()
-    f = QFont(family) if family else QFont()
-    f.setItalic(True); f.setPointSizeF(body_pt * _TITLE_BLOCK_SCALE[-2])
-    fmt.setFont(f)
-    fmt.setForeground(QColor("#555"))
-    return fmt
+# Which entry of the class look (page_look) draws each title-block style.
+_TITLE_BLOCK_KEYS = {-1: "title", -2: "author", -3: "abstract", -4: "keywords",
+                     -6: "frame", -7: "affiliation", -8: "correspondence"}
 
 
 def _author_block_format() -> QTextBlockFormat:
-    bfmt = QTextBlockFormat()
-    bfmt.setAlignment(Qt.AlignHCenter)
-    bfmt.setTopMargin(0); bfmt.setBottomMargin(24)
-    return bfmt
-
-
-def _affiliation_char_format(correspondence: bool = False,
-                             body_pt: float = 12,
-                             family: str | None = None) -> QTextCharFormat:
-    fmt = QTextCharFormat()
-    f = QFont(family) if family else QFont()
-    f.setItalic(not correspondence)
-    f.setPointSizeF(body_pt * _TITLE_BLOCK_SCALE[-8 if correspondence else -7])
-    fmt.setFont(f)
-    fmt.setForeground(QColor("#555"))
-    return fmt
+    return _title_block_format()
 
 
 def _affiliation_block_format() -> QTextBlockFormat:
-    bfmt = QTextBlockFormat()
-    bfmt.setAlignment(Qt.AlignHCenter)
-    bfmt.setTopMargin(0); bfmt.setBottomMargin(6)
-    return bfmt
-
-
-def _abstract_char_format(body_pt: float = 12,
-                          family: str | None = None) -> QTextCharFormat:
-    fmt = QTextCharFormat()
-    f = QFont(family) if family else QFont()
-    f.setPointSizeF(body_pt * _TITLE_BLOCK_SCALE[-3])
-    fmt.setFont(f)
-    return fmt
+    return _title_block_format()
 
 
 def _abstract_block_format() -> QTextBlockFormat:
-    bfmt = QTextBlockFormat()
-    # Inset the abstract on both sides + warm cream highlight so it
-    # reads as a journal-style abstract block at a glance, clearly
-    # distinct from body text.
-    bfmt.setLeftMargin(48); bfmt.setRightMargin(48)
-    bfmt.setTopMargin(8); bfmt.setBottomMargin(8)
-    bfmt.setBackground(QColor("#fff5d6"))
-    return bfmt
-
-
-def _keywords_char_format(body_pt: float = 12,
-                          family: str | None = None) -> QTextCharFormat:
-    fmt = QTextCharFormat()
-    f = QFont(family) if family else QFont()
-    f.setItalic(True); f.setPointSizeF(body_pt * _TITLE_BLOCK_SCALE[-4])
-    fmt.setFont(f)
-    fmt.setForeground(QColor("#444"))
-    return fmt
+    return QTextBlockFormat()
 
 
 def _keywords_block_format() -> QTextBlockFormat:
-    bfmt = QTextBlockFormat()
-    # Pale blue band to mark keywords as a separate "metadata" block,
-    # distinct from both body text and the abstract above it.
-    bfmt.setLeftMargin(48); bfmt.setRightMargin(48)
-    bfmt.setTopMargin(4); bfmt.setBottomMargin(18)
-    bfmt.setBackground(QColor("#e3f0ff"))
-    return bfmt
+    return QTextBlockFormat()
 
 
 def _math_block_char_format() -> QTextCharFormat:
@@ -1161,7 +1079,7 @@ class DocumentEditor(QWidget):
         page_layout.setContentsMargins(0, 0, 0, 0)
         page_layout.setSpacing(0)
         page_layout.addWidget(self._edit, 1)
-        self._apply_page_size(page_sizes.by_code(self._meta.page_size))
+        self._apply_page_size()
         self._apply_page_layout()
 
         # Attach the live spell-check highlighter. The class is a
@@ -1341,24 +1259,25 @@ class DocumentEditor(QWidget):
         return self._meta
 
     def set_meta(self, meta: DocMeta) -> None:
-        prev_size = self._meta.page_size if self._meta else None
         prev_vfont = self._visual_font_family
         self._meta = meta
-        if meta.page_size != prev_size:
-            self._apply_page_size(page_sizes.by_code(meta.page_size))
+        self._apply_page_size()
         if screen_font_for(meta) != prev_vfont:
             self._apply_visual_font(screen_font_for(meta))
         # The caller often edits the current meta in place, so compare with
-        # what the heading fonts were last sized for.
-        if class_supports_chapter(meta.documentclass) \
-                != getattr(self, "_fonts_for_chapters", False):
+        # what the fonts were last set for.
+        if self._look_key() != getattr(self, "_fonts_for_look", None):
             self._conform_all_fonts()
         self._apply_page_layout()
         self._on_text_changed()
 
+    def _look_key(self) -> tuple:
+        m = self._meta
+        return (m.documentclass, m.body_font_pt, m.body_font_family,
+                m.visual_font_family)
+
     def _conform_all_fonts(self) -> None:
-        self._fonts_for_chapters = class_supports_chapter(
-            self._meta.documentclass)
+        self._fonts_for_look = self._look_key()
         self._building = True
         try:
             block = self._edit.document().firstBlock()
@@ -1370,7 +1289,7 @@ class DocumentEditor(QWidget):
 
     def set_page_size(self, code: str) -> None:
         self._meta.page_size = code
-        self._apply_page_size(page_sizes.by_code(code))
+        self._apply_page_size()
         self._apply_page_layout()
         self._resize_figure_images()
         self._on_text_changed()
@@ -1380,7 +1299,7 @@ class DocumentEditor(QWidget):
         all existing Paragraph blocks so the change is immediate."""
         self._visual_font_family = family
         f = QFont(family)
-        f.setPointSize(self._body_font_pt)
+        f.setPointSizeF(self._screen_pt())
         self._edit.setFont(f)
         self._building = True
         try:
@@ -1404,7 +1323,17 @@ class DocumentEditor(QWidget):
         finally:
             self._building = False
 
-    def _apply_page_size(self, page: "page_sizes.PageSize") -> None:
+    def _effective_page(self) -> "page_sizes.PageSize":
+        """The sheet the PDF comes out on: the chosen paper, or the one a
+        class insists on (IEEEtran is always US Letter)."""
+        g = self._look()["geometry"]
+        if g.get("follows_page", True) or not g.get("page_w"):
+            return page_sizes.by_code(self._meta.page_size)
+        return page_sizes.PageSize("class", "", g["page_w"] / 72,
+                                   g["page_h"] / 72)
+
+    def _apply_page_size(self) -> None:
+        page = self._effective_page()
         # Honour the current zoom so switching page sizes while zoomed in
         # doesn't snap the card back to 100%.
         scale = self._zoom_percent / 100 if self._zoom_percent else 1.0
@@ -1437,12 +1366,12 @@ class DocumentEditor(QWidget):
         self._building = True
         try:
             self._meta = doc.meta
-            self._fonts_for_chapters = class_supports_chapter(
-                doc.meta.documentclass)
+            self._fonts_for_look = self._look_key()
+            self._apply_page_size()
             if screen_font_for(doc.meta) != self._visual_font_family:
                 self._visual_font_family = screen_font_for(doc.meta)
                 f = QFont(self._visual_font_family)
-                f.setPointSize(self._body_font_pt)
+                f.setPointSizeF(self._screen_pt())
                 self._edit.setFont(f)
             self._resolver = ReferenceResolver(doc, self._doc_dir, self._extra_bib)
             self._edit.clear()
@@ -1658,7 +1587,7 @@ class DocumentEditor(QWidget):
             return
         if isinstance(block, Frame):
             cursor.block().setUserState(_STATE_FRAME)
-            cfmt = _frame_char_format()
+            cfmt = self._frame_fmt()
             for inline in block.children:
                 self._insert_inline(cursor, inline, base_format=cfmt)
             return
@@ -1969,7 +1898,7 @@ class DocumentEditor(QWidget):
         """Logical size for a math image: its 12pt render scaled to the
         body font and zoom, capped to 90% of the editor viewport."""
         zoom = self._zoom_percent / 100 if self._zoom_percent else 1.0
-        scale = (96 / _MATH_DPI) * zoom * self._body_font_pt / _MATH_RENDER_PT
+        scale = (96 / _MATH_DPI) * zoom * self._screen_pt() / _MATH_RENDER_PT
         max_w = int(self._edit.text_width_px() * 0.98)
         w, h = round(img.width() * scale), round(img.height() * scale)
         if w > max_w and max_w > 0:
@@ -2403,15 +2332,17 @@ class DocumentEditor(QWidget):
         # State-driven dispatch for paragraph styles that aren't visually
         # distinguishable from Body (Abstract / Keywords share the body
         # font and only differ by indentation/italic).
+        strip = self._strip_implicit_marks
         if state == _STATE_TITLE:
-            return Title(children=children)
+            return Title(children=strip(children, self._implied_marks("title")))
         if state == _STATE_AUTHOR:
-            return Author(children=children)
+            return Author(children=strip(children, self._implied_marks("author")))
         if state == _STATE_AFFILIATION:
-            return Affiliation(
-                children=self._strip_implicit_marks(children, ["italic"]))
+            return Affiliation(children=strip(
+                children, self._implied_marks("affiliation")))
         if state == _STATE_CORRESPONDENCE:
-            return Correspondence(children=children)
+            return Correspondence(children=strip(
+                children, self._implied_marks("correspondence")))
         if state == _STATE_THEOREM:
             bf = block.blockFormat()
             return Theorem(kind=bf.property(_P_THM_KIND) or "theorem",
@@ -2419,24 +2350,27 @@ class DocumentEditor(QWidget):
                            children=children,
                            start=bool(bf.property(_P_THM_START)))
         if state == _STATE_ABSTRACT:
-            return Abstract(children=children)
+            return Abstract(children=strip(
+                children, self._implied_marks("abstract")))
         if state == _STATE_KEYWORDS:
-            # Italic is implied by the Keywords style.
-            return Keywords(children=self._strip_implicit_marks(children, ["italic"]))
+            return Keywords(children=strip(
+                children, self._implied_marks("keywords")))
         if state == _STATE_CHAPTER:
-            return Section(level=0, children=self._strip_implicit_marks(children, ["bold"]))
+            return Section(level=0, children=strip(
+                children, self._implied_marks("h1")))
         if state == _STATE_CHAPTER_STAR:
-            return Section(level=0, numbered=False,
-                           children=self._strip_implicit_marks(children, ["bold"]))
+            return Section(level=0, numbered=False, children=strip(
+                children, self._implied_marks("h1")))
         if state == _STATE_FRAME:
-            return Frame(children=self._strip_implicit_marks(children, ["bold"]))
+            return Frame(children=strip(
+                children, self._implied_marks("frame") or ["bold"]))
         if _STATE_HEADING_STAR_BASE < state <= _STATE_HEADING_STAR_BASE + 5:
             level = state - _STATE_HEADING_STAR_BASE
-            return Section(level=level, numbered=False,
-                           children=self._strip_implicit_marks(children, ["bold"]))
+            return Section(level=level, numbered=False, children=strip(
+                children, self._implied_marks(f"h{level}")))
         if 1 <= state <= 5:
-            return Section(level=state,
-                           children=self._strip_implicit_marks(children, ["bold"]))
+            return Section(level=state, children=strip(
+                children, self._implied_marks(f"h{state}")))
 
         # Empty block: no fragments to inspect — fall back to state.
         it = block.begin()
@@ -2461,7 +2395,7 @@ class DocumentEditor(QWidget):
         base = size / zoom if zoom > 0 else size
 
         # Title: large + bold + centered (with state hint relaxes the size threshold).
-        body = float(self._body_font_pt)
+        body = float(self._screen_pt())
         if align_flag == Qt.AlignHCenter and bold and (
                 base >= body * 1.6 or state == _STATE_TITLE):
             return Title(children=self._strip_implicit_marks(children, ["bold"]))
@@ -2654,7 +2588,7 @@ class DocumentEditor(QWidget):
         elif level == -6:
             block.setUserState(_STATE_FRAME)
             QTextCursor(block).setBlockFormat(QTextBlockFormat())
-            cfmt = _frame_char_format()
+            cfmt = self._frame_fmt()
             block_cursor.mergeCharFormat(cfmt)
         elif level >= 1:
             block.setUserState(level)
@@ -2666,7 +2600,7 @@ class DocumentEditor(QWidget):
             QTextCursor(block).setBlockFormat(QTextBlockFormat())
             fmt = QTextCharFormat()
             f = QFont(self._visual_font_family)
-            f.setPointSizeF(self._body_font_pt * (self._zoom_percent / 100))
+            f.setPointSizeF(self._screen_pt() * (self._zoom_percent / 100))
             fmt.setFont(f)
             cfmt = fmt
             block_cursor.setCharFormat(fmt)
@@ -3337,9 +3271,57 @@ class DocumentEditor(QWidget):
         fmt = QTextCharFormat()
         f = QFont(self._visual_font_family)
         zoom = self._zoom_percent / 100 if self._zoom_percent else 1.0
-        f.setPointSizeF(self._body_font_pt * zoom)
+        f.setPointSizeF(self._screen_pt() * zoom)
         fmt.setFont(f)
         return fmt
+
+    def _look(self) -> dict:
+        """How the document's class really typesets each style."""
+        return look_for(self._meta.documentclass, self._meta.body_font_pt)
+
+    def _screen_pt(self) -> float:
+        """Body size the PDF prints at, which a class may fix regardless of
+        the size chosen for the document (IEEEtran is always 10pt)."""
+        return self._look()["body"]["size"]
+
+    def _screen_font(self, pdf_name: str) -> tuple[str, bool, bool]:
+        """Family, bold, italic for a PDF font. A roman font the user
+        replaced (Format > font) follows that choice, as the LaTeX does."""
+        family, bold, italic = latex_fonts.pdf_font(pdf_name)
+        m = self._meta
+        replaced = (m.visual_font_family not in ("", "Georgia")
+                    or m.body_font_family != "default")
+        if replaced and "Sans" not in pdf_name:
+            family = self._visual_font_family
+        return family, bold, italic
+
+    def _style_fmt(self, key: str, scale: float = 1.0) -> QTextCharFormat:
+        """Character format of look entry *key*, at the current zoom."""
+        look = self._look()
+        spec = look.get(key) or look["body"]
+        family, bold, italic = self._screen_font(spec["font"])
+        zoom = self._zoom_percent / 100 if self._zoom_percent else 1.0
+        f = QFont(family)
+        f.setBold(bold)
+        f.setItalic(italic)
+        f.setPointSizeF(spec["size"] * scale * zoom)
+        if spec.get("upper"):
+            f.setCapitalization(QFont.AllUppercase)
+        fmt = QTextCharFormat()
+        fmt.setFont(f)
+        # Black stays unset so the text follows a dark theme's page.
+        if spec.get("color", "#000000") != "#000000":
+            fmt.setForeground(QColor(spec["color"]))
+        return fmt
+
+    def _implied_marks(self, key: str) -> list[str]:
+        """bold / italic this style prints in anyway: never LaTeX marks."""
+        look = self._look()
+        spec = look.get(key)
+        if not spec:
+            return []
+        bold, italic = latex_fonts.weight_and_slant(spec["font"])
+        return ["bold"] * bold + ["italic"] * italic
 
     def set_body_font_pt(self, pt: int) -> None:
         """Change the default body text size and re-apply it to every
@@ -3366,43 +3348,226 @@ class DocumentEditor(QWidget):
                     bc.select(QTextCursor.BlockUnderCursor)
                     fmt = QTextCharFormat()
                     f = QFont(self._visual_font_family)
-                    f.setPointSizeF(pt * zoom)
+                    f.setPointSizeF(self._screen_pt() * zoom)
                     fmt.setFont(f)
                     bc.setCharFormat(fmt)
                 block = block.next()
         finally:
             self._building = False
+        self._conform_all_fonts()
+        self._apply_page_size()
         self._resize_math_images()
         self._apply_page_layout()
         self._on_text_changed()
 
     def _heading_fmt(self, level: int) -> QTextCharFormat:
-        """Format for Heading *level* (0 = chapter); in report / book
-        Heading 1 is a chapter, so every level looks one step bigger."""
-        if level >= 1 and class_supports_chapter(self._meta.documentclass):
-            level -= 1
-        zoom = self._zoom_percent / 100 if self._zoom_percent else 1.0
-        return _heading_char_format(level, self._body_font_pt * zoom,
-                                    self._visual_font_family)
+        """Format for Heading *level*, as this class prints that level.
+        Level 0 is an explicit chapter: report's Heading 1 already is one;
+        a class without chapters scales its top heading up."""
+        if level >= 1:
+            return self._style_fmt(f"h{level}")
+        chapters = class_supports_chapter(self._meta.documentclass)
+        return self._style_fmt("h1", 1.0 if chapters else 1.44)
 
     def _title_block_fmt(self, code: int) -> QTextCharFormat:
-        """Author (-2), Affiliation (-7) or Correspondence (-8) format at
-        the current zoom and visual font, like every other style."""
-        zoom = self._zoom_percent / 100 if self._zoom_percent else 1.0
-        body = self._body_font_pt * zoom
-        if code == -2:
-            return _author_char_format(body, self._visual_font_family)
-        if code == -3:
-            return _abstract_char_format(body, self._visual_font_family)
-        if code == -4:
-            return _keywords_char_format(body, self._visual_font_family)
-        return _affiliation_char_format(code == -8, body,
-                                        self._visual_font_family)
+        """Title-block style *code* in the class's own font and size."""
+        return self._style_fmt(_TITLE_BLOCK_KEYS[code])
 
     def _title_fmt(self) -> QTextCharFormat:
-        zoom = self._zoom_percent / 100 if self._zoom_percent else 1.0
-        return _title_char_format(self._body_font_pt * zoom,
-                                  self._visual_font_family)
+        return self._style_fmt("title")
+
+    def _frame_fmt(self) -> QTextCharFormat:
+        return (self._style_fmt("frame") if "frame" in self._look()
+                else _frame_char_format())
+
+    @staticmethod
+    def _style_key(state: int) -> str | None:
+        """The look entry that draws a block in this state."""
+        code = _style_code(state)
+        if code is None or code == 0:
+            return None
+        if code == -5:
+            return "h1"
+        return _TITLE_BLOCK_KEYS.get(code) or f"h{code}"
+
+    def _label_entry(self, spec: dict, text: str, up_px: float,
+                     pt_px: float, centred: bool) -> dict:
+        family, bold, italic = self._screen_font(spec["font"])
+        return dict(text=text, family=family, bold=bold, italic=italic,
+                    # Black stays the page's own text colour.
+                    color="" if spec.get("color", "#000000") == "#000000"
+                    else spec["color"],
+                    size=spec["size"] * pt_px * 72 / 96, up=up_px,
+                    centred=bool(centred))
+
+    def _date_blocks(self) -> tuple[int, int]:
+        """\\maketitle's date hangs below the last title line and pushes the
+        next block down: (that line, that block), -1 for no such block."""
+        if not self._look().get("date"):
+            return -1, -1
+        last = -1
+        block = self._edit.document().firstBlock()
+        while block.isValid():
+            if QTextCursor(block).currentTable() is None and block.text():
+                code = _style_code(block.userState())
+                if code in (-1, -2, -7, -8):
+                    last = block.blockNumber()
+                else:
+                    return last, block.blockNumber() if last >= 0 else -1
+            block = block.next()
+        return last, -1
+
+    def _date_label(self, look: dict, pt_px: float) -> dict:
+        from datetime import date
+        d = look["date"]
+        today = date.today()
+        text = (f"{today.day} {today:%B} {today.year}" if d.get("day_first")
+                else f"{today:%B} {today.day}, {today.year}")
+        return self._label_entry(d, text, -d["gap"] * pt_px, pt_px, True)
+
+    @staticmethod
+    def _style_lead(key: str, look: dict) -> float:
+        spec = look.get(key) or look["body"]
+        lead = spec["size"] * 1.2
+        if key in ("abstract", "keywords"):
+            measured = spec.get("leading") or 0
+            if spec["size"] < measured < spec["size"] * 2:
+                lead = measured
+        return lead
+
+    def _lay_out_styled_block(self, bfmt, key, look, pt_px, top_px,
+                              starts_sheet, prev_state, state, under_title,
+                              number, prev_lead, first_block,
+                              block_lines) -> list:
+        """Set a title-block or heading line exactly where the class sets
+        it: alignment, insets and baseline distances, all measured."""
+        spec = look.get(key)
+        if not spec:
+            return []
+        align = {"center": Qt.AlignHCenter}.get(spec.get("align"), Qt.AlignLeft)
+        if key in ("abstract", "keywords"):
+            align = Qt.AlignJustify
+        bfmt.setAlignment(align)
+        lead = self._style_lead(key, look)
+        bfmt.setLineHeight(lead * pt_px, 2)     # FixedHeight
+        body_lead = look["body"]["leading"]
+        labels: list = []
+        same_as_previous = state == prev_state and key == "abstract"
+        bfmt.setBottomMargin(0)
+        above = spec.get("above")
+        if key == "correspondence":
+            above = lead     # printed as a footnote; keep the lines together
+        if key in ("abstract", "keywords"):
+            bfmt.setLeftMargin(spec.get("inset_left", 0) * pt_px)
+            bfmt.setRightMargin(spec.get("inset_right", 0) * pt_px)
+        elif spec.get("align") != "center":
+            bfmt.setLeftMargin(spec.get("indent", 0) * pt_px)
+            bfmt.setRightMargin(0)
+        else:
+            bfmt.setLeftMargin(0)
+            bfmt.setRightMargin(0)
+        if same_as_previous:
+            bfmt.setTopMargin(0)
+            bfmt.setBottomMargin(0)
+            return []
+        up = 0.0
+        if key == "abstract" and spec.get("label_above"):
+            lab = spec["label_above"]
+            up = lab["gap"]
+            labels.append(self._label_entry(
+                lab, lab["text"], up * pt_px, pt_px, lab.get("centred")))
+            above = up + lab.get("gap_prev", 0)
+        if key == "h1" and look.get("chapter_label"):
+            lab = look["chapter_label"]
+            up = lab["gap"]
+            text = f"{lab['text']} {number.split()[-1]}".strip() if number \
+                else ""
+            if text:
+                labels.append(self._label_entry(
+                    lab, text, up * pt_px, pt_px, lab.get("centred")))
+        if under_title and above is not None:
+            above += look["date"]["gap"]
+        if starts_sheet or first_block or above is None:
+            # Top of a sheet: measured down from the top of the text block.
+            drop = (spec.get("top", 0) - top_px / pt_px
+                    if key in ("title", "h1", "author") and spec.get("top")
+                    else BASELINE_AT * lead)
+            if first_block:
+                # Qt ignores the first block's top margin. One line can take
+                # the drop as line height, which sets its baseline just as
+                # low; a wrapped title keeps its leading and sits higher.
+                bfmt.setTopMargin(0)
+                if drop > BASELINE_AT * lead and block_lines == 1:
+                    tall = drop / BASELINE_AT
+                    bfmt.setLineHeight(tall * pt_px, 2)
+                    # Pull back what that leaves under the baseline.
+                    bfmt.setBottomMargin(-(1 - BASELINE_AT) * tall * pt_px)
+                return labels
+            else:
+                bfmt.setTopMargin(max(0, drop - BASELINE_AT * lead) * pt_px)
+        else:
+            # May be negative under a first line grown tall (see above).
+            bfmt.setTopMargin((above - (1 - BASELINE_AT) * prev_lead
+                               - BASELINE_AT * lead) * pt_px)
+        below = spec.get("below")
+        if key.startswith("h") and below is not None and not spec.get("run_in"):
+            bfmt.setBottomMargin(max(0, below - (1 - BASELINE_AT) * lead
+                                     - BASELINE_AT * body_lead) * pt_px)
+        else:
+            bfmt.setBottomMargin(0)
+        return labels
+
+    def _apply_run_in_label(self, bfmt, block, key, look, prev_state, state,
+                            pt_px) -> None:
+        """"Abstract." or "Keywords:" set in front of the block's first line."""
+        spec = (look.get(key) or {}) if key in ("abstract", "keywords") else {}
+        label = spec.get("label")
+        if key == "keywords" and not label:
+            label = {"text": "Keywords:", "font": look["body"]["font"].replace(
+                "Regular", "Bold"), "size": look["body"]["size"]}
+        first = state != prev_state
+        if label and first:
+            entry = self._label_entry(label, label["text"], 0, pt_px, False)
+            f = QFont(entry["family"])
+            f.setBold(entry["bold"])
+            f.setItalic(entry["italic"])
+            f.setPointSizeF(entry["size"])
+            indent = spec.get("first_indent", 0) * pt_px
+            entry["left"] = indent
+            bfmt.setProperty(RUN_IN_LABEL_PROPERTY, json.dumps(entry))
+            bfmt.setTextIndent(
+                indent + QFontMetricsF(f).horizontalAdvance(label["text"] + " "))
+            return
+        if bfmt.hasProperty(RUN_IN_LABEL_PROPERTY):
+            bfmt.clearProperty(RUN_IN_LABEL_PROPERTY)
+        if key == "abstract":
+            bfmt.setTextIndent((spec.get("first_indent", 0) if first else 0)
+                               * pt_px)
+        elif key == "keywords":
+            bfmt.setTextIndent(0)
+
+    def _furniture_for_screen(self, look: dict, zoom: float,
+                              fields: dict) -> dict:
+        """The class's measured headers and footers with fonts resolved, for
+        the page painter, which fills in the fields page by page."""
+        from datetime import date
+        pages = {}
+        for kind, items in look.get("furniture", {}).items():
+            out = []
+            for item in items:
+                if item.get("rule"):
+                    out.append(item)
+                    continue
+                family, bold, italic = self._screen_font(item["font"])
+                out.append(dict(
+                    item, family=family, bold=bold, italic=italic,
+                    size=item["size"] * zoom,
+                    color="" if item["color"] == "#000000" else item["color"]))
+            pages[kind] = out
+        today = date.today()
+        return dict(pages=pages, pt_px=96 / 72 * zoom, fields=dict(
+            fields, date=f"{today:%B} {today.day}, {today.year}",
+            date_uk=f"{today.day} {today:%B} {today.year}"))
 
     def _apply_page_layout(self) -> None:
         """Mirror the PDF's geometry on screen: per-side margins from the
@@ -3414,30 +3579,45 @@ class DocumentEditor(QWidget):
         doc = self._edit.document()
         root = doc.rootFrame()
         ff = root.frameFormat()
-        ff.setTopMargin(m.margin_top_cm * _PX_PER_CM * zoom)
-        ff.setBottomMargin(m.margin_bottom_cm * _PX_PER_CM * zoom)
-        cols = max(1, int(getattr(m, "column_count", 1) or 1))
-        left_px = m.margin_left_cm * _PX_PER_CM * zoom
-        right_px = m.margin_right_cm * _PX_PER_CM * zoom
+        look = self._look()
+        g = look["geometry"]
+        pt_px = 96 / 72 * zoom
+        # A class that ignores the document's margins prints with its own.
+        def side(key, cm):
+            own = g.get(key)
+            return (cm * _PX_PER_CM * zoom
+                    if g.get("follows_margins", True) or own is None
+                    else own * pt_px)
+        top_px = side("top", m.margin_top_cm)
+        ff.setTopMargin(top_px)
+        ff.setBottomMargin(side("bottom", m.margin_bottom_cm))
+        cols = (max(1, int(getattr(m, "column_count", 1) or 1))
+                if g.get("follows_margins", True)
+                else max(1, int(g.get("cols") or 1)))
+        left_px = side("left", m.margin_left_cm)
+        right_px = side("right", m.margin_right_cm)
         # In columns each layout page IS one column, so the side margins
         # move out of the layout and into the column placement.
         ff.setLeftMargin(0 if cols > 1 else left_px)
         ff.setRightMargin(0 if cols > 1 else right_px)
-        # LaTeX's \columnsep is 10pt.
-        self._edit.set_columns(cols, 10 * 96 / 72 * zoom, left_px, right_px)
+        # LaTeX's \columnsep is 10pt unless the class measured otherwise.
+        self._edit.set_columns(cols, (g.get("colsep") or 10) * pt_px,
+                               left_px, right_px)
         # Only write what changed: every format write counts as a document
         # edit, and this runs after each edit, so an unconditional write
         # re-triggered the compile forever.
         if ff != root.frameFormat():
             root.setFrameFormat(ff)
 
-        em_px = self._body_font_pt * 96 / 72 * zoom
+        body = look["body"]
+        em_px = body["size"] * pt_px
         spacing = max(0.5, float(m.line_spacing or 1.0))
         from .latex_fonts import baselineskip_pt
-        # Body lines sit exactly LaTeX's \baselineskip apart, so a page
-        # holds as many lines on screen as in the PDF.
-        body_line_px = baselineskip_pt(self._body_font_pt, spacing) \
-            * 96 / 72 * zoom
+        # Body lines sit exactly as far apart as in the PDF, so a page holds
+        # as many lines on screen. setspace stretches that as it would.
+        stretch = baselineskip_pt(m.body_font_pt, spacing) \
+            / baselineskip_pt(m.body_font_pt, 1.0)
+        body_line_px = body["leading"] * stretch * pt_px
         was_building = self._building
         self._building = True
         # Fold the layout pass into the previous undo step so Ctrl+Z
@@ -3446,6 +3626,7 @@ class DocumentEditor(QWidget):
         edit.joinPreviousEditBlock()
         try:
             prev_state = None
+            prev_lead = body["leading"]
             # PDF page starts mean a new sheet; with columns a forced break
             # would only start a new column, so leave paging to the layout.
             pdf_breaks = (self._pdf_page_start_blocks()
@@ -3458,6 +3639,7 @@ class DocumentEditor(QWidget):
                             or class_chapters)
             heads: list = []
             title_breaks = self._title_page_breaks()
+            date_line, after_date = self._date_blocks()
             counters = list(offset)
             eq = 0
             thm = 0
@@ -3470,10 +3652,10 @@ class DocumentEditor(QWidget):
                 state = block.userState()
                 bfmt = block.blockFormat()
                 # Start a new sheet exactly where the compiled PDF does.
+                starts_sheet = (block.blockNumber() in pdf_breaks
+                                or block.blockNumber() in title_breaks)
                 bfmt.setPageBreakPolicy(
-                    QTextFormat.PageBreak_AlwaysBefore
-                    if block.blockNumber() in pdf_breaks
-                    or block.blockNumber() in title_breaks
+                    QTextFormat.PageBreak_AlwaysBefore if starts_sheet
                     else QTextFormat.PageBreak_Auto)
                 number = ""
                 level = 0 if state == _STATE_CHAPTER else (
@@ -3485,6 +3667,7 @@ class DocumentEditor(QWidget):
                         and doc.firstBlock() != block:
                     bfmt.setPageBreakPolicy(
                         QTextFormat.PageBreak_AlwaysBefore)
+                    starts_sheet = True
                 if level is not None:
                     if level == 0:
                         eq = 0
@@ -3495,20 +3678,23 @@ class DocumentEditor(QWidget):
                         start = 0 if has_chapters else 1
                         number = ".".join(
                             str(c) for c in counters[start:level + 1])
-                    if level <= 1 and block.text().strip():
+                    chapter_number = number
+                    # Printed the way this class prints that level.
+                    key = self._style_key(state)
+                    spec = look.get(key) or {}
+                    above_chapter = level == 0 and look.get("chapter_label")
+                    if not above_chapter:
+                        number = number_label(spec.get("prefix", ""), number)
+                    if (level <= 1 or state <= 2) and block.text().strip():
                         heads.append((block, level == 0, (
-                            f"Chapter {number}. " if level == 0 else
+                            f"Chapter {chapter_number}. " if level == 0 else
                             f"{number} " if number else "")
-                            + block.text().strip()))
-                    if level == 0:
-                        number = f"Chapter {number}"
-                any_level = level
-                if _STATE_HEADING_STAR_BASE < state <= _STATE_HEADING_STAR_BASE + 5:
-                    any_level = state - _STATE_HEADING_STAR_BASE
-                    if class_chapters:
-                        any_level = max(0, any_level - 1)
-                elif state == _STATE_CHAPTER_STAR:
-                    any_level = 0
+                            + block.text().strip(),
+                            max(1, state if 1 <= state <= 5 else 1),
+                            block.text().strip(), number.rstrip(".")
+                            if level != 0 else chapter_number))
+                    if above_chapter:
+                        number = f"Chapter {chapter_number}"
                 eq_number = ""
                 if state == _STATE_MATH_BLOCK \
                         and _math_block_is_numbered(block):
@@ -3523,29 +3709,49 @@ class DocumentEditor(QWidget):
                     # \abovedisplayskip / \belowdisplayskip: 12pt at 12pt.
                     bfmt.setTopMargin(0.8 * em_px)
                     bfmt.setBottomMargin(0.8 * em_px)
-                if any_level is not None:
-                    above, below = _HEADING_SPACING.get(any_level, (1.4, 0.65))
-                    bfmt.setTopMargin(above * em_px)
-                    bfmt.setBottomMargin(below * em_px)
+                labels: list = []
+                key = self._style_key(state)
+                if key:
+                    layout_of = block.layout()
+                    labels = self._lay_out_styled_block(
+                        bfmt, key, look, pt_px, top_px, starts_sheet,
+                        prev_state, state, block.blockNumber() == after_date,
+                        number, prev_lead, block == doc.firstBlock(),
+                        layout_of.lineCount() if layout_of else 1)
+                if block.blockNumber() == date_line:
+                    labels.append(self._date_label(look, pt_px))
+                if labels:
+                    bfmt.setProperty(ABOVE_LABELS_PROPERTY, json.dumps(labels))
+                elif bfmt.hasProperty(ABOVE_LABELS_PROPERTY):
+                    bfmt.clearProperty(ABOVE_LABELS_PROPERTY)
                 old_number = bfmt.property(_P_HEADING_NUMBER) or ""
-                if number.startswith("Chapter "):
+                on_own_line = key == "h1" and look.get("chapter_label") \
+                    and number.startswith("Chapter ")
+                if on_own_line:
+                    bfmt.setProperty(NUMBER_ABOVE_PROPERTY, True)
+                elif bfmt.hasProperty(NUMBER_ABOVE_PROPERTY):
+                    bfmt.clearProperty(NUMBER_ABOVE_PROPERTY)
+                if on_own_line:
                     # "Chapter 1" sits on its own line above the title.
                     bfmt.setProperty(_P_HEADING_NUMBER, number)
                     bfmt.setTextIndent(0)
-                    bfmt.setTopMargin(bfmt.topMargin() + 2.2 * em_px)
                 elif number:
                     bfmt.setProperty(_P_HEADING_NUMBER, number)
                     it = block.begin()
                     font = (it.fragment().charFormat().font()
-                            if not it.atEnd() else _heading_char_format(
-                                level, self._body_font_pt).font())
+                            if not it.atEnd()
+                            else self._style_fmt(key or "h1").font())
                     fm = QFontMetricsF(font)
-                    # LaTeX leaves 1em between the number and the title.
+                    gap = (look.get(key) or {}).get("num_gap")
+                    # What the class leaves between number and title.
                     bfmt.setTextIndent(fm.horizontalAdvance(number)
-                                       + fm.height() * 0.8)
+                                       + (gap * pt_px if gap is not None
+                                          else fm.height() * 0.8))
                 elif old_number:
                     bfmt.clearProperty(_P_HEADING_NUMBER)
                     bfmt.setTextIndent(0)
+                self._apply_run_in_label(bfmt, block, key, look, prev_state,
+                                         state, pt_px)
                 if level is not None and level <= (0 if has_chapters else 1):
                     thm = 0         # \newtheorem{theorem}{...}[section]
                 if state == _STATE_THEOREM:
@@ -3581,6 +3787,8 @@ class DocumentEditor(QWidget):
                     bfmt.setTextIndent(0)
                 if state in (_STATE_PARAGRAPH, -1):
                     bfmt.setLineHeight(body_line_px, 2)   # FixedHeight
+                elif key:
+                    pass                # set with the style's own leading
                 elif abs(spacing - 1.0) > 0.01:
                     bfmt.setLineHeight(spacing * 100, 1)  # ProportionalHeight
                 else:
@@ -3590,8 +3798,16 @@ class DocumentEditor(QWidget):
                     # heading, title or display block.
                     follows_para = prev_state in (_STATE_PARAGRAPH, -1)
                     if m.paragraph_indent:
-                        bfmt.setTextIndent(1.5 * em_px if follows_para else 0)
+                        indents = follows_para or body.get("indent_first")
+                        bfmt.setTextIndent(
+                            body.get("parindent", 0) * pt_px if indents else 0)
                         bfmt.setBottomMargin(0)
+                        if block.blockNumber() == after_date:
+                            bfmt.setTopMargin(look["date"]["gap"] * pt_px)
+                        else:
+                            bfmt.setTopMargin(
+                                body.get("parskip", 0) * pt_px
+                                if follows_para else 0)
                     else:
                         bfmt.setTextIndent(0)
                         bfmt.setBottomMargin(0.8 * em_px)
@@ -3599,14 +3815,22 @@ class DocumentEditor(QWidget):
                     QTextCursor(block).setBlockFormat(bfmt)
                 if block.text().strip() or state not in (_STATE_PARAGRAPH, -1):
                     prev_state = state
+                    prev_lead = (bfmt.lineHeight() / pt_px if key
+                                 else body["leading"] * stretch)
                 block = block.next()
         finally:
             edit.endEditBlock()
             self._building = was_building
-        # book's default page style is `headings`: running heads on top.
-        book = (m.documentclass or "").lower().split(",")[0].strip() \
-            in ("book", "scrbook", "memoir")
-        self._edit.set_running_heads(heads if book else [])
+        self._edit.set_running_heads(heads)
+        fields = {}
+        block = doc.firstBlock()
+        while block.isValid():
+            field = {_STATE_TITLE: "title", _STATE_AUTHOR: "author",
+                     _STATE_AFFILIATION: "affil"}.get(block.userState())
+            if field and field not in fields and block.text().strip():
+                fields[field] = block.text().strip()
+            block = block.next()
+        self._edit.set_furniture(self._furniture_for_screen(look, zoom, fields))
 
     def zoom_percent(self) -> int:
         return self._zoom_percent
@@ -3672,7 +3896,7 @@ class DocumentEditor(QWidget):
         # preserved. The document margin also scales so the number of
         # characters per line stays constant — zoom should make everything
         # bigger uniformly, not reflow the text.
-        page = page_sizes.by_code(self._meta.page_size)
+        page = self._effective_page()
         scaled_w = round(page.width_px * percent / 100)
         scaled_h = round(page.height_px * percent / 100)
         self._page.setFixedWidth(scaled_w)
@@ -3698,7 +3922,7 @@ class DocumentEditor(QWidget):
     def _apply_fit_to_width(self) -> None:
         if not self._fit_to_width:
             return
-        page = page_sizes.by_code(self._meta.page_size)
+        page = self._effective_page()
         viewport_w = self._scroll.viewport().width()
         # Leave 48px padding on each side for the desk margins.
         available = viewport_w - 48
@@ -4346,14 +4570,21 @@ class DocumentEditor(QWidget):
         Qt otherwise hands it whatever font the caret last held (another
         line's heading size, or none at all after an undo)."""
         code = _style_code(block.userState())
-        if code in _TITLE_BLOCK_SCALE:
-            self._conform_title_block(block, code)
+        if code is None:
             return
-        if code is None or code < 0:
-            return
-        zoom = self._zoom_percent / 100 if self._zoom_percent else 1.0
-        body_pt = self._body_font_pt * zoom
-        want = body_pt if code == 0 else self._heading_fmt(code).fontPointSize()
+        if code == 0:
+            want = self._body_char_format()
+        elif code == -5:
+            want = self._heading_fmt(0)
+        elif code in _TITLE_BLOCK_KEYS:
+            want = (self._frame_fmt() if code == -6
+                    else self._title_block_fmt(code))
+        else:
+            want = self._heading_fmt(code)
+        want_pt = want.fontPointSize()
+        families = want.fontFamilies()
+        body_pt = self._screen_pt() * (
+            self._zoom_percent / 100 if self._zoom_percent else 1.0)
         spans = []
         it = block.begin()
         while not it.atEnd():
@@ -4361,50 +4592,41 @@ class DocumentEditor(QWidget):
             cf = frag.charFormat() if frag.isValid() else None
             if (cf is not None and not cf.isImageFormat()
                     and cf.property(_P_MATH) is None
-                    and abs(cf.fontPointSize() - want) > 0.01):
+                    and not (cf.font().styleHint() == QFont.Monospace
+                             and cf.font().family().lower() == "consolas")
+                    and (abs(cf.fontPointSize() - want_pt) > 0.01
+                         or cf.fontFamilies() != families
+                         or cf.font().capitalization()
+                         != want.font().capitalization())):
                 spans.append((frag.position(), frag.length(),
                               cf.fontPointSize() > body_pt * 1.1))
             it += 1
         for pos, n, was_heading in spans:
             fix = QTextCharFormat()
-            fix.setFontPointSize(want)
+            fix.setFontPointSize(want_pt)
+            fix.setFontFamilies(families)
+            fix.setFontCapitalization(want.font().capitalization())
             if code != 0:
-                fix.setFontWeight(QFont.Bold)
+                fix.setFontWeight(want.fontWeight())
+                # The abstract keeps the user's own italics.
+                if code != -3:
+                    fix.setFontItalic(want.fontItalic())
             elif was_heading:
                 fix.setFontWeight(QFont.Normal)
-            fix.setFontFamilies([self._visual_font_family])
             c = QTextCursor(self._edit.document())
             c.setPosition(pos)
             c.setPosition(pos + n, QTextCursor.KeepAnchor)
             c.mergeCharFormat(fix)
-
-    def _conform_title_block(self, block, code: int) -> None:
-        """Author / affiliation lines keep their style's size, family and
-        italic whatever font the caret carried in from elsewhere."""
-        want = self._title_block_fmt(code)
-        want_pt = want.fontPointSize()
-        spans = []
-        it = block.begin()
-        while not it.atEnd():
-            frag = it.fragment()
-            cf = frag.charFormat() if frag.isValid() else None
-            if (cf is not None and not cf.isImageFormat()
-                    and cf.property(_P_MATH) is None
-                    and (abs(cf.fontPointSize() - want_pt) > 0.01
-                         or cf.fontFamilies() != want.fontFamilies())):
-                spans.append((frag.position(), frag.length()))
-            it += 1
-        for pos, n in spans:
-            fix = QTextCharFormat()
-            fix.setFontPointSize(want_pt)
-            fix.setFontFamilies(want.fontFamilies())
-            if code != -3:
-                # The abstract keeps the user's own italics.
-                fix.setFontItalic(want.fontItalic())
-            c = QTextCursor(self._edit.document())
-            c.setPosition(pos)
-            c.setPosition(pos + n, QTextCursor.KeepAnchor)
-            c.mergeCharFormat(fix)
+            # A merge cannot take a colour away.
+            if not want.hasProperty(QTextFormat.ForegroundBrush):
+                plain = c.charFormat()
+                if plain.hasProperty(QTextFormat.ForegroundBrush):
+                    plain.clearForeground()
+                    c.setCharFormat(plain)
+            else:
+                colour = QTextCharFormat()
+                colour.setForeground(want.foreground())
+                c.mergeCharFormat(colour)
 
     def _restyle_as_body(self, block) -> None:
         """Body style without flattening the paragraph: only text still
@@ -4413,14 +4635,16 @@ class DocumentEditor(QWidget):
         block.setUserState(_STATE_PARAGRAPH)
         QTextCursor(block).setBlockFormat(QTextBlockFormat())
         zoom = self._zoom_percent / 100 if self._zoom_percent else 1.0
-        body_pt = self._body_font_pt * zoom
+        body_pt = self._screen_pt() * zoom
         fmt = QTextCharFormat()
         f = QFont(self._visual_font_family)
         f.setPointSizeF(body_pt)
         fmt.setFont(f)
 
         def foreign(cf) -> bool:
-            return abs(cf.fontPointSize() - body_pt) > 0.01
+            return (abs(cf.fontPointSize() - body_pt) > 0.01
+                    or cf.fontFamilies() != fmt.fontFamilies()
+                    or cf.font().capitalization() != QFont.MixedCase)
 
         it = block.begin()
         spans = []
@@ -5051,28 +5275,36 @@ class DocumentEditor(QWidget):
         self._resize_to_document()
 
     def _title_page_breaks(self) -> set[int]:
-        """Blocks that start a page because report / book set \\maketitle
-        (and report its abstract) on a page of their own."""
+        """Blocks that start a sheet because the class set the title block,
+        abstract or body on pages of their own, as measured from its PDF."""
         m = self._meta
-        if not class_supports_chapter(m.documentclass) \
-                or "notitlepage" in (m.class_options or ""):
+        if "notitlepage" in (m.class_options or ""):
             return set()
+        look = self._look()
         out: set[int] = set()
-        phase = 0          # 0 before title, 1 in title, 2 in abstract
+        page = None
         block = self._edit.document().firstBlock()
         while block.isValid():
             if QTextCursor(block).currentTable() is None and block.text():
                 code = _style_code(block.userState())
-                if code in (-1, -2, -7, -8):
-                    phase = phase or 1
-                elif phase == 1:
+                key = _TITLE_BLOCK_KEYS.get(code)
+                if key and key != "frame" and page is None and key != "title":
+                    # A block before the title keeps the page it is on.
+                    page = (look.get(key) or {}).get("page", 0)
+                elif key == "title" and page is None:
+                    page = (look.get("title") or {}).get("page", 0)
+                if page is None:
+                    return out           # no title block at all
+                if key and key != "frame":
+                    want = (look.get(key) or {}).get("page", page)
+                else:
+                    want = (look.get("h1") or {}).get("page", page)
+                    if want > page:
+                        out.add(block.blockNumber())
+                    return out
+                if want > page:
                     out.add(block.blockNumber())
-                    if code not in (-3, -4):
-                        break
-                    phase = 2
-                elif phase == 2 and code not in (-3, -4):
-                    out.add(block.blockNumber())
-                    break
+                    page = want
             block = block.next()
         return out
 

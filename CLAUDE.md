@@ -130,6 +130,19 @@ Windows 0.214 installs.
   CERTIFICATE_VERIFY_FAILED: prefix the command with
   `SSL_CERT_FILE=/etc/ssl/cert.pem`.
 
+## The visual tab prints each class as its PDF does
+
+`khervedoc/class_looks.py` is generated: `packaging/measure_class_looks.py`
+compiles a probe document through the real serializer for every entry of
+`TEMPLATE_CHOICES` and reads back each style's font, size, colour,
+alignment, numbering and baseline distances, plus page geometry. The editor
+draws from that table (`page_look.look_for`, `DocumentEditor._style_fmt`,
+`_lay_out_styled_block`), never from hand-written sizes. **After adding a
+document class, or changing how the serializer sets one up, re-run
+`python packaging/measure_class_looks.py [class ...]`.** Fonts come from the
+tectonic cache; `latex_fonts.pdf_font` registers each Latin Modern design
+size as its own Qt family so a 17 pt title and 12 pt body can share a page.
+
 ## KherveRef citations
 
 KherveRef (sibling repo `../KherveRef`) is the reference manager. The
