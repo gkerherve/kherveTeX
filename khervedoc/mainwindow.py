@@ -966,6 +966,7 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
         QApplication.instance().installEventFilter(self)
         MainWindow._windows.append(self)
+        self._closed = False
         # Read persisted theme when not explicitly provided (e.g. new windows).
         if theme_name is None:
             theme_name = themes.saved_theme(QSettings("kherveDOC", "kherveDOC"))
@@ -2742,6 +2743,11 @@ class MainWindow(QMainWindow):
             w._refresh_window_menu()
 
     def closeEvent(self, event) -> None:
+        # A timer or deferred call still pending must not start a compile:
+        # nothing would wait for that thread, and Qt aborts the process if
+        # it is still running at exit.
+        self._closed = True
+        QApplication.instance().removeEventFilter(self)
         self._settings.setValue("theme_name", self._theme_name)
         self._settings.setValue("theme_dark", self._is_dark)
         self._settings.setValue("fit_page_width", self._editor.fit_to_width())
@@ -6099,6 +6105,8 @@ class MainWindow(QMainWindow):
         dlg.show()
 
     def _kick_compile(self) -> None:
+        if self._closed:
+            return
         # When a project is open, always compile the full project
         if self._project is not None:
             self._compile_project()

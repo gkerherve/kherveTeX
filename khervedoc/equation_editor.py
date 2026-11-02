@@ -1066,9 +1066,20 @@ class ChemfigEditorDialog(_TemplatePaletteDialog):
     def latex(self) -> str:
         return self._edit.toPlainText().strip()
 
-    def closeEvent(self, event):
+    def _stop_preview(self) -> None:
+        # A pending timer would otherwise start a compile after the dialog
+        # has gone, with nothing left to wait for its thread.
+        self._preview_timer.stop()
+        self._pending = False
         if self._worker is not None and self._worker.isRunning():
             self._worker.wait(3000)
+
+    def done(self, result):
+        self._stop_preview()
+        super().done(result)
+
+    def closeEvent(self, event):
+        self._stop_preview()
         import shutil
         shutil.rmtree(self._tmpdir, ignore_errors=True)
         super().closeEvent(event)

@@ -240,3 +240,12 @@ def test_open_dropped_respects_cancel(window, tmp_path, monkeypatch):
     monkeypatch.setattr(window, "_open_path", opened.append)
     window.open_dropped([tmp_path / "one.tex"])
     assert opened == []
+
+
+def test_closed_window_starts_no_compile(qapp):
+    from khervedoc.mainwindow import MainWindow
+    w = MainWindow()
+    w.close()
+    w._kick_compile()
+    QApplication.processEvents()      # the deferred first compile
+    assert w._compile_worker is None

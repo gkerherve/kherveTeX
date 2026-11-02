@@ -193,3 +193,13 @@ def test_preview_worker_renders_an_image(qapp, tmp_path):
     w.run()                              # synchronous in this thread
     assert out["ok"] is True
     assert out["img"] is not None and not out["img"].isNull()
+
+
+@pytest.mark.parametrize("finish", ["close", "reject"])
+def test_closed_dialog_leaves_no_preview_pending(qapp, finish):
+    from khervedoc.equation_editor import ChemfigEditorDialog
+    d = ChemfigEditorDialog()
+    d._edit.setPlainText(r"\\chemfig{A-B}")
+    assert d._preview_timer.isActive()
+    getattr(d, finish)()
+    assert not d._preview_timer.isActive()
