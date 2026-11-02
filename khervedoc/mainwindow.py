@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from .theme_switch import ThemeSwitch
 from . import tooltips
 from . import (
     __version__, chemistry, equations, git_backend, icons, kdocz, page_sizes,
@@ -967,8 +968,7 @@ class MainWindow(QMainWindow):
         MainWindow._windows.append(self)
         # Read persisted theme when not explicitly provided (e.g. new windows).
         if theme_name is None:
-            s = QSettings("kherveDOC", "kherveDOC")
-            theme_name = s.value("theme_name", "") or themes.DEFAULT_THEME
+            theme_name = themes.saved_theme(QSettings("kherveDOC", "kherveDOC"))
         self._theme_name = theme_name
         self._theme = themes.THEMES.get(theme_name, themes.THEMES["Light"])
         self._current_path: Path | None = None
@@ -1110,6 +1110,12 @@ class MainWindow(QMainWindow):
         # Right side, in order: zoom-out icon, slider, zoom-in icon, percent
         # readout, then the tectonic indicator. Matches Word's bottom-bar
         # zoom layout: drag the slider to scale live; click + / - to step.
+        self._theme_switch = ThemeSwitch(self)
+        self._theme_switch.setChecked(themes.is_dark(self._theme_name))
+        self._theme_switch.toggled.connect(
+            lambda dark: self._apply_named_theme("Dark" if dark else "Light"))
+        self._status.addPermanentWidget(self._theme_switch)
+
         self._zoom_out_btn = QToolButton(self)
         self._zoom_out_btn.setIcon(icons.zoom_out())
         self._zoom_out_btn.setToolTip("Zoom out")
@@ -4663,6 +4669,18 @@ class MainWindow(QMainWindow):
 
         self._settings.setValue("theme_name", name)
         self._settings.setValue("theme_dark", dark)
+
+        # The switch and the View menu show the same choice in every window.
+        self._theme_switch.blockSignals(True)
+        self._theme_switch.setChecked(dark)
+        self._theme_switch.blockSignals(False)
+        self._theme_switch.update()
+        if name in getattr(self, "_theme_actions", {}):
+            self._theme_actions[name].setChecked(True)
+        if not startup:
+            for win in list(MainWindow._windows):
+                if win is not self and win._theme_name != name:
+                    win._apply_named_theme(name)
 
         # Tab styling
         # The tab bars are hidden, so the pane's accent line would only draw

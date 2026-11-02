@@ -92,17 +92,7 @@ def main() -> int:
     app.setApplicationName("KherveTeX")
     app.setWindowIcon(icons.app_icon())
     settings = QSettings("kherveDOC", "kherveDOC")
-    # Migrate legacy boolean → named theme on first run after upgrade.
-    theme_name = settings.value("theme_name", "")
-    if not theme_name:
-        dark = settings.value("theme_dark", False, type=bool)
-        theme_name = "Dark" if dark else themes.DEFAULT_THEME
-    # One-time move off the old untinted default onto the Kherve-family
-    # look; any theme the user picked on purpose is left alone.
-    if theme_name == "Light" and not settings.value("theme_v2", False, type=bool):
-        theme_name = themes.DEFAULT_THEME
-        settings.setValue("theme_name", theme_name)
-    settings.setValue("theme_v2", True)
+    theme_name = themes.saved_theme(settings)
     theme = themes.apply_theme(app, theme_name)
     from .splash import Splash
     splash = Splash()
