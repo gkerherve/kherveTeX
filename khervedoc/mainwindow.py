@@ -1837,20 +1837,6 @@ class MainWindow(QMainWindow):
         m_view.addSeparator()
         m_view.addAction(self.act_fit_page_width)
         m_view.addSeparator()
-        self.act_style_word = QAction(
-            "&Word ribbon", self, checkable=True,
-            statusTip="Tabs of grouped buttons, like Microsoft Word",
-            triggered=lambda: self._apply_toolbar_style("word"))
-        self.act_style_classic = QAction(
-            "&Classic toolbars", self, checkable=True,
-            statusTip="Two toolbar rows and a vertical Insert bar",
-            triggered=lambda: self._apply_toolbar_style("classic"))
-        style_group = QActionGroup(self)
-        m_tb = m_view.addMenu("&Toolbar style")
-        for a in (self.act_style_word, self.act_style_classic):
-            style_group.addAction(a)
-            m_tb.addAction(a)
-        m_view.addSeparator()
         m_view.addAction(self.act_spell_check)
         m_theme = m_view.addMenu("&Theme")
         for name in themes.THEME_NAMES:
@@ -2126,64 +2112,20 @@ class MainWindow(QMainWindow):
         self._pagesize_combo.hide()
         self._build_page_setup_buttons()
         self._build_context_actions()
-        self._toolbars: list[QToolBar] = []
-        self._toolbar_style = self._settings.value("toolbar_style", "word")
-        self._apply_toolbar_style(self._toolbar_style)
-
-    # Widgets both layouts show; each layout wraps them in throwaway boxes
-    # so removing a layout (which deletes its boxes) never deletes them.
-    def _shared_toolbar_widgets(self) -> list[QWidget]:
-        return [self._style_gallery, self._numbered_cb, self._class_button,
-                self._fontsize_combo, self._size_button,
-                self._margins_button]
-
-    def _boxed(self, w: QWidget) -> QWidget:
-        box = QWidget()
-        lay = QHBoxLayout(box)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.addWidget(w)
-        w.show()
-        return box
-
-    def _apply_toolbar_style(self, style: str) -> None:
-        """Swap between the Word ribbon and the classic toolbars."""
-        for w in self._shared_toolbar_widgets():
-            w.setParent(self)
-            w.hide()
-        for bar in self._toolbars:
-            self.removeToolBar(bar)
-            bar.deleteLater()
-        self._toolbars = []
-        self._context_bar = None
-        self._ribbon = None
-        self._toolbar_style = "classic" if style == "classic" else "word"
-        if self._toolbar_style == "classic":
-            self._build_classic_toolbars()
-        else:
-            self._build_ribbon()
+        self._build_ribbon()
         # The ribbon's View tab replaces the Visual / Code / Console bar.
-        self._tabs.tabBar().setVisible(self._toolbar_style == "classic")
+        self._tabs.tabBar().hide()
         self._sync_pdf_actions()
-        self._settings.setValue("toolbar_style", self._toolbar_style)
         self._sync_context_tools()
-        for name, act in (("word", getattr(self, "act_style_word", None)),
-                          ("classic", getattr(self, "act_style_classic", None))):
-            if act is not None:
-                act.setChecked(name == self._toolbar_style)
-
-    def _new_bar(self, title: str, area=Qt.TopToolBarArea) -> QToolBar:
-        bar = QToolBar(title, self)
-        bar.setMovable(False)
-        self.addToolBar(area, bar)
-        self._toolbars.append(bar)
-        return bar
 
     def _build_page_setup_buttons(self) -> None:
         """Word's Layout > Page Setup: Margins and Size drop-down buttons
         with page pictures, in place of a bare paper-size combo."""
+        from .ribbon import big_label
+
         def drop(icon, text) -> QToolButton:
             b = QToolButton(self)
-            b.setIcon(icon); b.setText(text)
+            b.setIcon(icon); b.setText(big_label(text))
             b.setIconSize(QSize(32, 32))
             b.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
             b.setPopupMode(QToolButton.InstantPopup)
@@ -2570,35 +2512,31 @@ class MainWindow(QMainWindow):
             self.act_eq_numbered.blockSignals(False)
         if getattr(self, "_ribbon", None) is not None:
             self._ribbon.show_context(ctx)
-        if getattr(self, "_context_bar", None) is not None:
-            self._context_bar.setVisible(ctx is not None)
 
     def _build_ribbon(self) -> None:
         from .ribbon import Ribbon
         rb = Ribbon()
-        rb.set_corner([self.act_new, self.act_open, self.act_save, None,
-                       self.act_undo, self.act_redo], Qt.TopLeftCorner)
-        rb.set_corner([self.act_compile_range, self.act_skip_images,
-                       self.act_auto_compile, self.act_compile_now,
-                       None, self.act_export_pdf, self.act_print,
-                       None, self.act_help_guide],
-                      Qt.TopRightCorner)
-        b = self._boxed
+        rb.set_corner([self.act_new, self.act_open, self.act_save,
+                       self.act_print, None, self.act_undo, self.act_redo],
+                      Qt.TopLeftCorner)
+        rb.set_corner([self.act_compile_now, self.act_auto_compile, None,
+                       self.act_help_guide], Qt.TopRightCorner,
+                      labelled=(self.act_compile_now,))
         home = rb.add_tab("Home")
         home.add_group("Clipboard", large=[self.act_paste],
                        rows=[[self.act_cut], [self.act_copy],
                              [self.act_paste_special]], text=True)
         home.add_group("Font", rows=[
-            [b(self._fontsize_combo), self.act_bold, self.act_italic,
-             self.act_underline, self.act_strike],
-            [self.act_sub, self.act_super, self.act_smallcaps, self.act_code,
+            [self._fontsize_combo, self.act_smallcaps, self.act_code],
+            [self.act_bold, self.act_italic, self.act_underline,
+             self.act_strike, self.act_sub, self.act_super,
              self.act_highlight]])
         home.add_group("Paragraph", rows=[
             [self.act_bullet, self.act_numbered, self.act_show_marks],
             [self.act_align_left, self.act_align_center,
              self.act_align_right, self.act_align_justify]])
-        home.add_group("Styles", large=[b(self._style_gallery),
-                                        b(self._numbered_cb)])
+        home.add_group("Styles", large=[self._style_gallery,
+                                        self._numbered_cb])
         ins = rb.add_tab("Insert")
         ins.add_group("Pages", large=[self.act_pagebreak],
                       rows=[[self.act_hrule]], text=True)
@@ -2616,11 +2554,11 @@ class MainWindow(QMainWindow):
         ins.add_group("Chemistry", large=[self.act_chemistry],
                       rows=[[self.act_chemfig]], text=True)
         lay = rb.add_tab("Layout")
-        lay.add_group("Page Setup", large=[b(self._margins_button),
-                                           b(self._size_button),
+        lay.add_group("Page Setup", large=[self._margins_button,
+                                           self._size_button,
                                            self.act_cols_1, self.act_cols_2,
                                            self.act_cols_3])
-        lay.add_group("Document type", large=[b(self._class_button)])
+        lay.add_group("Document type", large=[self._class_button])
         ref = rb.add_tab("References")
         ref.add_group("Citations", large=[self.act_citation])
         ref.add_group("Footnotes", large=[self.act_footnote])
@@ -2631,6 +2569,13 @@ class MainWindow(QMainWindow):
         rev.add_group("Comments", large=[self.act_comment],
                       rows=[[self.act_accept_comment],
                             [self.act_reject_comment]], text=True)
+        comp = rb.add_tab("Compile")
+        comp.add_group("Compile", large=[self.act_compile_now,
+                                         self.act_auto_compile])
+        comp.add_group("Options", large=[self.act_compile_range,
+                                         self.act_skip_images])
+        comp.add_group("Output", large=[self.act_export_pdf,
+                                        self.act_print_preview])
         hist = rb.add_tab("History")
         hist.add_group("Versions", large=[self.act_commit_now,
                                           self.act_history])
@@ -2687,78 +2632,13 @@ class MainWindow(QMainWindow):
                                         self.act_eq_delete])
         eq.add_group("Insert", large=[self.act_symbol,
                                       self.act_equation_builder])
-        bar = self._new_bar("Ribbon")
+        bar = QToolBar("Ribbon", self)
+        bar.setMovable(False)
+        # Hiding it from the window's right-click menu: nothing brings it back.
+        bar.toggleViewAction().setVisible(False)
         bar.addWidget(rb)
+        self.addToolBar(Qt.TopToolBarArea, bar)
         self._ribbon = rb
-
-    def _build_classic_toolbars(self) -> None:
-        b = self._boxed
-        tb = self._new_bar("Main toolbar")
-
-        def group(*items, bar=tb) -> None:
-            for it in items:
-                if isinstance(it, QWidget):
-                    bar.addWidget(b(it))
-                else:
-                    bar.addAction(it)
-            bar.addSeparator()
-
-        group(self.act_new, self.act_open, self.act_save,
-              self.act_export_pdf, self.act_print, self.act_open_project)
-        group(self.act_undo, self.act_redo)
-        group(self._fontsize_combo, self.act_bold, self.act_italic,
-              self.act_underline, self.act_strike, self.act_sub,
-              self.act_super, self.act_smallcaps, self.act_code,
-              self.act_highlight)
-        group(self.act_bullet, self.act_numbered, self.act_align_left,
-              self.act_align_center, self.act_align_right,
-              self.act_align_justify, self.act_show_marks)
-        # A second row, as the rest does not fit beside the Home groups.
-        self.addToolBarBreak()
-        tb2 = self._new_bar("Document and review")
-        tb2.setIconSize(tb.iconSize())
-        group(self._style_gallery, self._numbered_cb, bar=tb2)
-        group(self._class_button, self._margins_button, self._size_button,
-              bar=tb2)
-        group(self.act_spell_check, self.act_comment,
-              self.act_accept_comment, self.act_reject_comment, bar=tb2)
-        group(self.act_commit_now, self.act_history, bar=tb2)
-        spacer = QWidget()
-        spacer.setSizePolicy(spacer.sizePolicy().Policy.Expanding,
-                             spacer.sizePolicy().Policy.Preferred)
-        tb2.addWidget(spacer)
-        for a in (self.act_compile_range, self.act_skip_images,
-                  self.act_compile_now, self.act_auto_compile):
-            tb2.addAction(a)
-
-        # Classic stand-in for the contextual tabs: one bar whose buttons
-        # follow the object under the caret.
-        self._context_bar = self._new_bar("Object tools")
-        for a in self._context_actions["table"] + [None] \
-                + self._context_actions["figure"] + [None] \
-                + self._context_actions["equation"] + [None] \
-                + self._context_actions["theorem"]:
-            if a is None:
-                self._context_bar.addSeparator()
-            else:
-                self._context_bar.addAction(a)
-        self._context_bar.setVisible(False)
-
-        side = self._new_bar("Insert", Qt.LeftToolBarArea)
-        side.setOrientation(Qt.Vertical)
-        side.setIconSize(tb.iconSize())
-        for grp in ((self.act_math_inline, self.act_math_block,
-                     self.act_symbol, self.act_equation_builder,
-                     self.act_chemistry, self.act_chemfig),
-                    (self.act_link, self.act_footnote, self.act_citation,
-                     self.act_crossref),
-                    (self.act_figure, self.act_table, self.act_drawing,
-                     self.act_flowchart),
-                    (self.act_cols_1, self.act_cols_2, self.act_cols_3),
-                    (self.act_pagebreak, self.act_hrule)):
-            for a in grp:
-                side.addAction(a)
-            side.addSeparator()
 
     # ----- title -----
 
@@ -4192,8 +4072,10 @@ class MainWindow(QMainWindow):
 
     def _build_style_gallery(self) -> QWidget:
         box = QWidget(self)
+        box.setObjectName("StyleGallery")
+        box.setAttribute(Qt.WA_StyledBackground)
         lay = QHBoxLayout(box)
-        lay.setContentsMargins(2, 0, 2, 0)
+        lay.setContentsMargins(2, 2, 0, 2)
         lay.setSpacing(1)
         self._style_buttons: dict[int, QToolButton] = {}
         self._style_menu_actions: dict[int, QAction] = {}
@@ -4225,8 +4107,11 @@ class MainWindow(QMainWindow):
             self._style_buttons[level] = btn
 
         more = QToolButton(box)
-        more.setText("Styles ▾")
+        more.setObjectName("GalleryMore")
+        more.setIcon(icons.gallery_more())
+        more.setIconSize(QSize(14, 14))
         more.setToolTip("All paragraph styles")
+        self._styles_more = more
         more.setPopupMode(QToolButton.InstantPopup)
         menu = QMenu(more)
         menu.setStyleSheet("QMenu { icon-size: %dpx; }" % self._TILE.width())
@@ -4285,10 +4170,11 @@ class MainWindow(QMainWindow):
         return btn
 
     def _sync_class_gallery(self) -> None:
+        from .ribbon import big_label
         if not hasattr(self, "_class_button"):
             return
         cls = self._template_combo.currentData() or ""
-        self._class_button.setText(cls)
+        self._class_button.setText(big_label(cls))
         self._class_button.setIcon(icons.class_thumbnail(cls))
         for i in range(self._class_grid.count()):
             it = self._class_grid.item(i)
@@ -4637,6 +4523,7 @@ class MainWindow(QMainWindow):
         self.act_print.setIcon(icons.printer())
         self.act_print_preview.setIcon(icons.print_preview())
         self.act_open_project.setIcon(icons.project_open())
+        self._styles_more.setIcon(icons.gallery_more())
         self.act_undo.setIcon(icons.undo())
         self.act_redo.setIcon(icons.redo())
         self.act_bold.setIcon(icons.bold())
@@ -4693,6 +4580,74 @@ class MainWindow(QMainWindow):
         self._pdf_zoom_out_btn.setIcon(icons.zoom_out())
         self._pdf_zoom_in_btn.setIcon(icons.zoom_in())
         self._pdf_fit_width_btn.setIcon(icons.fit_width())
+        self._refresh_ribbon_icons()
+
+    def _refresh_ribbon_icons(self) -> None:
+        for action, icon in (
+                (self.act_cut, icons.cut), (self.act_copy, icons.copy),
+                (self.act_paste, icons.paste),
+                (self.act_paste_special, icons.paste),
+                (self.act_show_marks, icons.formatting_marks),
+                (self.act_drawing, icons.drawing),
+                (self.act_theorem, icons.theorem),
+                (self.act_caption, icons.caption),
+                (self.act_compile_range, icons.compile_range),
+                (self.act_skip_images, icons.compile_no_images),
+                (self.act_page_visual, icons.page_view),
+                (self.act_page_code, icons.code),
+                (self.act_page_console, icons.console_view),
+                (self.act_pdf_panel, icons.export_pdf),
+                (self.act_pdf_detach, icons.pdf_detach),
+                (self.act_fit_page_width, icons.fit_width),
+                (self.act_help_guide, icons.help_icon),
+                (self.act_shortcuts, icons.keyboard_icon),
+                (self.act_welcome, icons.welcome_icon),
+                (self.act_about, icons.about_icon),
+                (self.act_check_updates, icons.update_icon),
+                (self.act_tbl_row_above, icons.table_row_above),
+                (self.act_tbl_row_below, icons.table_row_below),
+                (self.act_tbl_col_left, icons.table_col_left),
+                (self.act_tbl_col_right, icons.table_col_right),
+                (self.act_tbl_del_row, icons.table_delete_row),
+                (self.act_tbl_del_col, icons.table_delete_col),
+                (self.act_tbl_delete, icons.table_delete),
+                (self.act_tbl_merge, icons.table_merge),
+                (self.act_tbl_split, icons.table_split),
+                (self.act_tbl_header, icons.header_row),
+                (self.act_tbl_repeat, icons.repeat_header),
+                (self.act_tbl_align_l, icons.align_left),
+                (self.act_tbl_align_c, icons.align_center),
+                (self.act_tbl_align_r, icons.align_right),
+                (self.act_tbl_shading, icons.shading_icon),
+                (self.act_fig_left, icons.align_left),
+                (self.act_fig_center, icons.align_center),
+                (self.act_fig_right, icons.align_right),
+                (self.act_fig_edit, icons.picture_edit),
+                (self.act_fig_delete, icons.picture_delete),
+                (self.act_eq_edit, icons.equation_builder),
+                (self.act_eq_numbered, icons.equation_numbered),
+                (self.act_eq_delete, icons.equation_delete),
+                (self.act_thm_title, icons.picture_edit)):
+            action.setIcon(icon())
+        self.act_tbl_sort_up.setIcon(icons.sort_icon(False))
+        self.act_tbl_sort_down.setIcon(icons.sort_icon(True))
+        for frac in (25, 50, 75, 100):
+            getattr(self, f"act_fig_w{frac}").setIcon(
+                icons.picture_width(frac / 100))
+        for key, a in self._tbl_style_actions.items():
+            a.setIcon(icons.table_style_icon(key))
+        for a in self._thm_kind_actions.values():
+            a.setIcon(icons.theorem())
+        w, h = self._TILE.toTuple()
+        self._numbered_cb.setIcon(icons.numbered_heading_tile(w, h))
+        for i in range(self._heading_combo.count()):
+            level = self._heading_combo.itemData(i)
+            text = self._heading_combo.itemText(i)
+            tile = icons.style_tile(
+                level, "Normal" if text == "Body text" else text, w, h)
+            self._style_menu_actions[level].setIcon(tile)
+            if level in self._style_buttons:
+                self._style_buttons[level].setIcon(tile)
 
     def _toggle_spell_check(self, enabled: bool) -> None:
         self._editor.set_spell_check_enabled(enabled)
@@ -4710,7 +4665,10 @@ class MainWindow(QMainWindow):
         self._settings.setValue("theme_dark", dark)
 
         # Tab styling
-        tab_qss = themes.tab_stylesheet(t)
+        # The tab bars are hidden, so the pane's accent line would only draw
+        # a second rule under the ribbon.
+        tab_qss = (themes.tab_stylesheet(t)
+                   + "QTabWidget::pane { border: none; }")
         self._tabs.setStyleSheet(tab_qss)
         self._side_tabs.setStyleSheet(tab_qss)
 

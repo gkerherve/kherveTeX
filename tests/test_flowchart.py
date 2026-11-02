@@ -355,7 +355,9 @@ def test_insert_menu_and_shortcut(qapp):
         act = win.act_flowchart
         assert act.shortcut().toString(QKeySequence.PortableText) == \
             "Ctrl+Shift+F"
-        assert act in win._side_tb.actions()
+        from PySide6.QtWidgets import QToolButton
+        assert act in {b.defaultAction()
+                       for b in win._ribbon.findChildren(QToolButton)}
         assert not act.icon().isNull()
     finally:
         win.close()

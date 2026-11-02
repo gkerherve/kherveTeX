@@ -197,14 +197,17 @@ def style_tile(level: int, name: str, w: int = 74, h: int = 46) -> QIcon:
     p = QPainter(px)
     p.setRenderHint(QPainter.Antialiasing, True)
     p.setRenderHint(QPainter.TextAntialiasing, True)
-    color = {"fg": _fg(), "accent": _accent(),
+    color = {"fg": _fg(), "accent": _blue(),
              "muted": QColor("#999") if _dark else QColor("#666")}[tone]
     f = QFont(family); f.setPixelSize(pt + 2)
     f.setBold(bold_); f.setItalic(italic_)
+    # Word shrinks the sample rather than cut it off.
+    while (QFontMetricsF(f).horizontalAdvance("AaBbCc") > w - 6
+           and f.pixelSize() > 8):
+        f.setPixelSize(f.pixelSize() - 1)
     p.setFont(f); p.setPen(color)
     sample = QRect(0, 0, w, h - 15)
-    p.drawText(sample, Qt.AlignCenter,
-               QFontMetricsF(f).elidedText("AaBbCc", Qt.ElideRight, w - 4))
+    p.drawText(sample, Qt.AlignCenter, "AaBbCc")
     if level in (1, -5):
         p.setPen(QPen(color, 1))
         p.drawLine(QPointF(8, h - 17.5), QPointF(w - 8, h - 17.5))
@@ -944,11 +947,12 @@ def _tint() -> QColor:
 
 
 class _W:
-    """A 24-unit canvas drawn at 2x, with Fluent-style strokes."""
+    """A 24-unit canvas with Fluent-style strokes, drawn at 4x so the big
+    32 px ribbon buttons stay sharp on a Retina screen."""
 
     def __init__(self) -> None:
-        self.px = QPixmap(_SIZE * 2, _SIZE * 2)
-        self.px.setDevicePixelRatio(2.0)
+        self.px = QPixmap(_SIZE * 4, _SIZE * 4)
+        self.px.setDevicePixelRatio(4.0)
         self.px.fill(Qt.transparent)
         self.p = QPainter(self.px)
         self.p.setRenderHint(QPainter.Antialiasing, True)
@@ -990,9 +994,11 @@ class _W:
         self.p.drawEllipse(QPointF(x, y), r, r)
 
     def text(self, rect, s: str, *, size: float = 15, bold=False,
-             italic=False, color=None, family="Segoe UI",
+             italic=False, color=None, family=None,
              align=Qt.AlignCenter) -> None:
-        f = QFont(family)
+        f = QFont()
+        f.setFamilies([family] if family
+                      else ["Segoe UI", "Helvetica Neue", "Arial"])
         f.setStyleHint(QFont.SansSerif)
         f.setPixelSize(int(size)); f.setBold(bold); f.setItalic(italic)
         self.p.setFont(f); self.p.setPen(color or _ink())
@@ -1075,32 +1081,31 @@ def project_open() -> QIcon:
     return c.done()
 
 
-def undo() -> QIcon:
-    c = _W(); c.pen(_blue(), 1.8)
-    path = QPainterPath(); path.moveTo(5, 9)
-    path.lineTo(14, 9); path.cubicTo(21, 9, 21, 19.5, 14, 19.5)
-    path.lineTo(9, 19.5)
+def _undo_arrow(mirror: bool) -> QIcon:
+    """Word's curved arrow with a solid head."""
+    x = (lambda v: 24 - v) if mirror else (lambda v: v)
+    c = _W(); c.pen(_blue(), 2)
+    path = QPainterPath(); path.moveTo(x(9), 9.5)
+    path.lineTo(x(13), 9.5); path.cubicTo(x(21.5), 9.5, x(21.5), 20, x(13), 20)
+    path.lineTo(x(10), 20)
     c.p.drawPath(path)
-    c.poly([(9, 4.5), (4.5, 9), (9, 13.5)], color=_blue(), closed=False,
-           lw=1.8)
+    c.poly([(x(9.5), 4), (x(3.5), 9.5), (x(9.5), 15)], color=_blue(),
+           fill=_blue(), lw=1)
     return c.done()
+
+
+def undo() -> QIcon:
+    return _undo_arrow(False)
 
 
 def redo() -> QIcon:
-    c = _W(); c.pen(_blue(), 1.8)
-    path = QPainterPath(); path.moveTo(19, 9)
-    path.lineTo(10, 9); path.cubicTo(3, 9, 3, 19.5, 10, 19.5)
-    path.lineTo(15, 19.5)
-    c.p.drawPath(path)
-    c.poly([(15, 4.5), (19.5, 9), (15, 13.5)], color=_blue(), closed=False,
-           lw=1.8)
-    return c.done()
+    return _undo_arrow(True)
 
 
 # ----- font group: Office draws letters in a plain sans -----
 
 def _letter(s: str, **kw) -> QIcon:
-    c = _W(); c.text((0, 0, 24, 23), s, size=kw.pop("size", 17), **kw)
+    c = _W(); c.text((0, 0, 24, 23), s, size=kw.pop("size", 19), **kw)
     return c.done()
 
 
@@ -1109,52 +1114,55 @@ def bold() -> QIcon:
 
 
 def italic() -> QIcon:
-    return _letter("I", italic=True, family="Georgia")
+    return _letter("I", italic=True)
 
 
 def underline() -> QIcon:
-    c = _W(); c.text((0, 0, 24, 20), "U", size=15)
-    c.line(6, 20.5, 18, 20.5, w=1.6)
+    c = _W(); c.text((0, 0, 24, 20), "U", size=18)
+    c.line(5.5, 21, 18.5, 21, w=1.6)
     return c.done()
 
 
 def strike() -> QIcon:
-    c = _W(); c.text((0, 0, 24, 23), "ab", size=14)
-    c.line(3.5, 12.5, 20.5, 12.5, _blue(), 1.6)
+    c = _W(); c.text((0, 0, 24, 24), "ab", size=17)
+    c.line(2.5, 13, 21.5, 13, w=1.4)
     return c.done()
 
 
 def subscript() -> QIcon:
-    c = _W(); c.text((1, 1, 16, 20), "X", size=15)
-    c.text((13, 10, 10, 13), "2", size=9, bold=True, color=_blue())
+    c = _W(); c.text((0, 0, 17, 22), "x", size=19)
+    c.text((13, 11, 10, 13), "2", size=11, bold=True, color=_blue())
     return c.done()
 
 
 def superscript() -> QIcon:
-    c = _W(); c.text((1, 4, 16, 20), "X", size=15)
-    c.text((13, 0, 10, 12), "2", size=9, bold=True, color=_blue())
+    c = _W(); c.text((0, 2, 17, 22), "x", size=19)
+    c.text((13, 0, 10, 13), "2", size=11, bold=True, color=_blue())
     return c.done()
 
 
 def smallcaps() -> QIcon:
-    c = _W(); c.text((0, 0, 14, 23), "A", size=16)
-    c.text((11, 3, 13, 20), "A", size=11, color=_blue())
+    c = _W(); c.text((0, 0, 15, 23), "A", size=18)
+    c.text((12, 4, 12, 19), "A", size=12)
     return c.done()
 
 
 def code() -> QIcon:
     c = _W()
-    c.poly([(8.5, 6), (3.5, 12), (8.5, 18)], closed=False, lw=1.7)
-    c.poly([(15.5, 6), (20.5, 12), (15.5, 18)], closed=False, lw=1.7)
-    c.line(13.3, 5, 10.7, 19, _blue(), 1.5)
+    c.poly([(8.5, 6), (3.5, 12), (8.5, 18)], closed=False, lw=1.6)
+    c.poly([(15.5, 6), (20.5, 12), (15.5, 18)], closed=False, lw=1.6)
+    c.line(13.3, 5, 10.7, 19, _blue(), 1.6)
     return c.done()
 
 
 def highlight() -> QIcon:
+    """Word's marker over a bar of the highlight colour."""
+    yellow = QColor("#ffe600")
     c = _W()
-    c.poly([(13.5, 3), (19, 8.5), (11, 16.5), (5.5, 11)], fill=_paper())
-    c.poly([(5.5, 11), (11, 16.5), (8, 17.5), (4.5, 14)], fill=_tint())
-    c.fillrect(2.5, 19.5, 19, 3, QColor("#ffeb3b"))
+    c.poly([(15, 2.5), (20, 7.5), (11.5, 16), (6.5, 11)], fill=_paper(), lw=1.3)
+    c.poly([(6.5, 11), (11.5, 16), (9, 17.5), (5, 13.5)], fill=_ink(), lw=1)
+    c.poly([(5, 13.5), (9, 17.5), (3.5, 17.5)], color=yellow, fill=yellow, lw=0.5)
+    c.fillrect(2.5, 19.5, 19, 3, yellow)
     return c.done()
 
 
@@ -1163,43 +1171,50 @@ def highlight() -> QIcon:
 def bullet_list() -> QIcon:
     c = _W()
     for y in (6, 12, 18):
-        c.dot(5, y, 1.6, _blue()); c.line(9.5, y, 20.5, y)
+        c.dot(4.5, y, 1.8, _blue()); c.line(9, y, 21, y, w=1.4)
     return c.done()
 
 
 def numbered_list() -> QIcon:
     c = _W()
-    for k, y in enumerate((6, 12, 18), 1):
-        c.text((1, y - 5, 7, 10), str(k), size=7.5, bold=True, color=_blue())
-        c.line(9.5, y, 20.5, y)
+    for k, y in enumerate((5.5, 12, 18.5), 1):
+        c.text((0, y - 5, 8, 10), str(k), size=8, bold=True, color=_blue())
+        c.line(9, y, 21, y, w=1.4)
     return c.done()
 
 
 def _align(widths) -> QIcon:
     c = _W()
     for k, (x1, x2) in enumerate(widths):
-        c.line(x1, 5 + k * 4.6, x2, 5 + k * 4.6)
+        c.line(x1, 5 + k * 4.6, x2, 5 + k * 4.6, w=1.4)
     return c.done()
 
 
 def align_left() -> QIcon:
-    return _align([(3.5, 20.5), (3.5, 14), (3.5, 20.5), (3.5, 12)])
+    return _align([(3, 21), (3, 14), (3, 21), (3, 12)])
 
 
 def align_center() -> QIcon:
-    return _align([(3.5, 20.5), (7, 17), (3.5, 20.5), (8, 16)])
+    return _align([(3, 21), (7, 17), (3, 21), (8, 16)])
 
 
 def align_right() -> QIcon:
-    return _align([(3.5, 20.5), (10, 20.5), (3.5, 20.5), (12, 20.5)])
+    return _align([(3, 21), (10, 21), (3, 21), (12, 21)])
 
 
 def align_justify() -> QIcon:
-    return _align([(3.5, 20.5)] * 4)
+    return _align([(3, 21)] * 4)
 
 
 def formatting_marks() -> QIcon:
-    return _letter("¶", size=17, color=_blue())
+    return _letter("¶")
+
+
+def gallery_more() -> QIcon:
+    """The chevron that opens the rest of a gallery."""
+    c = _W()
+    c.poly([(5, 9), (12, 16), (19, 9)], closed=False, lw=2)
+    return c.done()
 
 
 def spell_check() -> QIcon:
