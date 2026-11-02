@@ -34,7 +34,7 @@ from . import latex_fonts, page_sizes
 from .page_look import look_for, number_label
 from .paged_edit import (
     ABOVE_LABELS_PROPERTY, NUMBER_ABOVE_PROPERTY, PagedTextEdit,
-    RUN_IN_LABEL_PROPERTY,
+    RUN_IN_HEADING_PROPERTY, RUN_IN_LABEL_PROPERTY, SPANS_COLUMNS_PROPERTY,
 )
 
 
@@ -3400,6 +3400,15 @@ class DocumentEditor(QWidget):
                     size=spec["size"] * pt_px * 72 / 96, up=up_px,
                     centred=bool(centred))
 
+    @staticmethod
+    def _spans_columns(key: str, look: dict, g: dict) -> bool:
+        """Does this title-block line run across the columns? A class says
+        so by its measurement; article's twocolumn option has one column in
+        the table, and \\maketitle's title, authors and date always span."""
+        if g.get("follows_margins", True):
+            return key in ("title", "author", "affiliation", "correspondence")
+        return bool((look.get(key) or {}).get("wide"))
+
     def _date_blocks(self) -> tuple[int, int]:
         """\\maketitle's date hangs below the last title line and pushes the
         next block down: (that line, that block), -1 for no such block."""
@@ -3423,7 +3432,8 @@ class DocumentEditor(QWidget):
         today = date.today()
         text = (f"{today.day} {today:%B} {today.year}" if d.get("day_first")
                 else f"{today:%B} {today.day}, {today.year}")
-        return self._label_entry(d, text, -d["gap"] * pt_px, pt_px, True)
+        return self._label_entry(d, text, -d["gap"] * pt_px, pt_px,
+                                 d.get("centred", True))
 
     @staticmethod
     def _style_lead(key: str, look: dict) -> float:
@@ -3438,7 +3448,7 @@ class DocumentEditor(QWidget):
     def _lay_out_styled_block(self, bfmt, key, look, pt_px, top_px,
                               starts_sheet, prev_state, state, under_title,
                               number, prev_lead, first_block,
-                              block_lines) -> list:
+                              block_lines, run_in_next) -> list:
         """Set a title-block or heading line exactly where the class sets
         it: alignment, insets and baseline distances, all measured."""
         spec = look.get(key)
@@ -3513,9 +3523,53 @@ class DocumentEditor(QWidget):
         if key.startswith("h") and below is not None and not spec.get("run_in"):
             bfmt.setBottomMargin(max(0, below - (1 - BASELINE_AT) * lead
                                      - BASELINE_AT * body_lead) * pt_px)
+        elif key.startswith("h") and run_in_next:
+            # Up by just enough that the next line shares this baseline.
+            bfmt.setBottomMargin(self._run_in_pull(lead, look) * pt_px)
         else:
             bfmt.setBottomMargin(0)
         return labels
+
+    @staticmethod
+    def _run_in_pull(heading_lead: float, look: dict) -> float:
+        return -((1 - BASELINE_AT) * heading_lead
+                 + BASELINE_AT * look["body"]["leading"])
+
+    def _lay_out_run_in_paragraph(self, bfmt, heading, spec, look, pt_px) -> None:
+        """This paragraph's first line continues on *heading*'s line, after
+        its text, punctuation and the gap the class leaves."""
+        hf = heading.blockFormat()
+        width = hf.leftMargin() + hf.textIndent()
+        it = heading.begin()
+        font = None
+        while not it.atEnd():
+            frag = it.fragment()
+            if frag.isValid():
+                font = frag.charFormat().font()
+                width += QFontMetricsF(font).horizontalAdvance(frag.text())
+            it += 1
+        column = self._edit.text_width_px()
+        if column > 0 and width > column:
+            width %= column         # the heading wrapped: its last line counts
+        suffix = spec.get("suffix", "")
+        gap = spec.get("run_gap")
+        gap_px = (gap * pt_px if gap is not None
+                  else look["body"]["size"] * pt_px * 0.5)
+        if suffix and font is not None:
+            entry = self._label_entry(spec, suffix, 0, pt_px, False)
+            entry["left"] = width
+            bfmt.setProperty(RUN_IN_LABEL_PROPERTY, json.dumps(entry))
+            width += QFontMetricsF(font).horizontalAdvance(suffix)
+        bfmt.setTextIndent(width + gap_px)
+        bfmt.setTopMargin(self._run_in_pull(spec["size"] * 1.2, look) * pt_px)
+        bfmt.setBottomMargin(0)
+
+    def _next_block_is_body(self, block) -> bool:
+        next_block = block.next()
+        return (next_block.isValid()
+                and next_block.userState() in (_STATE_PARAGRAPH, -1)
+                and next_block.textList() is None
+                and QTextCursor(next_block).currentTable() is None)
 
     def _apply_run_in_label(self, bfmt, block, key, look, prev_state, state,
                             pt_px) -> None:
@@ -3640,14 +3694,21 @@ class DocumentEditor(QWidget):
             heads: list = []
             title_breaks = self._title_page_breaks()
             date_line, after_date = self._date_blocks()
+            spanning = True
             counters = list(offset)
             eq = 0
             thm = 0
             block = doc.firstBlock()
             while block.isValid():
-                if QTextCursor(block).currentTable() is not None:
-                    # Table / figure cells keep their own layout.
-                    block = block.next()
+                table = QTextCursor(block).currentTable()
+                if table is not None:
+                    # Table / figure cells keep their own layout, inside
+                    # their column.
+                    tf = table.format()
+                    if tf.rightMargin() != self._edit.column_span_px():
+                        tf.setRightMargin(self._edit.column_span_px())
+                        table.setFormat(tf)
+                    block = table.lastCursorPosition().block().next()
                     continue
                 state = block.userState()
                 bfmt = block.blockFormat()
@@ -3711,13 +3772,41 @@ class DocumentEditor(QWidget):
                     bfmt.setBottomMargin(0.8 * em_px)
                 labels: list = []
                 key = self._style_key(state)
+                run_in_next = bool(
+                    key and key.startswith("h")
+                    and (look.get(key) or {}).get("run_in")
+                    and self._next_block_is_body(block))
                 if key:
                     layout_of = block.layout()
                     labels = self._lay_out_styled_block(
                         bfmt, key, look, pt_px, top_px, starts_sheet,
                         prev_state, state, block.blockNumber() == after_date,
                         number, prev_lead, block == doc.firstBlock(),
-                        layout_of.lineCount() if layout_of else 1)
+                        layout_of.lineCount() if layout_of else 1,
+                        run_in_next)
+                    # \\maketitle runs across the columns of the first sheet.
+                    spans = (spanning and cols > 1
+                             and self._spans_columns(key, look, g))
+                    spanning = bool(spans)
+                    if spans:
+                        bfmt.setProperty(SPANS_COLUMNS_PROPERTY, True)
+                    else:
+                        if bfmt.hasProperty(SPANS_COLUMNS_PROPERTY):
+                            bfmt.clearProperty(SPANS_COLUMNS_PROPERTY)
+                        # The layout is the whole page wide; only what spans
+                        # uses that, the rest keeps to its column.
+                        bfmt.setRightMargin(
+                            (bfmt.rightMargin() if key in look else 0)
+                            + self._edit.column_span_px())
+                else:
+                    spanning = False
+                    if bfmt.hasProperty(SPANS_COLUMNS_PROPERTY):
+                        bfmt.clearProperty(SPANS_COLUMNS_PROPERTY)
+                    bfmt.setRightMargin(self._edit.column_span_px())
+                if key and run_in_next:
+                    bfmt.setProperty(RUN_IN_HEADING_PROPERTY, True)
+                elif bfmt.hasProperty(RUN_IN_HEADING_PROPERTY):
+                    bfmt.clearProperty(RUN_IN_HEADING_PROPERTY)
                 if block.blockNumber() == date_line:
                     labels.append(self._date_label(look, pt_px))
                 if labels:
@@ -3811,6 +3900,13 @@ class DocumentEditor(QWidget):
                     else:
                         bfmt.setTextIndent(0)
                         bfmt.setBottomMargin(0.8 * em_px)
+                    prev_block = block.previous()
+                    if prev_block.isValid() and prev_block.blockFormat() \
+                            .property(RUN_IN_HEADING_PROPERTY):
+                        self._lay_out_run_in_paragraph(
+                            bfmt, prev_block,
+                            look[self._style_key(prev_block.userState())],
+                            look, pt_px)
                 if bfmt != block.blockFormat():
                     QTextCursor(block).setBlockFormat(bfmt)
                 if block.text().strip() or state not in (_STATE_PARAGRAPH, -1):

@@ -19,6 +19,7 @@ from khervedoc.model import (  # noqa: E402
     Abstract, Author, DocMeta, Document, Keywords, Paragraph, Section, Text,
     Title,
 )
+from khervedoc import page_look  # noqa: E402
 from khervedoc.page_look import is_broken, look_for, number_label  # noqa: E402
 from khervedoc.paged_edit import (  # noqa: E402
     ABOVE_LABELS_PROPERTY, HEADING_NUMBER_PROPERTY, RUN_IN_LABEL_PROPERTY,
@@ -67,10 +68,16 @@ def test_every_document_type_is_measured():
     assert set(TEMPLATE_CHOICES) <= set(LOOKS)
 
 
-def test_measured_values_of_a_broken_class_fall_back_to_article():
-    assert is_broken("svjour3")
-    assert look_for("svjour3", 12) is look_for("article", 12)
+def test_measured_values_of_a_broken_class_fall_back_to_article(monkeypatch):
+    monkeypatch.setitem(page_look.LOOKS, "nope", {12: {"broken": "no class"}})
+    monkeypatch.setitem(page_look._LOWER, "nope", "nope")
+    assert is_broken("nope")
+    assert look_for("nope", 12) is look_for("article", 12)
     assert not is_broken("article")
+
+
+def test_an_unlisted_class_is_drawn_as_an_article():
+    assert look_for("svjour3", 12) is look_for("article", 12)
 
 
 @pytest.mark.parametrize("cls", TEMPLATE_CHOICES)
@@ -164,6 +171,122 @@ def test_koma_headings_are_sans_and_number_on_the_same_line(qapp):
         "Sans" in _font(ed, "Intro").family()
     assert _block(ed, "Intro").blockFormat().property(
         HEADING_NUMBER_PROPERTY) == "1"
+    ed.close()
+
+
+def _deep_editor(cls):
+    ed = DocumentEditor()
+    ed.set_fit_to_width(False)
+    ed.set_zoom_percent(100)
+    ed.set_document(Document(meta=DocMeta(documentclass=cls), children=[
+        Section(level=1, children=[Text("Intro")]),
+        Section(level=2, children=[Text("Part")]),
+        Paragraph(children=[Text("Words follow the heading. " * 12)]),
+        Section(level=4, children=[Text("Deep")]),
+        Paragraph(children=[Text("Run-in words. " * 12)]),
+        Section(level=4, children=[Text("Alone")]),
+        Section(level=2, children=[Text("Next")]),
+    ]))
+    ed.show()
+    QApplication.processEvents()
+    return ed
+
+
+def test_run_in_heading_shares_its_line_with_the_paragraph(qapp):
+    ed = _deep_editor("article")
+    head = _block(ed, "Deep")
+    para = head.next()
+    assert _baseline(ed, para) == pytest.approx(_baseline(ed, head), abs=1.5)
+    assert para.blockFormat().textIndent() > 20
+    # Separate blocks still, so the LaTeX is untouched.
+    tex = serialize_document(ed.get_document())
+    assert "\\paragraph{Deep}" in tex or "paragraph{Deep}" in tex
+    ed.close()
+
+
+def test_run_in_heading_with_nothing_to_run_into_stays_alone(qapp):
+    ed = _deep_editor("article")
+    head = _block(ed, "Alone")
+    assert head.blockFormat().bottomMargin() >= 0
+    ed.close()
+
+
+def test_click_after_run_in_heading_lands_in_the_paragraph(qapp):
+    from PySide6.QtCore import QPoint
+    from PySide6.QtTest import QTest
+    ed = _deep_editor("article")
+    head = _block(ed, "Deep")
+    para = head.next()
+    layout = ed._edit.document().documentLayout()
+    raw = layout.blockBoundingRect(para)
+    line = para.layout().lineAt(0)
+    y = int(raw.top() + line.y() + line.ascent() - 3)
+    right = int(raw.left() + line.naturalTextRect().left() + 30)
+    QTest.mouseClick(ed._edit.viewport(), Qt.LeftButton, pos=QPoint(right, y))
+    assert ed._edit.textCursor().block() == para
+    left = int(raw.left() + 5)
+    QTest.mouseClick(ed._edit.viewport(), Qt.LeftButton, pos=QPoint(left, y))
+    assert ed._edit.textCursor().block() == head
+    ed.close()
+
+
+def test_ieeetran_title_spans_and_second_column_starts_below_it(qapp):
+    ed = _editor("IEEEtran")
+    ed.show()
+    QApplication.processEvents()
+    edit = ed._edit
+    title = _block(ed, "My Title")
+    assert title.layout().lineAt(0).naturalTextRect().left() \
+        > edit.text_width_px() / 2      # centred over the page, past column 1
+    slots = edit._column_slots()
+    assert slots[0].width > edit.text_width_px() * 1.8
+    assert slots[1].vx == slots[0].vx
+    assert slots[1].vy == pytest.approx(slots[0].b)
+    ed.close()
+
+
+def test_table_stays_inside_its_column(qapp):
+    from khervedoc.model import Table
+    ed = DocumentEditor()
+    ed.set_fit_to_width(False)
+    ed.set_zoom_percent(100)
+    ed.set_document(Document(meta=DocMeta(documentclass="IEEEtran"), children=[
+        Title(children=[Text("My Title")]),
+        Paragraph(children=[Text("Text.")]),
+        Table(rows=[["a long cell of words here", "another long cell"],
+                    ["more words in a cell", "and more words"]]),
+    ]))
+    ed.show()
+    QApplication.processEvents()
+    doc = ed._edit.document()
+    table = next(f for f in doc.rootFrame().childFrames())
+    # The frame's rectangle includes the margin that keeps it in its column.
+    width = doc.documentLayout().frameBoundingRect(table).width() \
+        - table.format().rightMargin()
+    assert width <= ed._edit.text_width_px() + 2
+    ed.close()
+
+
+def test_two_column_slots_fill_the_second_column_below_the_span(qapp):
+    ed = DocumentEditor()
+    ed.set_fit_to_width(False)
+    ed.set_zoom_percent(100)
+    ed.set_document(Document(meta=DocMeta(documentclass="IEEEtran"), children=[
+        Title(children=[Text("My Title")]),
+        Author(children=[Text("An Author")]),
+    ] + [Paragraph(children=[Text("word " * 300)]) for _ in range(8)]))
+    ed.show()
+    QApplication.processEvents()
+    edit = ed._edit
+    span, left, right = edit._column_slots()[:3]
+    assert right.vx > left.vx
+    assert right.vy == pytest.approx(left.vy)
+    assert right.sheet == left.sheet == 0
+    # A point in the right column maps there and back.
+    y = right.a + 50
+    view = edit.doc_to_view(10, y)
+    back = edit.view_to_doc(view)
+    assert abs(back.y() - y) < 1 and abs(back.x() - 10) < 1
     ed.close()
 
 

@@ -14,6 +14,7 @@ import shutil
 import unicodedata
 import json
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, QSizeF, Qt, Signal
@@ -96,6 +97,10 @@ ABOVE_LABELS_PROPERTY = QTextFormat.UserProperty + 60
 RUN_IN_LABEL_PROPERTY = QTextFormat.UserProperty + 61
 # The heading's number is one of its above-labels, not painted beside it.
 NUMBER_ABOVE_PROPERTY = QTextFormat.UserProperty + 62
+# A heading the next paragraph's first line continues on (\\paragraph).
+RUN_IN_HEADING_PROPERTY = QTextFormat.UserProperty + 63
+# A block across all columns at the top of the first sheet (\\maketitle).
+SPANS_COLUMNS_PROPERTY = QTextFormat.UserProperty + 64
 # "{title}" and the like in a measured header or footer.
 _FIELD_RE = re.compile(r"\{(\w+)\}")
 # Char-format property holding a footnote's text (editor's _P_FOOTNOTE).
@@ -250,6 +255,18 @@ class _PageBreakOverlay(QWidget):
         painter.end()
 
 
+@dataclass
+class _Slot:
+    """A stretch of the single column flow and where it is drawn: flow
+    heights a..b at (vx, sheet's top + vy), so wide."""
+    a: float
+    b: float
+    sheet: int
+    vx: float
+    vy: float
+    width: float
+
+
 class PagedTextEdit(QTextEdit):
     """A QTextEdit that knows its page size, draws page-break lines and
     accepts pasted/dropped images.
@@ -309,6 +326,8 @@ class PagedTextEdit(QTextEdit):
         # The class's headers and footers: {pages, fields, pt_px}; see
         # DocumentEditor._furniture_for_screen.
         self._furniture: dict | None = None
+        self._slots: list = []
+        self._slots_key = None
         self._col_right = 0.0
         self.verticalScrollBar().valueChanged.connect(self._hold_columns_still)
         self._images_dir: Path | None = None
@@ -416,9 +435,11 @@ class PagedTextEdit(QTextEdit):
         # relays out (resize, wrap-mode change), which silently turns
         # pagination off; re-assert it afterwards.
         if self._page_height_px > 0:
-            width = (self._col_width if self._columns > 1
-                     else self.viewport().width() or self._page_width_px)
-            size = QSizeF(width, self._page_height_px)
+            # Columns flow as one long layout, cut up by _column_slots.
+            size = (QSizeF(self._col_width + self.column_span_px(), -1)
+                    if self._columns > 1 else
+                    QSizeF(self.viewport().width() or self._page_width_px,
+                           self._page_height_px))
             if self.document().pageSize() != size:
                 self.document().setPageSize(size)
 
@@ -475,8 +496,96 @@ class PagedTextEdit(QTextEdit):
         return width - fmt.leftMargin() - fmt.rightMargin()
 
     def sheet_count(self) -> int:
-        pages = max(1, self.document().pageCount())
-        return -(-pages // self._columns)
+        if self._columns > 1 and self._page_height_px > 0:
+            return self._column_slots()[-1].sheet + 1
+        return max(1, self.document().pageCount())
+
+    def column_span_px(self) -> float:
+        """How far past its own column a block must reach to span them all."""
+        return (self._columns - 1) * (self._col_width + self._col_gap)
+
+    def _column_units(self, layout, first_block):
+        """What may not be split across columns, in flow order: (top, bottom,
+        forced to a new sheet). Lines, and whole tables and figures."""
+        block = first_block
+        while block.isValid():
+            table = QTextCursor(block).currentTable()
+            if table is not None:
+                r = layout.frameBoundingRect(table)
+                yield r.top(), r.bottom(), False
+                block = table.lastCursorPosition().block().next()
+                continue
+            raw = layout.blockBoundingRect(block)
+            lay = block.layout()
+            forced = block.blockFormat().pageBreakPolicy() \
+                & QTextFormat.PageBreak_AlwaysBefore
+            for i in range(lay.lineCount() if lay else 0):
+                line = lay.lineAt(i)
+                base = raw.top() + line.y() + line.ascent()
+                yield base - line.ascent(), base + line.descent(), \
+                    bool(forced) and i == 0
+            block = block.next()
+
+    def _column_slots(self) -> list:
+        """Cut the single flow into what goes where on the sheets, as LaTeX's
+        output routine does: first anything spanning the columns, then each
+        column in turn, the first sheet's starting below that span."""
+        doc = self.document()
+        key = (doc.revision(), self._col_width, self._col_gap, self._col_left,
+               self._page_height_px)
+        if self._slots_key == key and self._slots:
+            return self._slots
+        layout = doc.documentLayout()
+        H = self._page_height_px
+        ff = doc.rootFrame().frameFormat()
+        top, limit = ff.topMargin(), H - ff.bottomMargin()
+        step = self._col_width + self._col_gap
+        slots: list = []
+        block = doc.firstBlock()
+        while block.isValid() and block.blockFormat().property(
+                SPANS_COLUMNS_PROPERTY):
+            block = block.next()
+        span_end = 0.0
+        if block != doc.firstBlock():
+            span_end = (layout.blockBoundingRect(block).top()
+                        if block.isValid() else doc.size().height())
+            slots.append(_Slot(0.0, span_end, 0, self._col_left, 0.0,
+                               step * self._columns))
+        sheet_top = span_end or top
+        sheet, col, used_from = 0, 0, span_end
+        vy = span_end
+        slot = _Slot(span_end, float("inf"), 0, self._col_left, vy,
+                     self._col_width)
+        slots.append(slot)
+        at_start = True
+        for u_top, u_bottom, forced in self._column_units(layout, block):
+            over = vy + (u_bottom - used_from) > limit
+            if at_start or not (over or forced):
+                at_start = False
+                continue
+            # Start the next slot at this unit: a column drops the space
+            # above its first line, and everything before stays in the last.
+            start = max(u_top, slot.a)
+            slot.b = start
+            if forced or col == self._columns - 1:
+                sheet, col = sheet + 1, 0
+                sheet_top = top
+            else:
+                col += 1
+            vy = sheet_top
+            used_from = start
+            slot = _Slot(start, float("inf"), sheet,
+                         self._col_left + col * step, vy, self._col_width)
+            slots.append(slot)
+        self._slots, self._slots_key = slots, key
+        return slots
+
+    def _slot_at(self, y: float):
+        slots = self._column_slots()
+        for slot in slots:
+            if y < slot.b:
+                return slot
+        return slots[-1]
 
     def doc_to_view(self, x: float, y: float) -> QPointF:
         """Document-layout point -> viewport point."""
@@ -485,10 +594,8 @@ class PagedTextEdit(QTextEdit):
         H = self._page_height_px
         if self._columns <= 1 or H <= 0:
             return QPointF(x + dx, y + dy)
-        page = int(y // H)
-        sheet, col = divmod(page, self._columns)
-        vx = self._col_left + col * (self._col_width + self._col_gap) + x
-        return QPointF(vx + dx, sheet * H + (y - page * H) + dy)
+        s = self._slot_at(y)
+        return QPointF(s.vx + x + dx, s.sheet * H + s.vy + (y - s.a) + dy)
 
     def view_to_doc(self, pos) -> QPointF:
         """Viewport point -> document-layout point."""
@@ -500,14 +607,25 @@ class PagedTextEdit(QTextEdit):
             return QPointF(x, y)
         sheet = max(0, int(y // H))
         local = y - sheet * H
+        slots = self._column_slots()
+        sheet = min(sheet, slots[-1].sheet)
+        on_sheet = [s for s in slots if s.sheet == sheet]
+        # The band this height falls in: the span across the top, or else
+        # the column under the pointer.
         step = self._col_width + self._col_gap
-        col = int((x - self._col_left + self._col_gap / 2) // step) \
-            if step > 0 else 0
-        col = max(0, min(self._columns - 1, col))
-        cx = x - self._col_left - col * step
-        cx = max(0.0, min(self._col_width - 1, cx))
-        page = sheet * self._columns + col
-        return QPointF(cx, page * H + local)
+        best = on_sheet[0]
+        for s in on_sheet:
+            if s.width > self._col_width:
+                if local < s.vy + (s.b - s.a):
+                    best = s
+                    break
+                continue
+            best = s
+            if s.vx + self._col_width + self._col_gap / 2 >= x:
+                break
+        cx = max(0.0, min(best.width - 1, x - best.vx))
+        b = best.b if best.b != float("inf") else best.a + H
+        return QPointF(cx, max(best.a, min(b - 1, best.a + local - best.vy)))
 
     def _mapped(self, ev):
         if self._columns <= 1:
@@ -519,6 +637,45 @@ class PagedTextEdit(QTextEdit):
                            ev.button(), ev.buttons(), ev.modifiers())
 
     _HANDLE = 9.0
+
+    def _settle_click_on_run_in(self, view_pos) -> None:
+        """A run-in heading and its paragraph share one line, which the
+        layout can only give to one block: the side of the heading's end
+        decides which block a click there belongs to."""
+        cur = self.textCursor()
+        b = cur.block()
+        heading = (b if b.blockFormat().property(RUN_IN_HEADING_PROPERTY)
+                   else b.previous() if b.previous().isValid()
+                   and b.previous().blockFormat().property(
+                       RUN_IN_HEADING_PROPERTY) else None)
+        if heading is None or not heading.layout() \
+                or heading.layout().lineCount() == 0:
+            return
+        para = heading.next()
+        if not para.isValid() or not para.layout() \
+                or para.layout().lineCount() == 0:
+            return
+        layout = self.document().documentLayout()
+        d = (self.view_to_doc(view_pos) if self._columns > 1 else QPointF(
+            view_pos.x() + self.horizontalScrollBar().value(),
+            view_pos.y() + self.verticalScrollBar().value()))
+        h_raw = layout.blockBoundingRect(heading)
+        last = heading.layout().lineAt(heading.layout().lineCount() - 1)
+        line = para.layout().lineAt(0)
+        p_raw = layout.blockBoundingRect(para)
+        top = h_raw.top() + last.y()
+        if not top <= d.y() <= top + last.height():
+            return
+        x = d.x() - h_raw.left()
+        end = last.naturalTextRect().right()
+        if x > end:
+            pos = para.position() + line.xToCursor(d.x() - p_raw.left())
+        else:
+            if b == heading:
+                return
+            pos = heading.position() + last.xToCursor(x)
+        cur.setPosition(pos)
+        self.setTextCursor(cur)
 
     def _image_under(self, view_pos):
         """(doc position, view rect) of a resizable image at view_pos."""
@@ -601,6 +758,9 @@ class PagedTextEdit(QTextEdit):
             ev.accept()
             return
         super().mousePressEvent(self._mapped(ev))
+        if ev.button() == Qt.LeftButton \
+                and not ev.modifiers() & Qt.ShiftModifier:
+            self._settle_click_on_run_in(ev.position())
 
     def mouseMoveEvent(self, ev):
         if self._img_drag is not None:
@@ -731,15 +891,17 @@ class PagedTextEdit(QTextEdit):
             sels.append(sel)
         ctx.selections = sels
         vh = self.viewport().height()
-        for page in range(max(1, doc.pageCount())):
-            origin = self.doc_to_view(0, page * H)
-            if origin.y() > vh or origin.y() + H < 0:
+        dy = -self.verticalScrollBar().value()
+        dx = -self.horizontalScrollBar().value()
+        for s in self._column_slots():
+            x, y = s.vx + dx, s.sheet * H + s.vy + dy
+            b = s.b if s.b != float("inf") else s.a + H
+            if y > vh or y + (b - s.a) < 0:
                 continue
             p.save()
-            p.setClipRect(QRectF(origin.x(), origin.y(),
-                                 self._col_width, H))
-            p.translate(origin.x(), origin.y() - page * H)
-            ctx.clip = QRectF(0, page * H, self._col_width, H)
+            p.setClipRect(QRectF(x, y, s.width, b - s.a))
+            p.translate(x, y - s.a)
+            ctx.clip = QRectF(0, s.a, s.width, b - s.a)
             layout.draw(p, ctx)
             p.restore()
         p.end()
@@ -786,8 +948,11 @@ class PagedTextEdit(QTextEdit):
                             and at.y() <= visible.bottom() + 200:
                         painter = painter or QPainter(self.viewport())
                         base = at.y() + line.ascent()
+                        width = (self._col_width if self._columns > 1
+                                 and not bf.property(SPANS_COLUMNS_PROPERTY)
+                                 else raw.width())
                         for item in json.loads(above) if above else []:
-                            self._draw_label(painter, item, at.x(), raw.width(),
+                            self._draw_label(painter, item, at.x(), width,
                                              base - item["up"], line)
                         if run_in:
                             item = json.loads(run_in)

@@ -110,6 +110,27 @@ def read_rules(pdf: Path) -> list[dict]:
     return out
 
 
+def read_words(pdf: Path) -> dict:
+    """Word boxes per page: what a run-in heading ends with, and how far the
+    paragraph on its line starts from it."""
+    d = fitz.open(pdf)
+    out = {n: page.get_text("words") for n, page in enumerate(d)}
+    d.close()
+    return out
+
+
+def run_in_end(words, line) -> dict:
+    """Punctuation after a run-in heading and the gap before the text."""
+    on = sorted((w for w in words.get(line["page"], [])
+                 if w[1] - 1 <= line["y"] <= w[3] + 1), key=lambda w: w[0])
+    for prev, word in zip(on, on[1:]):
+        if re.match(r"Para|Tailmark", word[4]):
+            m = re.search(r"Heading(.*)$", prev[4])
+            return dict(suffix=m.group(1) if m else "",
+                        run_gap=round(word[0] - prev[2], 1))
+    return {}
+
+
 def read_lines(pdf: Path) -> tuple[list[dict], float, float, int]:
     d = fitz.open(pdf)
     out = []
@@ -174,7 +195,7 @@ def find(lines, mark) -> dict | None:
     return None
 
 
-def style_of(lines, mark, area, W) -> dict | None:
+def style_of(lines, mark, area, W, words=None) -> dict | None:
     line = find(lines, mark)
     if line is None:
         return None
@@ -219,7 +240,9 @@ def style_of(lines, mark, area, W) -> dict | None:
     out = dict(
         font=span["font"], size=span["size"], color=_hex(span["color"]),
         align="center" if centred else "left",
-        indent=0.0 if centred else round(max(0, x0 - left), 1),
+        # From its own column's edge: a heading can land in the second one.
+        indent=0.0 if centred else round(max(0, x0 - (
+            right - col_w if col_w and x0 >= right - col_w - 2 else left)), 1),
         upper=src == src.upper() and letters != letters.upper(),
         prefix=prefix, num_gap=num_gap, page=line["page"],
         run_in=bool(re.search(r"Para\w+|Tailmark", line["text"])) or any(
@@ -231,6 +254,8 @@ def style_of(lines, mark, area, W) -> dict | None:
         top=round(line["y"], 1),
         wide=bool(fills),
     )
+    if out["run_in"] and words:
+        out.update(run_in_end(words, line))
     return out
 
 
@@ -301,7 +326,7 @@ def run_in_label(lines, mark) -> dict | None:
                 color=_hex(s["color"]))
 
 
-def date_line(lines) -> dict | None:
+def date_line(lines, area_mid) -> dict | None:
     for l in lines[:12]:
         if re.fullmatch(rf"({MONTHS}) \d+, \d{{4}}|\d+ ({MONTHS}) \d{{4}}|"
                         rf"({MONTHS}) \d{{4}}", l["text"].strip()):
@@ -311,7 +336,8 @@ def date_line(lines) -> dict | None:
             return dict(font=s["font"], size=s["size"], color=_hex(s["color"]),
                         gap=round(l["y"] - prev["y"], 1) if prev else 0.0,
                         page=l["page"],
-                        day_first=l["text"].strip()[0].isdigit())
+                        day_first=l["text"].strip()[0].isdigit(),
+                        centred=abs((l["x0"] + l["x1"]) / 2 - area_mid) < 6)
     return None
 
 
@@ -499,13 +525,9 @@ def measure(cls: str, pt: int, work: Path) -> dict:
         r = compile_tex(serialize_document(
             probe(cls, pt, correspondence=False, levels=3)), wd)
     pdf = wd / "document.pdf"
-    log = (wd / "document.log")
-    log_text = log.read_text(errors="ignore") if log.exists() else ""
     if not r.ok or not pdf.exists():
         print((r.log or "")[-400:], flush=True)
         return {"broken": "does not compile"}
-    if re.search(r"File `[\w-]+\.cls' not found", log_text):
-        return {"broken": "class file not available to the compiler"}
     lines, W, H, pages = read_lines(pdf)
     area = body_area(lines)
     if not area:
@@ -513,10 +535,24 @@ def measure(cls: str, pt: int, work: Path) -> dict:
     look: dict = dict(body=dict(font=area["font"], size=area["size"],
                                 leading=area["leading"]))
     look["geometry"] = page_geometry(lines, W, H, area, pages)
+    words = read_words(pdf)
     for key, mark in MARKS.items():
-        s = style_of(lines, mark, area, W)
+        s = style_of(lines, mark, area, W, words)
         if s:
             look[key] = s
+    if area["cols"] == 2:
+        # Whatever stands above where the second column starts spans both,
+        # however short the line (mnras sets its title flush left).
+        right_col = area["right"] - (area["right"] - area["left"]
+                                     - area["colsep"]) / 2 - 2
+        tops = [l["y"] for l in lines if l["page"] == 0 and l["x0"] >= right_col
+                and l["y"] > H * 0.06 and _BODY_WORDS.search(l["text"])
+                or l["page"] == 0 and l["x0"] >= right_col
+                and re.search(r"(?i)h[a-z]*mark", l["text"])]
+        if tops:
+            for key in ("title", "author", "affiliation", "abstract", "keywords"):
+                if key in look and look[key]["page"] == 0:
+                    look[key]["wide"] = look[key]["top"] < min(tops) - 1
     for n, mark in enumerate(AGAIN, 1):
         again = style_of(lines, mark, area, W)
         key = f"h{n}"
@@ -540,7 +576,7 @@ def measure(cls: str, pt: int, work: Path) -> dict:
         look["abstract"]["label"] = run_in_label(lines, "Abstractmark")
     if "keywords" in look:
         look["keywords"]["label"] = run_in_label(lines, "Keywordmark")
-    look["date"] = date_line(lines)
+    look["date"] = date_line(lines, (area["left"] + area["right"]) / 2)
     look["chapter_label"] = chapter_label(lines, "Hoenmark", area)
     g = look["geometry"]
     h1_page = look.get("h1", {}).get("page", 0)
@@ -576,7 +612,7 @@ def main() -> None:
     if OUT.exists() and sys.argv[1:]:
         ns: dict = {}
         exec(OUT.read_text(encoding="utf-8"), ns)
-        table = ns["LOOKS"]
+        table = {c: v for c, v in ns["LOOKS"].items() if c in TEMPLATE_CHOICES}
     for cls in classes:
         sizes = (10, 11, 12) if cls in _STANDARD_SERIALIZER_CLASSES else (12,)
         margins, page = follows_settings(cls, work)
@@ -588,6 +624,11 @@ def main() -> None:
             entry[pt] = look
             print(cls, pt, look.get("broken", "ok"), flush=True)
         table[cls] = entry
+    # Another run may have refreshed other classes meanwhile: keep those.
+    if OUT.exists() and sys.argv[1:]:
+        ns = {}
+        exec(OUT.read_text(encoding="utf-8"), ns)
+        table = {**ns["LOOKS"], **{c: table[c] for c in classes}}
     body = pprint.pformat(table, width=78, sort_dicts=False)
     OUT.write_text(
         '"""How each document class really typesets its styles, in points.\n\n'

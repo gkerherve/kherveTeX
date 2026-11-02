@@ -214,21 +214,22 @@ def test_columns_split_the_visual_page(qapp):
     ed.set_document(Document(meta=DocMeta(column_count=2), children=paras))
     edit = ed._edit
     assert edit.columns() == 2
-    pages = edit.document().pageCount()
-    assert edit.sheet_count() == -(-pages // 2)
+    slots = edit._column_slots()
+    assert edit.sheet_count() == slots[-1].sheet + 1
     assert ed._page.maximumHeight() == edit.page_height_px() * edit.sheet_count()
-    # Layout page 1 is drawn as the RIGHT column of sheet 1: a click
-    # there must land in text from that page, not the left column's.
+    # The second stretch of the flow is drawn as the RIGHT column of sheet 1:
+    # a click there must land in that text, not the left column's.
     H = edit.page_height_px()
-    top_right = edit.doc_to_view(5, H + 120)
+    second = slots[1]
+    top_right = edit.doc_to_view(5, second.a + 120)
     assert top_right.x() > edit.viewport().width() / 2
     assert top_right.y() < H
     cur = edit.cursorForPosition(top_right.toPoint())
     y = edit.document().documentLayout().blockBoundingRect(
         cur.block()).bottom()
-    assert y > H              # the block sits on layout page 1 or later
+    assert y > second.a       # the block reaches into that stretch
     back = edit.view_to_doc(top_right)
-    assert abs(back.x() - 5) < 1 and abs(back.y() - (H + 120)) < 1
+    assert abs(back.x() - 5) < 1 and abs(back.y() - (second.a + 120)) < 1
     # Back to one column restores the normal flow.
     meta = ed.meta()
     meta.column_count = 1
