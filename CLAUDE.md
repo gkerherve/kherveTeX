@@ -103,7 +103,11 @@ Windows 0.214 installs.
 - `KherveTeX.spec` enforces it: it fetches the pinned tectonic release
   into `packaging/bin/` (`packaging/fetch_tectonic.py`, `TECTONIC_VERSION`),
   builds `khervedoc/tectonic_cache/` with `fetch_tectonic.warm()` when it is
-  missing, and **stops the build** if the cache has fewer than 500 files.
+  missing **or was warmed for other examples** (`khervedoc/tectonic_cache.stamp`
+  holds a fingerprint of their preambles), and **stops the build** if the
+  cache has fewer than 500 files. `warm()` fills an empty cache of its own,
+  stops if anything fails to compile, then recompiles every example with
+  `--only-cached` from a fresh copy and stops if one fails offline.
   Never weaken that back into a warning, and never bundle `~/bin/tectonic`
   or a Homebrew tectonic — the cache must come from the binary that ships.
 - To rebuild the cache by hand (e.g. after adding a template or a

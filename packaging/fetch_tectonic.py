@@ -10,12 +10,20 @@ can this. ``--warm`` compiles tectonic's kitchen-sink documents
 copies the resulting bundle cache to ``khervedoc/tectonic_cache``, which the
 spec bundles and ``__main__._seed_tectonic_cache`` copies to the user's
 cache on first launch, so the templates compile offline.
+
+The warm-up runs on an empty cache of its own, so the bundle holds exactly
+what the examples need, whatever the build machine compiled before; then it
+compiles every example again with ``--only-cached`` from a fresh copy, as a
+new PC would, and stops if one fails. A stamp records which examples it was
+made for: the spec warms again when they change.
 """
 
 import argparse
+import hashlib
 import io
 import os
 import platform
+import re
 import shutil
 import stat
 import subprocess
@@ -30,6 +38,7 @@ TECTONIC_VERSION = "0.17.0"
 _ROOT = Path(__file__).resolve().parent.parent
 _BIN = _ROOT / "packaging" / "bin"
 _CACHE = _ROOT / "khervedoc" / "tectonic_cache"
+_STAMP = _ROOT / "khervedoc" / "tectonic_cache.stamp"
 
 
 def _target() -> tuple[str, str]:
@@ -76,35 +85,94 @@ def fetch() -> Path:
     return out
 
 
+def _examples():
+    sys.path.insert(0, str(_ROOT))
+    from khervedoc import examples
+    from khervedoc.serializer import serialize_document
+    return [(label, serialize_document(factory()))
+            for label, factory in examples.EXAMPLES
+            if factory is not examples.blank]
+
+
+def fingerprint() -> str:
+    """What the cache must cover: the tectonic version, the kitchen-sink
+    documents and every example's preamble (with dates and numbers taken
+    out, so a planner's date does not count as a change)."""
+    import inspect
+    from khervedoc import compiler
+    h = hashlib.sha256(TECTONIC_VERSION.encode())
+    h.update(inspect.getsource(compiler.download_tectonic_bundle).encode())
+    for label, tex in _examples():
+        preamble = tex.split("\\begin{document}")[0]
+        h.update(label.encode() + re.sub(r"\d", "", preamble).encode())
+    return h.hexdigest()
+
+
+def is_current() -> bool:
+    """The bundled cache exists and was warmed for today's examples."""
+    return (_CACHE.is_dir() and any(_CACHE.rglob("*.otf"))
+            and _STAMP.is_file()
+            and _STAMP.read_text().strip() == fingerprint())
+
+
+def verify_offline(tectonic: Path) -> list[str]:
+    """Every example compiled with --only-cached from a fresh copy of the
+    bundled cache, as on a new PC: the labels that fail."""
+    failed = []
+    with tempfile.TemporaryDirectory() as tmp:
+        cache = Path(tmp) / "cache"
+        shutil.copytree(_CACHE, cache)
+        env = dict(os.environ, TECTONIC_CACHE_DIR=str(cache),
+                   TEXINPUTS=str(_ROOT / "khervedoc" / "styles") + os.pathsep)
+        for n, (label, tex) in enumerate(_examples()):
+            work = Path(tmp) / f"ex{n}"
+            work.mkdir()
+            (work / "d.tex").write_text(tex, encoding="utf-8")
+            proc = subprocess.run(
+                [str(tectonic), "--only-cached", "-Z", "continue-on-errors",
+                 "d.tex"], cwd=work, env=env, stdin=subprocess.DEVNULL,
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=300)
+            ok = proc.returncode == 0 and (work / "d.pdf").is_file()
+            print(f"  offline {label!r}: {'ok' if ok else 'FAILED'}", flush=True)
+            if not ok:
+                failed.append(label)
+    return failed
+
+
 def warm(tectonic: Path) -> None:
     os.environ["PATH"] = str(tectonic.parent) + os.pathsep + os.environ["PATH"]
     sys.path.insert(0, str(_ROOT))
-    from khervedoc import compiler, examples
-    from khervedoc.serializer import serialize_document
+    from khervedoc import compiler
     found = compiler._find_tectonic()
     assert found and os.path.normcase(found) == os.path.normcase(str(tectonic)), found
 
-    ok, _log = compiler.download_tectonic_bundle(
-        on_output=lambda line: print("  " + line, flush=True))
-    print(f"kitchen-sink bundle: {'ok' if ok else 'FAILED'}", flush=True)
-    failed = []
     with tempfile.TemporaryDirectory() as tmp:
-        for label, factory in examples.EXAMPLES:
-            res = compiler.compile_tex(serialize_document(factory()),
-                                       Path(tmp) / "ex",
+        # An empty cache of its own: the bundle is what the examples need,
+        # not whatever this machine's cache happens to hold.
+        cache = Path(tmp) / "cache"
+        os.environ["TECTONIC_CACHE_DIR"] = str(cache)
+        ok, _log = compiler.download_tectonic_bundle(
+            on_output=lambda line: print("  " + line, flush=True))
+        print(f"kitchen-sink bundle: {'ok' if ok else 'FAILED'}", flush=True)
+        failed = [] if ok else ["kitchen-sink bundle"]
+        for label, tex in _examples():
+            res = compiler.compile_tex(tex, Path(tmp) / "ex",
                                        source_dir=_ROOT / "khervedoc" / "styles")
             print(f"  example {label!r}: {'ok' if res.ok else 'FAILED'}", flush=True)
             if not res.ok:
                 failed.append(label)
-    cache = compiler.query_tectonic_cache_dir(str(tectonic))
-    if cache is None or not cache.is_dir():
-        raise SystemExit(f"tectonic reported no cache directory ({cache})")
-    shutil.rmtree(_CACHE, ignore_errors=True)
-    shutil.copytree(cache, _CACHE)
+        del os.environ["TECTONIC_CACHE_DIR"]
+        if failed:
+            raise SystemExit(f"these did not compile while warming: {failed}")
+        shutil.rmtree(_CACHE, ignore_errors=True)
+        shutil.copytree(cache, _CACHE)
     size = sum(p.stat().st_size for p in _CACHE.rglob("*") if p.is_file())
-    print(f"cache {cache} -> {_CACHE} ({size / 1e6:.0f} MB)", flush=True)
+    print(f"cache -> {_CACHE} ({size / 1e6:.0f} MB)", flush=True)
+    failed = verify_offline(tectonic)
     if failed:
-        print(f"WARNING: examples that did not compile: {failed}", flush=True)
+        raise SystemExit(f"these do not compile offline from the cache: {failed}")
+    _STAMP.write_text(fingerprint())
 
 
 def main() -> None:

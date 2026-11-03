@@ -17,6 +17,7 @@ installer/
 
 # Bundled tectonic TeX cache (43 MB, built by download_tectonic_bundle)
 khervedoc/tectonic_cache/
+khervedoc/tectonic_cache.stamp
 *.aux
 *.log
 *.synctex.gz

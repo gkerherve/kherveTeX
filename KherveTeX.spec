@@ -48,8 +48,12 @@ import fetch_tectonic  # noqa: E402
 
 _TECTONIC = fetch_tectonic.fetch()                 # packaging/bin/<name>
 _CACHE = ROOT / "khervedoc" / "tectonic_cache"
-if not (_CACHE.is_dir() and any(_CACHE.rglob("*.otf"))):
-    print("tectonic_cache missing - warming it now (needs internet)")
+# A cache warmed for older examples lacks the newer ones' classes and
+# packages, so it is rebuilt whenever the examples change, not only when
+# it is missing.
+if not fetch_tectonic.is_current():
+    print("tectonic_cache missing or made for other examples - warming it "
+          "now (needs internet)")
     fetch_tectonic.warm(_TECTONIC)
 _n = sum(1 for p in _CACHE.rglob("*") if p.is_file()) if _CACHE.is_dir() else 0
 if _n < 500:
