@@ -1273,6 +1273,31 @@ def history() -> QIcon:
 
 def commit() -> QIcon:
     """Snapshot uploaded: a cloud with an up arrow."""
+    return _cloud(up=True, arrow=_blue())
+
+
+def overleaf_send() -> QIcon:
+    return _cloud(up=True, arrow=_OVERLEAF_GREEN)
+
+
+def overleaf_get() -> QIcon:
+    return _cloud(up=False, arrow=_OVERLEAF_GREEN)
+
+
+def overleaf_zip() -> QIcon:
+    c = _W(); c.page(4, 2.5, 14, 19)
+    for y in (5, 8, 11, 14):
+        c.line(11, y, 13, y, _ink(), 1.4)
+    c.line(19, 9, 19, 20, _OVERLEAF_GREEN, 1.8)
+    c.poly([(16, 17), (19, 20), (22, 17)], color=_OVERLEAF_GREEN,
+           closed=False, lw=1.8)
+    return c.done()
+
+
+_OVERLEAF_GREEN = QColor("#138a36")
+
+
+def _cloud(up: bool, arrow: QColor) -> QIcon:
     c = _W(); c.pen(_ink(), 1.5).brush(_paper())
     path = QPainterPath(); path.moveTo(6.5, 18.5)
     path.cubicTo(1.5, 18.5, 1.5, 11, 6.5, 11)
@@ -1280,8 +1305,9 @@ def commit() -> QIcon:
     path.cubicTo(22.5, 10, 22.5, 18.5, 17.5, 18.5)
     path.closeSubpath()
     c.p.drawPath(path)
-    c.line(12, 20.5, 12, 11.5, _blue(), 1.8)
-    c.poly([(9, 14.5), (12, 11.5), (15, 14.5)], color=_blue(), closed=False,
+    c.line(12, 20.5, 12, 11.5, arrow, 1.8)
+    tip, back = (11.5, 14.5) if up else (20.5, 17.5)
+    c.poly([(9, back), (12, tip), (15, back)], color=arrow, closed=False,
            lw=1.8)
     return c.done()
 

@@ -102,3 +102,14 @@ def test_theme_sets_every_shade_so_windows_cannot_darken_them(name):
     assert pal.color(QPalette.Midlight).name() == t["midlight"]
     text = pal.color(QPalette.WindowText).lightness()
     assert abs(pal.color(QPalette.Midlight).lightness() - text) > 100
+
+
+def test_overleaf_is_on_the_review_tab_not_only_in_a_menu():
+    from PySide6.QtWidgets import QToolButton
+    w = _window()
+    rb = w._ribbon
+    review = rb.widget([rb.tabText(i) for i in range(rb.count())]
+                       .index("Review"))
+    shown = {b.defaultAction() for b in review.findChildren(QToolButton)}
+    for act in (w.act_overleaf_send, w.act_overleaf_get, w.act_overleaf_zip):
+        assert act in shown and not act.icon().isNull()

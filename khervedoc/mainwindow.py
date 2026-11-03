@@ -1605,16 +1605,16 @@ class MainWindow(QMainWindow):
                       "from the cloud (e.g. if a collaborator made changes)",
             triggered=self._pull_from_remote)
         self.act_overleaf_send = QAction(
-            "&Send to Overleaf\u2026", self,
+            icons.overleaf_send(), "&Send to Overleaf\u2026", self,
             statusTip="Push this document to an Overleaf project so "
                       "collaborators see it",
             triggered=self._overleaf_send)
         self.act_overleaf_get = QAction(
-            "&Get changes from Overleaf\u2026", self,
+            icons.overleaf_get(), "&Get changes from Overleaf\u2026", self,
             statusTip="Open the Overleaf project's current version",
             triggered=self._overleaf_get)
         self.act_overleaf_zip = QAction(
-            "&Download for Overleaf (.zip)\u2026", self,
+            icons.overleaf_zip(), "&Download for Overleaf (.zip)\u2026", self,
             statusTip="A zip to upload as a new Overleaf project "
                       "(works on a free plan)",
             triggered=self._export_latex_zip)
@@ -2725,6 +2725,9 @@ class MainWindow(QMainWindow):
         rev.add_group("Comments", large=[self.act_comment],
                       rows=[[self.act_accept_comment],
                             [self.act_reject_comment]], text=True)
+        rev.add_group("Share", large=[self.act_overleaf_send,
+                                      self.act_overleaf_get,
+                                      self.act_overleaf_zip])
         comp = rb.add_tab("Compile")
         comp.add_group("Compile", large=[self.act_compile_now,
                                          self.act_auto_compile])
@@ -4750,6 +4753,9 @@ class MainWindow(QMainWindow):
                 (self.act_paste_special, icons.paste),
                 (self.act_show_marks, icons.formatting_marks),
                 (self.act_drawing, icons.drawing),
+                (self.act_overleaf_send, icons.overleaf_send),
+                (self.act_overleaf_get, icons.overleaf_get),
+                (self.act_overleaf_zip, icons.overleaf_zip),
                 (self.act_theorem, icons.theorem),
                 (self.act_caption, icons.caption),
                 (self.act_compile_range, icons.compile_range),
