@@ -28,7 +28,7 @@ class WelcomeDialog(QDialog):
     """Returns, via `choice` and `layout`, what the user picked.
 
     choice is one of ("continue",), ("new",), ("open",), ("project",),
-    ("example", index) or ("recent", Path)."""
+    ("tour",), ("example", index) or ("recent", Path)."""
 
     def __init__(self, recent: list[Path], examples: list[tuple[str, object]],
                  layout: str = LAYOUT_SIDE, show_at_start: bool = True,
@@ -73,9 +73,9 @@ class WelcomeDialog(QDialog):
                  "(.ktex, .tex, .docx, .md, .pdf)", ("open",)),
                 ("\U0001F4DA  New project (thesis, book)…",
                  "Several documents compiled into one PDF", ("project",)),
-                ("→  Continue with the tour",
-                 "The guided tour already open behind this page",
-                 ("continue",))):
+                ("\U0001F9ED  Take the guided tour",
+                 "A multi-page document that shows what KherveTeX does",
+                 ("tour",))):
             b = QPushButton(label)
             b.setToolTip(tip)
             b.setMinimumHeight(34)

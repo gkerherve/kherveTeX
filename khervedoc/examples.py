@@ -340,15 +340,9 @@ def welcome() -> Document:
 # ---------------------------------------------------------------- examples
 
 def blank() -> Document:
-    """A bare-bones single-paragraph document — what File > New opens."""
-    return Document(
-        meta=_meta(),
-        children=[
-            Title(children=[Text(text="Untitled")]),
-            Author(children=[Text(text="")]),
-            Paragraph(children=[Text(text="Start writing here.")]),
-        ],
-    )
+    """An empty page, as in Word: what the app opens on and File > New
+    gives. No title, author or placeholder text to delete first."""
+    return Document(meta=_meta(), children=[Paragraph(children=[])])
 
 
 # ---------------------------------------------------------------- article
@@ -4225,3 +4219,47 @@ JOURNAL_EXAMPLES: list[tuple[str, callable]] = [
     ("&Thesis / report",                  thesis),
     ("&Beamer slides",                    beamer_slides),
 ]
+
+
+# What the Examples tab and File > New from Template show, by category:
+# (category, label, factory, one line for the user).
+GALLERY_CATEGORIES: tuple[str, ...] = (
+    "Start", "Articles", "Journals", "Theses & books", "Teaching",
+    "Science", "Letters & CV", "Slides & posters", "Planning")
+
+
+def _clean(label: str) -> str:
+    return label.replace("&&", "\0").replace("&", "").replace("\0", "&")
+
+
+_CATEGORY_OF = {
+    "welcome": "Start", "blank": "Start",
+    "article": "Articles", "two_column_article": "Articles",
+    "three_column_document": "Articles", "math_heavy": "Articles",
+    "white_paper": "Articles", "literature_review": "Articles",
+    "research_proposal": "Articles",
+    "elsevier_preprint": "Journals", "elsevier_twocol": "Journals",
+    "ieee_conference": "Journals", "revtex_article": "Journals",
+    "acs_article": "Journals",
+    "thesis": "Theses & books", "book_chapter": "Theses & books",
+    "lab_report": "Teaching", "homework": "Teaching",
+    "lecture_notes": "Teaching", "quantum_notes": "Teaching",
+    "letter": "Letters & CV", "cv": "Letters & CV", "memo": "Letters & CV",
+    "meeting_minutes": "Letters & CV", "recipe": "Letters & CV",
+    "beamer_slides": "Slides & posters", "poster": "Slides & posters",
+    "daily_journal": "Planning", "weekly_journal": "Planning",
+    "monthly_journal": "Planning", "calendar": "Planning",
+}
+
+
+def _gallery() -> list:
+    out = []
+    for label, factory in EXAMPLES + JOURNAL_EXAMPLES:
+        name = factory.__name__
+        doc = (factory.__doc__ or "").strip().split("\n\n")[0]
+        out.append((_CATEGORY_OF.get(name, "Science"), _clean(label), factory,
+                    " ".join(doc.split())))
+    return out
+
+
+GALLERY: list[tuple[str, str, callable, str]] = _gallery()

@@ -943,6 +943,8 @@ class MainWindow(QMainWindow):
     # moment the local reference falls out of scope, and so the Window
     # menu can list every open document.
     _windows: list["MainWindow"] = []
+    # The Overleaf git token, for this run only: never written to disk.
+    _overleaf_token = ""
     _updater = None
 
     @classmethod
@@ -1278,7 +1280,7 @@ class MainWindow(QMainWindow):
         # Suppress auto-compile while loading the starter document — the
         # first compile must wait until the event loop is running (see below).
         self._auto_compile = False
-        self._editor.set_document(_starter_document())
+        self._editor.set_document(_blank_document())
         self._auto_compile = True
         self._update_title()
         # Defer the first compile to after the event loop is running so
@@ -1602,6 +1604,28 @@ class MainWindow(QMainWindow):
             statusTip="Download the newest version of this document "
                       "from the cloud (e.g. if a collaborator made changes)",
             triggered=self._pull_from_remote)
+        self.act_overleaf_send = QAction(
+            "&Send to Overleaf\u2026", self,
+            statusTip="Push this document to an Overleaf project so "
+                      "collaborators see it",
+            triggered=self._overleaf_send)
+        self.act_overleaf_get = QAction(
+            "&Get changes from Overleaf\u2026", self,
+            statusTip="Open the Overleaf project's current version",
+            triggered=self._overleaf_get)
+        self.act_overleaf_zip = QAction(
+            "&Download for Overleaf (.zip)\u2026", self,
+            statusTip="A zip to upload as a new Overleaf project "
+                      "(works on a free plan)",
+            triggered=self._export_latex_zip)
+        self.act_save_as_template = QAction(
+            "Save as &Template\u2026", self,
+            statusTip="Keep this document as a starting point for new ones",
+            triggered=self._save_as_template)
+        self.act_tour = QAction(
+            "Take the guided &tour", self,
+            statusTip="A multi-page document that shows what KherveTeX does",
+            triggered=lambda: self._open_example(examples.welcome))
         self.act_configure_remotes = QAction(
             "Connect to &GitHub / GitLab…", self,
             statusTip="Set up a cloud link so your document is backed up "
@@ -1691,43 +1715,57 @@ class MainWindow(QMainWindow):
     # ----- menus -----
 
     def _build_menus(self) -> None:
+        """Word's menu bar: File, Edit, View, Insert, Format, Tools, Window,
+        Help. Anything else lives in a submenu of one of those."""
         mb = self.menuBar()
 
         m_file = mb.addMenu("&File")
         m_file.addAction(self.act_new)
+        self._new_from_template_menu = m_file.addMenu("New from &Template")
+        self._fill_template_menu(self._new_from_template_menu)
         m_file.addAction(self.act_new_window)
         m_file.addAction(self.act_open)
         m_file.addAction(self.act_open_in_new_window)
-        self._recent_menu = m_file.addMenu("Open &recent")
+        self._recent_menu = m_file.addMenu("Open &Recent")
         self._refresh_recent_menu()
         m_file.addSeparator()
+        m_file.addAction(self.act_close_doc)
         m_file.addAction(self.act_save)
         m_file.addAction(self.act_save_as)
-        m_file.addAction(self.act_close_doc)
+        m_file.addAction(self.act_save_as_template)
+        m_versions = m_file.addMenu("&Version History")
+        m_versions.addAction(self.act_commit_now)
+        m_versions.addAction(self.act_history)
+        m_versions.addAction(self.act_branches)
         m_file.addSeparator()
-        m_project = m_file.addMenu("Pro&ject")
-        m_project.addAction(self.act_new_project)
-        m_project.addAction(self.act_open_project)
-        m_project.addAction(self.act_save_project)
-        m_project.addAction(self.act_close_project)
-        m_file.addSeparator()
+        m_share = m_file.addMenu("S&hare")
+        m_share.addAction(self.act_overleaf_send)
+        m_share.addAction(self.act_overleaf_get)
+        m_share.addAction(self.act_overleaf_zip)
+        m_share.addSeparator()
+        m_share.addAction(self.act_configure_remotes)
+        m_share.addAction(self.act_pull)
         m_import = m_file.addMenu("&Import")
         m_import.addAction(self.act_import_tex)
         m_import.addAction(self.act_import_docx)
         m_import.addAction(self.act_import_pdf)
         m_import.addAction(self.act_import_md)
         m_export = m_file.addMenu("&Export")
+        m_export.addAction(self.act_export_pdf)
+        m_export.addAction(self.act_export_docx)
         m_export.addAction(self.act_export_tex)
         m_export.addAction(self.act_export_latex_zip)
-        m_export.addAction(self.act_export_docx)
-        m_export.addAction(self.act_export_pdf)
+        m_project = m_file.addMenu("Pro&ject")
+        m_project.addAction(self.act_new_project)
+        m_project.addAction(self.act_open_project)
+        m_project.addAction(self.act_save_project)
+        m_project.addAction(self.act_close_project)
         m_file.addSeparator()
         m_file.addAction(self.act_print_preview)
         m_file.addAction(self.act_print)
         m_file.addSeparator()
-        m_file.addAction(self.act_show_in_explorer)
         m_file.addAction(self.act_doc_props)
-        m_file.addAction(self.act_manage_styles)
+        m_file.addAction(self.act_show_in_explorer)
         m_file.addSeparator()
         m_file.addAction(self.act_quit)
 
@@ -1743,28 +1781,55 @@ class MainWindow(QMainWindow):
         m_edit.addSeparator()
         m_edit.addAction(self.act_clear_fmt)
 
-        m_format = mb.addMenu("F&ormat")
-        m_format.addAction(self.act_bold); m_format.addAction(self.act_italic)
-        m_format.addAction(self.act_underline); m_format.addAction(self.act_strike)
-        m_format.addAction(self.act_code); m_format.addAction(self.act_smallcaps)
-        m_format.addAction(self.act_sub); m_format.addAction(self.act_super)
-        m_format.addSeparator()
-        m_align = m_format.addMenu("Alignment")
-        m_align.addAction(self.act_align_left); m_align.addAction(self.act_align_center)
-        m_align.addAction(self.act_align_right); m_align.addAction(self.act_align_justify)
-        m_format.addSeparator()
-        m_heading = m_format.addMenu("Paragraph style")
-        m_heading.addAction(self.act_h_body)
-        for a in self.heading_actions:
-            m_heading.addAction(a)
+        m_view = mb.addMenu("&View")
+        m_view.addAction(self.act_view_formatted)
+        m_view.addAction(self.act_view_latex)
+        m_view.addAction(self.act_view_pdf)
+        m_view.addAction(self.act_view_console)
+        m_view.addSeparator()
+        self.act_visual_only = QAction(
+            "&Visual only (like Word)", self, checkable=True,
+            statusTip="Hide the PDF and stop compiling "
+                      "while you write",
+            triggered=lambda: self.apply_layout_mode("visual"))
+        self.act_pdf_window = QAction(
+            "PDF in its own &window", self, checkable=True,
+            statusTip="Show the PDF in a separate window, "
+                      "e.g. on a second screen",
+            triggered=lambda: self.apply_layout_mode("window"))
+        # One choice, not three switches: where the PDF lives.
+        self._layout_group = QActionGroup(self)
+        for a in (self.act_visual_only, self.act_side_by_side,
+                  self.act_pdf_window):
+            self._layout_group.addAction(a)
+        m_view.addAction(self.act_visual_only)
+        m_view.addAction(self.act_side_by_side)
+        m_view.addAction(self.act_pdf_window)
+        m_view.addAction(self._project_dock.toggleViewAction())
+        m_view.addSeparator()
+        m_view.addAction(self.act_show_marks)
+        m_view.addAction(self.act_fit_page_width)
+        m_theme = m_view.addMenu("&Theme")
+        for name in themes.THEME_NAMES:
+            m_theme.addAction(self._theme_actions[name])
 
         m_insert = mb.addMenu("&Insert")
         self._m_insert = m_insert
-        m_insert.addAction(self.act_math_inline); m_insert.addAction(self.act_math_block)
-        m_insert.addAction(self.act_symbol); m_insert.addAction(self.act_equation_builder)
-        m_insert.addAction(self.act_chemistry)
-        m_insert.addAction(self.act_chemfig)
-        m_env = m_insert.addMenu("Math &environment")
+        m_insert.addAction(self.act_pagebreak)
+        m_insert.addAction(self.act_hrule)
+        m_insert.addAction(self.act_multicol)
+        m_insert.addSeparator()
+        m_insert.addAction(self.act_table)
+        m_insert.addAction(self.act_figure)
+        m_insert.addAction(self.act_drawing)
+        m_insert.addAction(self.act_flowchart)
+        m_insert.addSeparator()
+        m_math = m_insert.addMenu("&Equation")
+        m_math.addAction(self.act_math_inline)
+        m_math.addAction(self.act_math_block)
+        m_math.addAction(self.act_equation_builder)
+        m_math.addAction(self.act_symbol)
+        m_env = m_math.addMenu("Math &environment")
         _ENVS = [
             ("equation",  r"\begin{equation}" "\n" r"\square" "\n" r"\end{equation}"),
             ("equation*", r"\begin{equation*}" "\n" r"\square" "\n" r"\end{equation*}"),
@@ -1791,76 +1856,60 @@ class MainWindow(QMainWindow):
             m_env.addAction(
                 env_name,
                 lambda ltx=env_latex: self._editor.insert_math_block_with(ltx))
+        m_chem = m_insert.addMenu("C&hemistry")
+        m_chem.addAction(self.act_chemistry)
+        m_chem.addAction(self.act_chemfig)
         m_insert.addSeparator()
-        m_insert.addAction(self.act_abstract); m_insert.addAction(self.act_keywords)
+        m_insert.addAction(self.act_link)
+        m_insert.addAction(self.act_footnote)
+        m_insert.addAction(self.act_citation)
+        m_insert.addAction(self.act_crossref)
+        m_insert.addAction(self.act_comment)
         m_insert.addSeparator()
-        m_insert.addAction(self.act_bullet); m_insert.addAction(self.act_numbered)
+        m_insert.addAction(self.act_abstract)
+        m_insert.addAction(self.act_keywords)
         m_insert.addSeparator()
-        m_insert.addAction(self.act_link); m_insert.addAction(self.act_footnote)
-        m_insert.addAction(self.act_citation); m_insert.addAction(self.act_crossref)
-        m_insert.addAction(self.act_check_citations)
-        m_insert.addSeparator()
-        m_insert.addAction(self.act_figure); m_insert.addAction(self.act_table)
-        m_insert.addAction(self.act_drawing)
-        m_insert.addAction(self.act_flowchart)
-        m_insert.addSeparator()
-        m_insert.addAction(self.act_pagebreak); m_insert.addAction(self.act_hrule)
-        m_insert.addAction(self.act_multicol)
-        m_insert.addAction(self.act_code_block)
-        m_insert.addAction(self.act_raw)
-        m_insert.addSeparator()
-        m_insert.addAction(self.act_compile_start)
-        m_insert.addAction(self.act_compile_end)
-        m_insert.addAction(self.act_not_compile_start)
-        m_insert.addAction(self.act_not_compile_end)
+        m_adv = m_insert.addMenu("&LaTeX")
+        m_adv.addAction(self.act_code_block)
+        m_adv.addAction(self.act_raw)
+        m_adv.addSeparator()
+        m_adv.addAction(self.act_compile_start)
+        m_adv.addAction(self.act_compile_end)
+        m_adv.addAction(self.act_not_compile_start)
+        m_adv.addAction(self.act_not_compile_end)
 
-        m_view = mb.addMenu("&View")
-        m_view.addAction(self.act_view_formatted)
-        m_view.addAction(self.act_view_latex)
-        m_view.addAction(self.act_view_pdf)
-        m_view.addAction(self.act_view_console)
-        m_view.addSeparator()
-        m_view.addAction(self.act_show_marks)
-        m_view.addSeparator()
-        self.act_visual_only = QAction(
-            "&Visual only (like Word)", self, checkable=True,
-            statusTip="Hide the PDF and stop compiling "
-                      "while you write",
-            triggered=lambda: self.apply_layout_mode("visual"))
-        self.act_pdf_window = QAction(
-            "PDF in its own &window", self, checkable=True,
-            statusTip="Show the PDF in a separate window, "
-                      "e.g. on a second screen",
-            triggered=lambda: self.apply_layout_mode("window"))
-        # One choice, not three switches: where the PDF lives.
-        self._layout_group = QActionGroup(self)
-        for a in (self.act_visual_only, self.act_side_by_side,
-                  self.act_pdf_window):
-            self._layout_group.addAction(a)
-        m_view.addAction(self.act_visual_only)
-        m_view.addAction(self.act_side_by_side)
-        m_view.addAction(self.act_pdf_window)
-        m_view.addAction(self._project_dock.toggleViewAction())
-        m_view.addSeparator()
-        m_view.addAction(self.act_fit_page_width)
-        m_view.addSeparator()
-        m_view.addAction(self.act_spell_check)
-        m_theme = m_view.addMenu("&Theme")
-        for name in themes.THEME_NAMES:
-            m_theme.addAction(self._theme_actions[name])
+        m_format = mb.addMenu("F&ormat")
+        m_format.addAction(self.act_bold); m_format.addAction(self.act_italic)
+        m_format.addAction(self.act_underline); m_format.addAction(self.act_strike)
+        m_format.addAction(self.act_code); m_format.addAction(self.act_smallcaps)
+        m_format.addAction(self.act_sub); m_format.addAction(self.act_super)
+        m_format.addSeparator()
+        m_format.addAction(self.act_bullet)
+        m_format.addAction(self.act_numbered)
+        m_align = m_format.addMenu("&Alignment")
+        m_align.addAction(self.act_align_left); m_align.addAction(self.act_align_center)
+        m_align.addAction(self.act_align_right); m_align.addAction(self.act_align_justify)
+        m_heading = m_format.addMenu("&Style")
+        m_heading.addAction(self.act_h_body)
+        for a in self.heading_actions:
+            m_heading.addAction(a)
+        m_format.addSeparator()
+        m_format.addAction(self.act_manage_styles)
 
-        m_review = mb.addMenu("&Review")
-        m_review.addAction(self.act_highlight)
-        m_review.addAction(self.act_remove_highlight)
-        m_review.addSeparator()
+        m_tools = mb.addMenu("&Tools")
+        m_tools.addAction(self.act_spell_check)
+        m_tools.addAction(self.act_check_citations)
+        m_review = m_tools.addMenu("&Comments && Highlights")
         m_review.addAction(self.act_comment)
         m_review.addAction(self.act_accept_comment)
         m_review.addAction(self.act_reject_comment)
-        m_review.addSeparator()
         m_review.addAction(self.act_prev_comment)
         m_review.addAction(self.act_next_comment)
-
-        m_compiler = mb.addMenu("C&ompiler")
+        m_review.addSeparator()
+        m_review.addAction(self.act_highlight)
+        m_review.addAction(self.act_remove_highlight)
+        m_tools.addSeparator()
+        m_compiler = m_tools.addMenu("&Compiler")
         self._compiler_group = QActionGroup(self)
         self._act_compiler_latex = QAction(
             "&LaTeX (tectonic)", self, checkable=True, checked=True,
@@ -1885,42 +1934,14 @@ class MainWindow(QMainWindow):
             "&Open the package cache folder", self,
             triggered=self._open_tectonic_cache))
         m_compiler.aboutToShow.connect(self._update_bundle_action_label)
-
-        m_git = mb.addMenu("&Git")
-        m_git.addAction(self.act_commit_now)
-        m_git.addAction(self.act_pull)
-        m_git.addSeparator()
-        m_git.addAction(self.act_history)
-        m_git.addAction(self.act_branches)
-        m_git.addSeparator()
-        m_git.addAction(self.act_configure_remotes)
-
-        # Examples menu — each entry opens that example in a new window
-        # so the user's current document isn't replaced.
-        m_examples = mb.addMenu("E&xamples")
-        for label, factory in examples.EXAMPLES:
-            act = m_examples.addAction(label)
-            act.triggered.connect(
-                lambda checked=False, f=factory: self._open_example(f))
-        m_examples.addSeparator()
-        m_journal = m_examples.addMenu("&Journal / publisher templates")
-        for label, factory in examples.JOURNAL_EXAMPLES:
-            act = m_journal.addAction(label)
-            act.triggered.connect(
-                lambda checked=False, f=factory: self._open_example(f))
-        m_examples.addSeparator()
-        self._custom_tpl_menu = m_examples.addMenu("&My templates")
-        self._refresh_custom_templates_menu()
-        act_save_tpl = m_examples.addAction("Save current as &template…")
-        act_save_tpl.triggered.connect(self._save_as_template)
+        m_tools.addSeparator()
+        m_tools.addAction(QAction("Connect to &Claude\u2026", self,
+                                  triggered=self._show_mcp_dialog))
 
         # Window menu — populated dynamically with one entry per open
         # MainWindow so the user can flip between documents without
         # alt-tabbing. Refreshed on aboutToShow and whenever a window
         # opens / closes / changes title.
-        m_ai = mb.addMenu("&AI")
-        m_ai.addAction(QAction("&Connect to Claude\u2026", self,
-                               triggered=self._show_mcp_dialog))
         self._window_menu = mb.addMenu("&Window")
         self._window_menu.aboutToShow.connect(self._refresh_window_menu)
         self._refresh_window_menu()
@@ -1929,12 +1950,133 @@ class MainWindow(QMainWindow):
         self.act_welcome = QAction("&Welcome page\u2026", self,
                                    triggered=self.show_welcome)
         m_help.addAction(self.act_welcome)
+        m_help.addAction(self.act_tour)
         m_help.addAction(self.act_help_guide)
         m_help.addAction(self.act_shortcuts)
         m_help.addSeparator()
         MainWindow.updater().add_menu_actions(m_help)
         m_help.addSeparator()
         m_help.addAction(self.act_about)
+
+    def _gallery_button(self, category: str, menu=None) -> QToolButton:
+        """A drop-down of one category's examples, each with a preview of
+        its first page, like Word's template picker."""
+        from .ribbon import big_label
+        btn = QToolButton(self)
+        btn.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+        btn.setPopupMode(QToolButton.InstantPopup)
+        btn.setIconSize(QSize(26, 33))
+        btn.setAutoRaise(True)
+        # "&" would be read as a shortcut marker and vanish.
+        btn.setText(big_label(category).replace("&", "&&"))
+        items = [(label, f, d) for c, label, f, d in examples.GALLERY
+                 if c == category]
+        btn.setToolTip(f"{category}: {len(items)} examples" if items
+                       else category)
+        if menu is None:
+            menu = QMenu(btn)
+            menu.setToolTipsVisible(True)
+            menu.setStyleSheet("QMenu { icon-size: 26px; }")
+            for label, factory, description in items:
+                act = menu.addAction(label)
+                act.setToolTip(description)
+                act.setData(factory)
+                act.triggered.connect(
+                    lambda checked=False, f=factory: self._open_example(f))
+
+            def previews(menu=menu):
+                # Building every example up front would slow start-up.
+                for act in menu.actions():
+                    if act.icon().isNull() and act.data() is not None:
+                        act.setIcon(icons.class_thumbnail(
+                            act.data()().meta.documentclass))
+            menu.aboutToShow.connect(previews)
+        btn.setMenu(menu)
+        first = items[0][1]().meta.documentclass if items else "article"
+        btn.setIcon(icons.class_thumbnail(first))
+        return btn
+
+    def _fill_template_menu(self, menu) -> None:
+        """Every example, by category, then the user's own templates."""
+        menu.setToolTipsVisible(True)
+        for category in examples.GALLERY_CATEGORIES:
+            sub = menu.addMenu(category.replace("&", "&&"))
+            sub.setToolTipsVisible(True)
+            for cat, label, factory, description in examples.GALLERY:
+                if cat == category:
+                    act = sub.addAction(label)
+                    act.setToolTip(description)
+                    act.triggered.connect(
+                        lambda checked=False, f=factory: self._open_example(f))
+        menu.addSeparator()
+        self._custom_tpl_menu = menu.addMenu("&My templates")
+        self._refresh_custom_templates_menu()
+
+    def _overleaf_link_key(self) -> str:
+        where = self._current_path or self._project_path
+        return f"overleaf/{where}" if where else "overleaf/untitled"
+
+    def _ask_overleaf(self, action: str):
+        from .overleaf_dialog import OverleafDialog
+        dlg = OverleafDialog(
+            action, self._settings.value(self._overleaf_link_key(), ""),
+            MainWindow._overleaf_token, self)
+        if dlg.exec() != QDialog.Accepted:
+            return None
+        self._settings.setValue(self._overleaf_link_key(), dlg.link())
+        MainWindow._overleaf_token = dlg.token()
+        return dlg.link(), dlg.token()
+
+    def _overleaf_cache(self, link: str) -> Path:
+        import hashlib
+        key = hashlib.sha1(link.encode()).hexdigest()[:12]
+        return Path(QSettings("kherveDOC", "kherveDOC").fileName()).parent \
+            / "overleaf" / key
+
+    def _overleaf_send(self) -> None:
+        from . import overleaf
+        ask = self._ask_overleaf("Send to")
+        if ask is None:
+            return
+        link, token = ask
+        doc = self._editor.get_document()
+        bib = self._refresh_kherveref_bib(doc)
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            msg = overleaf.send(
+                doc, self._resolved_source_dir() or Path.cwd(), link, token,
+                self._overleaf_cache(link),
+                extra_files={"kherveref.bib": bib} if bib else None)
+        except overleaf.OverleafError as exc:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "Send to Overleaf", str(exc))
+            return
+        QApplication.restoreOverrideCursor()
+        self._status.showMessage(msg, 6000)
+
+    def _overleaf_get(self) -> None:
+        """Collaborators' version opens in a new window: nothing here is
+        replaced, and either can be saved."""
+        from . import overleaf
+        ask = self._ask_overleaf("Get from")
+        if ask is None:
+            return
+        link, token = ask
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            doc, folder = overleaf.receive(link, token,
+                                           self._overleaf_cache(link))
+        except overleaf.OverleafError as exc:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "Get from Overleaf", str(exc))
+            return
+        QApplication.restoreOverrideCursor()
+        win = self._new_window()
+        win._editor.set_document_dir(folder)
+        win._editor.set_document(doc)
+        win._settings.setValue(win._overleaf_link_key(), link)
+        win._status.showMessage(
+            "The Overleaf version: save it to keep it.", 8000)
 
     def _open_example(self, factory) -> None:
         """Spawn a new window and load the example into it. User-default
@@ -2566,6 +2708,13 @@ class MainWindow(QMainWindow):
                                            self.act_cols_1, self.act_cols_2,
                                            self.act_cols_3])
         lay.add_group("Document type", large=[self._class_button])
+        ex = rb.add_tab("Examples")
+        ex.add_group("Start", large=[self.act_new, self.act_tour])
+        ex.add_group("Examples & templates", large=[
+            self._gallery_button(c) for c in examples.GALLERY_CATEGORIES
+            if c != "Start"])
+        mine = self._gallery_button("My templates", self._custom_tpl_menu)
+        ex.add_group("Your own", large=[mine, self.act_save_as_template])
         ref = rb.add_tab("References")
         ref.add_group("Citations", large=[self.act_citation])
         ref.add_group("Footnotes", large=[self.act_footnote])
@@ -6048,7 +6197,7 @@ class MainWindow(QMainWindow):
         from .welcome import WelcomeDialog
         dlg = WelcomeDialog(
             recent=list(self._recent),
-            examples=list(examples.EXAMPLES),
+            examples=[(label, f) for _c, label, f, _d in examples.GALLERY],
             layout=self._settings.value("layout_mode", "side"),
             show_at_start=self._settings.value("show_welcome", True,
                                                type=bool),
@@ -6066,15 +6215,21 @@ class MainWindow(QMainWindow):
             self._new_project()
         elif kind == "recent":
             self._open_path(dlg.choice[1])
+        elif kind == "tour":
+            self._open_example_here(examples.welcome)
         elif kind == "example":
-            _label, factory = examples.EXAMPLES[dlg.choice[1]]
-            doc = factory()
-            doc.meta = _apply_user_defaults(doc.meta)
-            self._current_path = None
-            self._editor.set_document(doc)
-            self._update_title()
-            if self._auto_compile:
-                self._kick_compile()
+            factory = examples.GALLERY[dlg.choice[1]][2]
+            self._open_example_here(factory)
+
+    def _open_example_here(self, factory) -> None:
+        """From the welcome page the example takes the empty page's place."""
+        doc = factory()
+        doc.meta = _apply_user_defaults(doc.meta)
+        self._current_path = None
+        self._editor.set_document(doc)
+        self._update_title()
+        if self._auto_compile:
+            self._kick_compile()
 
     # ----- MCP (Claude) connection -----
 
@@ -6382,18 +6537,9 @@ def _apply_user_defaults(meta: DocMeta) -> DocMeta:
     return meta
 
 
-def _starter_document() -> Document:
-    """First-launch document — a multi-page welcome tour so users see what
-    KherveTeX can do before they have to type anything."""
-    doc = examples.welcome()
-    doc.meta = _apply_user_defaults(doc.meta)
-    return doc
-
-
 def _blank_document() -> Document:
-    """File > New — an empty page. The welcome tour is a first-launch
-    greeting, not something to re-read every time you start a document;
-    it is still reachable from Help > Examples."""
+    """An empty page: what the app opens on and File > New gives. The
+    guided tour is one click away (Help, the welcome page, Examples)."""
     doc = examples.blank()
     doc.meta = _apply_user_defaults(doc.meta)
     return doc

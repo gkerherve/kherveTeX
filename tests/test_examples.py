@@ -47,8 +47,13 @@ def test_three_column_example_has_column_count_3():
     assert examples.three_column_document().meta.column_count == 3
 
 
-def test_blank_example_is_minimal():
-    """Blank doc must still have a title and at least one paragraph so
-    the user has somewhere to click first."""
+def test_blank_example_is_an_empty_page():
+    """The app opens on it, so like Word it is just somewhere to type:
+    one empty paragraph, no title, author or placeholder to delete."""
+    from khervedoc.model import Paragraph
     doc = examples.blank()
-    assert len(doc.children) >= 2
+    assert len(doc.children) == 1
+    assert isinstance(doc.children[0], Paragraph)
+    assert doc.children[0].children == []
+    assert "\\maketitle" not in serialize_document(doc)
+
