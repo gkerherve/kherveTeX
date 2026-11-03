@@ -1482,7 +1482,10 @@ class DocumentEditor(QWidget):
 
             text_list = block.textList()
             if text_list is not None:
-                tl_id = id(text_list)
+                # Qt's own index, not id(): the Python wrapper is new each
+                # time and freed at once, so id() of two different lists
+                # could match and merge them.
+                tl_id = text_list.objectIndex()
                 if tl_id not in seen_lists:
                     ordered = text_list.format().style() in (
                         QTextListFormat.ListDecimal, QTextListFormat.ListLowerAlpha,
@@ -3499,8 +3502,13 @@ class DocumentEditor(QWidget):
             above += look["date"]["gap"]
         if starts_sheet or first_block or above is None:
             # Top of a sheet: measured down from the top of the text block.
+            # Only the title page and a chapter's opening page set their
+            # first line low; any other heading starting a page sits at
+            # the top of it.
+            opens_low = key in ("title", "author") or (
+                key == "h1" and class_supports_chapter(self._meta.documentclass))
             drop = (spec.get("top", 0) - top_px / pt_px
-                    if key in ("title", "h1", "author") and spec.get("top")
+                    if opens_low and spec.get("top")
                     else BASELINE_AT * lead)
             if first_block:
                 # Qt ignores the first block's top margin. One line can take
@@ -3882,6 +3890,17 @@ class DocumentEditor(QWidget):
                     bfmt.setLineHeight(spacing * 100, 1)  # ProportionalHeight
                 else:
                     bfmt.setLineHeight(0, 0)              # SingleHeight
+                text_list = block.textList()
+                if text_list is not None and state in (_STATE_PARAGRAPH, -1):
+                    # LaTeX's list spacing: \\topsep around the list and
+                    # \\itemsep between items (10pt and 5pt at 12pt).
+                    index = text_list.itemNumber(block)
+                    size = body["size"]
+                    bfmt.setTopMargin((0.83 if index == 0 else 0.42)
+                                      * size * pt_px)
+                    bfmt.setBottomMargin(
+                        0.83 * size * pt_px
+                        if index == text_list.count() - 1 else 0)
                 if state in (_STATE_PARAGRAPH, -1) and block.textList() is None:
                     # LaTeX never indents the first paragraph after a
                     # heading, title or display block.

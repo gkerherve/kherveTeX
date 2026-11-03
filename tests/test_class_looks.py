@@ -368,3 +368,56 @@ def test_first_title_drops_to_the_measured_height(qapp):
 ])
 def test_number_label(prefix, dotted, want):
     assert number_label(prefix, dotted) == want
+
+
+def test_a_section_starting_a_page_sits_at_the_top_of_it(qapp):
+    # The welcome tour: the PDF starts page 2 with a section, and the visual
+    # tab used to push that section down to where report puts a chapter.
+    ed = _editor("article")
+    ed.show()
+    QApplication.processEvents()
+    block = _block(ed, "Part")
+    fmt = block.blockFormat()
+    from PySide6.QtGui import QTextFormat
+    fmt.setPageBreakPolicy(QTextFormat.PageBreak_AlwaysBefore)
+    look = look_for("article", 12)
+    bf = block.blockFormat()
+    ed._edit.document()
+    from khervedoc.editor import BASELINE_AT as B
+    margin = ed._lay_out_styled_block(
+        bf, "h2", look, 96 / 72, 0, True, 0, block.userState(), False, "",
+        14.4, False, 1, False)
+    assert bf.topMargin() < 20
+    ed.close()
+
+
+def test_separate_lists_stay_separate(qapp):
+    from khervedoc.model import List as ListNode, ListItem
+    ed = DocumentEditor()
+    first = ListNode(ordered=True, items=[ListItem(children=[Text(f"a{i}")])
+                                          for i in range(5)])
+    second = ListNode(ordered=False, items=[ListItem(children=[Text(f"b{i}")])
+                                            for i in range(3)])
+    ed.set_document(Document(meta=DocMeta(), children=[
+        first, Section(level=1, children=[Text("Between")]),
+        Paragraph(children=[Text("Words.")]), second]))
+    for _ in range(30):
+        got = [b for b in ed.get_document().children
+               if isinstance(b, ListNode)]
+        assert [(b.ordered, len(b.items)) for b in got] == [(True, 5),
+                                                            (False, 3)]
+    ed.close()
+
+
+def test_list_items_are_spaced_as_latex_spaces_them(qapp):
+    from khervedoc.model import List as ListNode, ListItem
+    ed = DocumentEditor()
+    ed.set_document(Document(meta=DocMeta(), children=[
+        Paragraph(children=[Text("Before.")]),
+        ListNode(ordered=True, items=[ListItem(children=[Text(f"i{n}")])
+                                      for n in range(3)]),
+        Paragraph(children=[Text("After.")])]))
+    first, middle, last = (_block(ed, f"i{n}").blockFormat() for n in range(3))
+    assert first.topMargin() > middle.topMargin() > 0     # \topsep, \itemsep
+    assert last.bottomMargin() > 0 and middle.bottomMargin() == 0
+    ed.close()
