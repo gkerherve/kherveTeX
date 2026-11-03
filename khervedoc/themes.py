@@ -34,6 +34,11 @@ THEMES: dict[str, dict[str, str]] = {
         "tab_active":   "#ffffff",
         "tab_inactive": "#e4e4e4",
         "tab_hover":    "#ececec",
+        "light":        "#ffffff",
+        "midlight":     "#e6e6e6",
+        "mid":          "#a0a0a0",
+        "shade":        "#787878",
+        "shadow":       "#505050",
         "desk_bg":      "#d0d4d8",
         "page_bg":      "#ffffff",
         "page_border":  "#b8bcc1",
@@ -57,6 +62,11 @@ THEMES: dict[str, dict[str, str]] = {
         "tab_active":   "#2d2d2d",
         "tab_inactive": "#1e1e1e",
         "tab_hover":    "#383838",
+        "light":        "#505050",
+        "midlight":     "#3c3c3c",
+        "mid":          "#808080",
+        "shade":        "#1a1a1a",
+        "shadow":       "#000000",
         "desk_bg":      "#1a1a1a",
         "page_bg":      "#2d2d2d",
         "page_border":  "#555555",
@@ -108,6 +118,12 @@ def apply_theme(app: QApplication, theme_name: str) -> dict[str, str]:
     pal.setColor(QPalette.Highlight,       QColor(t["highlight"]))
     pal.setColor(QPalette.HighlightedText, QColor(t["highlight_text"]))
     pal.setColor(QPalette.PlaceholderText, QColor(t["placeholder"]))
+    # Left unset, these come from the system: a dark Windows theme made
+    # every palette(midlight) fill near-black under light-theme text.
+    for role, key in ((QPalette.Light, "light"), (QPalette.Midlight, "midlight"),
+                      (QPalette.Mid, "mid"), (QPalette.Dark, "shade"),
+                      (QPalette.Shadow, "shadow")):
+        pal.setColor(role, QColor(t[key]))
 
     disabled_color = QColor(t["disabled"])
     pal.setColor(QPalette.Disabled, QPalette.WindowText, disabled_color)

@@ -18,6 +18,10 @@ _SMALL = QSize(18, 18)
 # Word's grid: three small rows are as tall as one big button.
 _ROW_H = 24
 _BODY_H = 3 * _ROW_H + 2 * 2
+# Word's light blue over white, a deep blue over the dark theme; the text on
+# it stays the theme's own.
+HOVER_BLUE = "rgba(43, 120, 215, 46)"
+PRESSED_BLUE = "rgba(43, 120, 215, 80)"
 
 
 def _short(action: QAction) -> str:
@@ -156,22 +160,27 @@ class Ribbon(QTabWidget):
         # Word: flat text tabs, no boxes; the open tab is bold with a short
         # coloured bar under it, the groups sit on a plain band, and buttons
         # show only a soft fill on hover or when on. Hairlines are translucent
-        # grey so they stay faint on every light and dark theme.
+        # grey so they stay faint on every light and dark theme. Hover is a
+        # translucent Word blue, never a palette role: on Windows those roles
+        # come from the system theme and were dark enough to hide the text.
         self.setStyleSheet("""
             QTabWidget::pane { border: none;
-                border-top: 1px solid palette(midlight); top: -1px; }
+                border-top: 1px solid rgba(128, 128, 128, 90); top: -1px; }
             QTabBar { qproperty-drawBase: 0; }
             QTabBar::tab { background: transparent; border: none;
+                color: palette(window-text);
                 padding: 7px 11px 5px 11px; margin: 0 1px;
                 font-size: 13px; }
-            QTabBar::tab:hover { background: palette(midlight);
-                border-radius: 4px; }
+            QTabBar::tab:hover { background: """ + HOVER_BLUE + """;
+                color: palette(window-text); border-radius: 4px; }
             QTabBar::tab:selected { font-weight: 600;
                 border-bottom: 3px solid #2b579a;
                 padding-bottom: 2px; }
             QToolButton { font-size: 11px; padding: 1px 3px;
                 border: 1px solid transparent; border-radius: 4px; }
+            QToolButton:hover { background: """ + HOVER_BLUE + """; }
             QToolButton:checked, QToolButton:pressed {
+                background: """ + PRESSED_BLUE + """;
                 border-color: transparent; }
             QToolButton::menu-indicator { subcontrol-origin: padding;
                 subcontrol-position: bottom center; bottom: 1px; }

@@ -82,3 +82,23 @@ def test_theme_switch_redraws_ribbon_icons():
     w._refresh_icons()
     assert w.act_cut.icon().cacheKey() != before[0]
     assert w._style_buttons[0].icon().cacheKey() != before[1]
+
+
+def test_tab_hover_is_word_blue_not_a_system_colour():
+    from khervedoc.ribbon import HOVER_BLUE, Ribbon
+    QApplication.instance() or QApplication([])
+    qss = Ribbon().styleSheet()
+    hover = qss.split("QTabBar::tab:hover")[1].split("}")[0]
+    assert HOVER_BLUE in hover and "midlight" not in hover
+
+
+@pytest.mark.parametrize("name", ["Light", "Dark"])
+def test_theme_sets_every_shade_so_windows_cannot_darken_them(name):
+    from PySide6.QtGui import QPalette
+    from khervedoc import themes
+    app = QApplication.instance() or QApplication([])
+    t = themes.apply_theme(app, name)
+    pal = app.palette()
+    assert pal.color(QPalette.Midlight).name() == t["midlight"]
+    text = pal.color(QPalette.WindowText).lightness()
+    assert abs(pal.color(QPalette.Midlight).lightness() - text) > 100
