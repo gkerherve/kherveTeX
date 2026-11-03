@@ -495,7 +495,8 @@ def _serialize_table(node: Table, float_h: bool = True) -> str:
         f"    {body}\n"
         f"{rule(bottom_rule)}"
         "  \\end{tabular}\n"
-        f"  \\caption{{{cap}}}\n"
+        # No caption, no "Table 1:" printed under a table that has none.
+        f"{f'  \\caption{{{cap}}}' + chr(10) if cap else ''}"
         f"  {lab}"
         "\\end{table}\n"
     )
@@ -1200,6 +1201,9 @@ def serialize_document(doc: Document) -> str:
         preamble_meta = ""
 
     body, natbib = _with_kherveref_bibliography(doc, body)
+    if not body.strip():
+        # An empty page, not "No pages of output": a new document is empty.
+        body = "\\null\n"
     if natbib:
         packages = _with_natbib(packages, m)
     packages = _with_url_breaking(packages, packages, preamble_meta, body)

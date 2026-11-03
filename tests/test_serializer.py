@@ -598,3 +598,22 @@ def test_plain_table_keeps_hline_and_no_booktabs():
     from khervedoc.serializer import serialize_document
     out = serialize_document(Document(children=[Table(rows=[["A"], ["1"]])]))
     assert "\\hline" in out and "booktabs" not in out
+
+
+def test_empty_document_still_gives_a_page():
+    from khervedoc.model import Document, DocMeta, Paragraph
+    # As File > New makes it: no title, one empty paragraph.
+    tex = serialize_document(Document(meta=DocMeta(title=""),
+                                      children=[Paragraph(children=[])]))
+    body = tex.split("\\begin{document}")[1].split("\\end{document}")[0]
+    assert body.strip() == "\\null"
+
+
+def test_table_without_caption_prints_no_table_number():
+    from khervedoc.model import Document, DocMeta, Table
+    def body(caption):
+        tex = serialize_document(Document(meta=DocMeta(title=""), children=[
+            Table(rows=[["a", "b"], ["1", "2"]], caption=caption)]))
+        return tex.split("\\begin{document}")[1]
+    assert "\\caption" not in body("")
+    assert "\\caption{Data}" in body("Data")
