@@ -113,3 +113,16 @@ def test_overleaf_is_on_the_review_tab_not_only_in_a_menu():
     shown = {b.defaultAction() for b in review.findChildren(QToolButton)}
     for act in (w.act_overleaf_send, w.act_overleaf_get, w.act_overleaf_zip):
         assert act in shown and not act.icon().isNull()
+
+
+def test_guided_tour_walks_through_every_ribbon_tab():
+    from khervedoc import examples
+    from khervedoc.serializer import serialize_document
+    w = _window()
+    rb = w._ribbon
+    tex = serialize_document(examples.welcome())
+    contextual = {t for _k, t in getattr(rb, "_contextual", [])}
+    for i in range(rb.count()):
+        if rb.widget(i) not in contextual:
+            assert f"{rb.tabText(i)}:" in tex or f"{rb.tabText(i)} tab" in tex
+    assert "Visual tab" not in tex and "Examples menu" not in tex

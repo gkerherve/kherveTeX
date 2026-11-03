@@ -35,57 +35,95 @@ def welcome() -> Document:
             _h("What KherveTeX is"),
             _p(
                 "KherveTeX is a word processor that writes real LaTeX. You "
-                "type and format here, in the ", ("Visual", ["bold"]),
-                " tab, the way you would in Word. Every pause, the "
-                "document is compiled to PDF so you can see exactly what "
-                "will be printed. Behind the scenes it is stored as a "
-                "structured model (headings, paragraphs, lists, tables, "
-                "equations) that is turned into clean, readable ",
-                (".tex", ["code"]), " source on demand.",
+                "type and format on this page the way you would in Word, "
+                "with the ", ("ribbon", ["bold"]),
+                " across the top of the window. Every pause, the document "
+                "is compiled to PDF so you can see exactly what will be "
+                "printed. Behind the scenes it is stored as a structured "
+                "model (headings, paragraphs, lists, tables, equations) "
+                "that is turned into clean, readable ", (".tex", ["code"]),
+                " source on demand.",
             ),
             _p(
                 "This page is itself a KherveTeX document. Click anywhere "
                 "in it and type, change a heading, or break something on "
                 "purpose: nothing you do here is saved unless you save it, "
-                "and ", ("File > New", ["bold"]),
-                " always gives you a fresh page.",
+                "and the New button at the top left always gives you a "
+                "fresh page.",
+            ),
+
+            _h("The ribbon"),
+            _p(
+                "As in Word, the commands live on one ribbon, grouped by "
+                "task. Click a tab name to bring its buttons forward:",
+            ),
+            _items(
+                "Home: the clipboard, fonts, bold and italic, lists, "
+                "alignment and the Styles gallery.",
+                "Insert: page breaks, tables, figures, drawings, links, "
+                "equations, theorems and chemistry.",
+                "Layout: margins, page size, one to three columns and the "
+                "document type (article, thesis, journal class and so on).",
+                "Examples: ready-made documents of every type, this tour, "
+                "and your own templates.",
+                "References: citations, footnotes, captions and "
+                "cross-references.",
+                "Review: spelling, comments, and sharing with Overleaf.",
+                "Compile: compile now, auto-compile, and PDF output.",
+                "History: snapshots and the version history.",
+                "View: the page, the LaTeX code, the console and the PDF.",
+                "Help: the user guide, keyboard shortcuts and updates.",
+            ),
+            _p(
+                "Click in a table, a picture or an equation and extra tabs "
+                "(Table Design, Table Layout, Picture, Theorem, Equation) "
+                "appear beside the others, as in Word. The small buttons "
+                "on the left of the tab names save, open, print and undo; "
+                "Compile PDF sits on the right. The menu bar above holds "
+                "everything else (File, Edit, View, Insert, Format, Tools, "
+                "Window, Help), and the switch at the bottom right of the "
+                "window flips between the light and dark themes.",
             ),
 
             _h("Quick start"),
             _p("The shortest path from an empty page to a finished PDF:"),
             _ord_items(
-                "Press Ctrl+N (Cmd+N on a Mac) for a blank document, or "
-                "pick a ready-made one from the Examples menu.",
-                "Type your title and text. Use the Paragraph style box on "
-                "the ribbon for headings, an abstract or keywords.",
-                "Insert what you need from the Insert menu: a table, an "
-                "equation, a footnote, a citation, a cross-reference.",
-                "Check the PDF in the side panel (Ctrl+4) or on its own "
-                "tab (Ctrl+3). Compile on demand with Ctrl+Shift+C.",
+                "Press Ctrl+N (Cmd+N on a Mac) for a blank page, or pick a "
+                "ready-made document from the Examples tab.",
+                "Choose the document type on the Layout tab, then type your "
+                "title and text. The Styles gallery on the Home tab turns a "
+                "paragraph into a heading, an abstract or a keyword line.",
+                "Add what you need from the Insert and References tabs: a "
+                "table, an equation, a footnote, a citation, a "
+                "cross-reference.",
+                "Watch the PDF beside the page (Ctrl+4), or press Compile "
+                "PDF at the top right (Ctrl+Shift+C).",
                 "Save with Ctrl+S. Export a PDF, a .tex file or a Word "
                 "file from File > Export.",
             ),
 
-            _h("The tabs: Visual, Code and PDF"),
+            _h("Views: page, code and PDF"),
             _p(
-                "Three views of the same document, one keystroke apart. "
-                "Visual (Ctrl+1) is where you write. Code (Ctrl+2) shows "
-                "the LaTeX that KherveTeX generates, so you can read it, "
-                "copy it, or learn from it. PDF (Ctrl+3) is the compiled "
-                "result. In ", ("View", ["bold"]),
-                " you can keep the PDF beside the page, in its own "
-                "window on a second screen, or hide it entirely to write "
-                "undisturbed.",
+                "The View tab shows the same document three ways. ",
+                ("Visual", ["bold"]), " (Ctrl+1) is this page, where you "
+                "write. ", ("Code", ["bold"]), " (Ctrl+2) shows the LaTeX "
+                "that KherveTeX generates, so you can read it, copy it or "
+                "learn from it. ", ("PDF", ["bold"]),
+                " keeps the compiled result beside the page (Ctrl+4), and ",
+                ("Detach PDF", ["bold"]),
+                " moves it to its own window, for a second screen. Turn it "
+                "off to write undisturbed.",
             ),
             _p(
-                "If something looks wrong in the PDF, the Console "
-                "(View > Show Console) lists the compiler messages in "
+                "If something looks wrong in the PDF, the ",
+                ("Console", ["bold"]),
+                " button on the View tab lists the compiler messages in "
                 "plain text.",
             ),
 
             _h("Formatting text"),
             _p(
-                "Select text and use the ribbon or the Format menu to make "
+                "Select text and use the Font group on the Home tab to make "
                 "it ", ("bold", ["bold"]), ", ", ("italic", ["italic"]),
                 ", ", ("underlined", ["underline"]), ", ",
                 ("struck through", ["strikethrough"]), " or ",
@@ -98,15 +136,16 @@ def welcome() -> Document:
             ),
             _h("Headings and paragraph styles", level=2),
             _p(
-                "The Paragraph style box turns the current paragraph into "
-                "a heading (five levels, numbered automatically), a title, "
-                "an author line, an abstract or a keyword line. The "
-                "outline of your document is then always one glance away. "
-                "Alignment (left, centre, right, justified) sits next to "
-                "the formatting buttons.",
+                "The Styles gallery on the Home tab turns the current "
+                "paragraph into a heading (five levels, numbered "
+                "automatically), a title, an author line, an abstract or a "
+                "keyword line. Each tile is drawn in the font and size the "
+                "document type prints it in. Alignment (left, centre, "
+                "right, justified) sits in the Paragraph group beside it.",
             ),
             _h("Lists", level=2),
-            _p("Bulleted and numbered lists nest with Tab and Shift+Tab. "
+            _p("The list buttons in the Paragraph group start a bulleted "
+               "or numbered list; items nest with Tab and Shift+Tab. "
                "Inside an item you can use bold, links, footnotes and "
                "inline math like any other text. Some things worth "
                "knowing:"),
@@ -121,9 +160,10 @@ def welcome() -> Document:
 
             _h("Mathematics"),
             _p(
-                "Inline math such as ", MathInline(latex=r"E = mc^2"),
-                " is typed with Ctrl+M; a displayed equation is Ctrl+Shift+M. "
-                "The Equation builder (Ctrl+Shift+E) offers fractions, "
+                "The Equations group on the Insert tab holds it all. Inline "
+                "math such as ", MathInline(latex=r"E = mc^2"),
+                " is Ctrl+M; a displayed equation is Ctrl+Shift+M. The "
+                "Equation builder (Ctrl+Shift+E) offers fractions, "
                 "integrals, matrices and more as templates, and the Symbol "
                 "palette (Ctrl+Shift+G) holds Greek letters, operators "
                 "and arrows. A numbered, labelled equation:",
@@ -146,8 +186,8 @@ def welcome() -> Document:
                 numbered=True,
             ),
             _p(
-                "To point back at an equation, use Insert > Cross-reference "
-                "and pick it from the list: Equation ",
+                "To point back at an equation, use Cross-reference on the "
+                "References tab and pick it from the list: Equation ",
                 CrossRef(label="eq:gauss", kind="eqref"),
                 " is the Gaussian integral above. If the equation is "
                 "renumbered later, the reference follows.",
@@ -155,25 +195,28 @@ def welcome() -> Document:
 
             _h("Tables"),
             _p(
-                "Insert > Table creates a grid you fill in directly, with "
-                "a caption and a label for cross-references. Table ",
+                "Table on the Insert tab creates a grid you fill in "
+                "directly, with a caption and a label for "
+                "cross-references. While the caret is in a table, the Table "
+                "Design and Table Layout tabs add rows, columns, styles and "
+                "shading. Table ",
                 CrossRef(label="tab:shortcuts", kind="ref"),
                 " collects the shortcuts used in this tour (on a Mac, "
                 "read Ctrl as Cmd).",
             ),
             Table(
                 rows=[
-                    ["Action",             "Shortcut",      "Menu"],
-                    ["Bold / italic / underline", "Ctrl+B / I / U", "Format"],
+                    ["Action",             "Shortcut",      "Ribbon tab"],
+                    ["Bold / italic / underline", "Ctrl+B / I / U", "Home"],
                     ["Inline math",        "Ctrl+M",        "Insert"],
                     ["Math block",         "Ctrl+Shift+M",  "Insert"],
                     ["Equation builder",   "Ctrl+Shift+E",  "Insert"],
                     ["Symbol palette",     "Ctrl+Shift+G",  "Insert"],
                     ["Hyperlink",          "Ctrl+K",        "Insert"],
-                    ["Visual / Code / PDF", "Ctrl+1 / 2 / 3", "View"],
-                    ["Compile now",        "Ctrl+Shift+C",  "Compiler"],
+                    ["Visual / Code view", "Ctrl+1 / 2",    "View"],
+                    ["PDF beside the page", "Ctrl+4",       "View"],
+                    ["Compile now",        "Ctrl+Shift+C",  "Compile"],
                     ["New comment",        "Ctrl+Alt+M",    "Review"],
-                    ["New window",         "Ctrl+Shift+N",  "File"],
                 ],
                 caption="Keyboard shortcuts used in this tour.",
                 label="tab:shortcuts",
@@ -183,12 +226,12 @@ def welcome() -> Document:
 
             _h("Figures, links, footnotes and citations"),
             _p(
-                "Insert > Figure places an image with a caption; relative "
-                "paths are resolved against the document's folder, and a "
-                "missing image shows as a labelled placeholder instead of "
-                "breaking the build. Insert > Drawing and the Flowchart "
-                "builder (Ctrl+Shift+F) draw simple diagrams without "
-                "leaving the editor.",
+                "Figure on the Insert tab places an image with a caption; "
+                "relative paths are resolved against the document's "
+                "folder, and a missing image shows as a labelled "
+                "placeholder instead of breaking the build. Drawing and "
+                "the Flowchart builder (Ctrl+Shift+F), in the same group, "
+                "draw simple diagrams without leaving the editor.",
             ),
             _p(
                 "Hyperlinks (Ctrl+K) look like ",
@@ -203,38 +246,50 @@ def welcome() -> Document:
                 "in the PDF. A citation such as ",
                 Citation(keys=["example2026"], style="cite"),
                 " points to an entry of the reference list at the end of "
-                "this document; Insert > Citation lists the keys "
-                "available.",
+                "this document; Citation on the References tab lists the "
+                "keys available.",
             ),
 
             _h("Layout: pages and columns"),
             _p(
-                "Document properties (File menu) sets the page size, "
-                "margins, font, font size and line spacing for the whole "
-                "document. The 1, 2 and 3 column buttons next to the "
-                "alignment group reflow everything at once, and Insert > "
-                "Multi-column region puts a two-column block inside an "
-                "otherwise single-column page.",
+                "The Layout tab sets the margins, the page size and one, "
+                "two or three columns, and reflows everything at once. "
+                "Document type switches between article, report, book, "
+                "the journal classes and the rest; the page you type on "
+                "takes the fonts, headings and spacing of the PDF that "
+                "type prints. File > Document properties holds the font, "
+                "font size and line spacing, and Insert > Multi-column "
+                "region puts a two-column block inside a single-column "
+                "page.",
             ),
 
             _h("Versions with Git"),
             _p(
-                "Each saved document lives in a Git repository. ",
-                ("Git > Save snapshot and upload", ["bold"]),
+                "Each saved document lives in a Git repository. On the "
+                "History tab, ", ("Save snapshot and upload", ["bold"]),
                 " records a version, and ",
-                ("Git > View version history", ["bold"]),
+                ("View version history", ["bold"]),
                 " lets you browse every snapshot and go back to any of "
                 "them. Snapshots use your normal Git identity, so they "
                 "look the same as commits made from the command line.",
             ),
 
-            _h("Review: comments and highlights"),
+            _h("Review: comments, highlights and Overleaf"),
             _p(
-                "Select a passage and choose Review > New comment "
-                "(Ctrl+Alt+M) to leave a note for yourself or a "
-                "co-author. Highlights mark text without changing it. "
-                "Accept or reject a comment from the Review menu, and "
-                "step through them with the next and previous buttons.",
+                "Select a passage and press New comment on the Review tab "
+                "(Ctrl+Alt+M) to leave a note for yourself or a co-author; "
+                "Accept and Reject sit beside it. Highlight, on the Home "
+                "tab, marks text without changing it.",
+            ),
+            _p(
+                "The Share group on the Review tab works with co-authors on "
+                "Overleaf: ", ("Send to Overleaf", ["bold"]),
+                " puts your version into an Overleaf project and ",
+                ("Get changes from Overleaf", ["bold"]),
+                " brings theirs back. Both need an Overleaf plan with Git "
+                "access; on a free plan, ",
+                ("Download for Overleaf", ["bold"]),
+                " makes a zip to upload as a new project.",
             ),
 
             _h("Importing and exporting"),
@@ -246,22 +301,21 @@ def welcome() -> Document:
                 "content. File > Export writes .tex, .docx or .pdf.",
             ),
             _p(
-                "The Compiler menu chooses between the LaTeX engine and "
-                "Typst, and ",
-                ("Compiler status", ["bold"]),
+                "Tools > Compiler chooses between the LaTeX engine and "
+                "Typst, and ", ("Compiler status", ["bold"]),
                 " tells you whether the engine and its offline package "
-                "cache are ready.",
+                "cache are ready. Everything compiles offline, straight "
+                "after installation.",
             ),
 
             _h("Where to go next"),
             _p(
                 "Open the ", ("Examples", ["bold"]),
-                " menu for starting points: articles in one, two or three "
-                "columns, letters, a CV, a lab report, lecture notes, "
-                "journal templates and more. Each opens in its own window "
-                "so this tour stays open. Help > User guide has the full "
-                "reference, and Help > Keyboard shortcuts lists every "
-                "key binding.",
+                " tab for starting points: articles in one, two or three "
+                "columns, journal papers, theses and books, lab reports, "
+                "letters, a CV, slides, posters and planners. Each opens "
+                "in its own window so this tour stays open. The Help tab "
+                "has the user guide (F1) and every keyboard shortcut.",
             ),
             _p(
                 "Happy writing. ",
