@@ -46,7 +46,7 @@ TEMPLATE_CHOICES = [
     "scrartcl", "scrreprt", "scrbook", "scrlttr2",
     # Journal / conference
     "elsarticle", "IEEEtran", "revtex4-2", "achemso", "amsart",
-    "llncs", "acmart", "svjour3", "sn-jnl", "mnras", "aa",
+    "llncs", "acmart", "sn-jnl", "mnras",
     # Thesis / long-form
     "tufte-handout", "tufte-book", "mimosis",
     "hepthesis", "suftesi", "toptesi", "disser",

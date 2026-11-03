@@ -133,6 +133,7 @@ _NETWORK_ERROR_RE = re.compile(
     r"timed out|failed to lookup address", re.IGNORECASE)
 # A TeX input missing from the local cache (only-cached mode).
 _MISSING_FILE_RE = re.compile(r"File `([^']+)' not found")
+_MISSING_CLASS_RE = re.compile(r"File `([^']+)\.cls' not found")
 # BibTeX reports a .bst the cache lacks only in its .blg; tectonic's own
 # log merely says BibTeX "issued errors".
 _MISSING_BST_RE = re.compile(r"I couldn't open style file (\S+)")
@@ -327,13 +328,9 @@ Hello $E=mc^2$.
          r"\begin{document}Hello $E=mc^2$.\end{document}" "\n"),
         ("acmart", r"\documentclass{acmart}" "\n"
          r"\begin{document}Hello $E=mc^2$.\end{document}" "\n"),
-        ("svjour3", r"\documentclass{svjour3}" "\n"
-         r"\begin{document}Hello $E=mc^2$.\end{document}" "\n"),
         ("sn-jnl", r"\documentclass{sn-jnl}" "\n"
          r"\begin{document}Hello $E=mc^2$.\end{document}" "\n"),
         ("mnras", r"\documentclass[fleqn,usenatbib]{mnras}" "\n"
-         r"\begin{document}Hello $E=mc^2$.\end{document}" "\n"),
-        ("aa", r"\documentclass{aa}" "\n"
          r"\begin{document}Hello $E=mc^2$.\end{document}" "\n"),
         # Thesis / long-form
         ("tufte-handout", r"\documentclass{tufte-handout}" "\n"
@@ -731,6 +728,18 @@ def compile_tex(
                              "tectonic timed out (a package download took "
                              "over 15 minutes — check the connection, or run "
                              "Compiler \u25b8 Download offline bundle)")
+
+    # continue-on-errors carries on without the class and exits cleanly, with
+    # a PDF of raw text running off the page: that is no preview at all.
+    no_class = _MISSING_CLASS_RE.search(log)
+    if no_class:
+        return CompileResult(
+            ok=False,
+            pdf_path=None,
+            log=log,
+            error=f"Document class {no_class.group(1)} is not available. Add "
+                  f"its .cls file with File \u25b8 Manage styles\u2026 or "
+                  f"choose another document type.")
 
     if code == 0 and pdf_path.exists():
         return CompileResult(True, pdf_path, log, None)

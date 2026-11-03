@@ -797,8 +797,8 @@ def pen_preview(width: float = 2.0, dash: str = "solid", head: str = "",
 
 # ----- document-class gallery -----
 
-_TWO_COL = {"ieeetran", "revtex4-2", "acmart", "aa", "mnras", "svjour3",
-            "sn-jnl", "elsarticle", "achemso"}
+_TWO_COL = {"ieeetran", "revtex4-2", "acmart", "mnras", "sn-jnl",
+            "elsarticle", "achemso"}
 _BOOKISH = {"book", "report", "memoir", "scrbook", "scrreprt", "amsbook",
             "elegantbook", "mimosis", "hepthesis", "suftesi", "toptesi",
             "disser"}

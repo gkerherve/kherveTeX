@@ -245,7 +245,7 @@ def _serialize_theorem(env: _TheoremEnv) -> str:
 
 def _theorem_preamble(doc: Document) -> str:
     """\\newtheorem for each kind used, only where neither the class nor
-    the user's preamble defines it already (llncs, svjour3... do)."""
+    the user's preamble defines it already (llncs, sn-jnl... do)."""
     kinds = [k for k in THEOREM_KINDS
              if any(isinstance(b, Theorem) and b.kind == k
                     for b in doc.children)]
@@ -695,6 +695,11 @@ def _cyrillic_macros() -> str:
     return "\n".join(lines)
 
 
+# llncs's \subparagraph is a \verb warning that overflows TeX's save stack;
+# the class's deepest real heading is \paragraph.
+_LLNCS_SUBPARAGRAPH = r"\let\subparagraph\paragraph"
+
+
 def _class_fallbacks(cls: str) -> str:
     """Stand-ins for the environments KherveTeX emits that a class may not
     define (keyword everywhere but elsarticle, abstract in book and letter
@@ -742,6 +747,8 @@ def _class_fallbacks(cls: str) -> str:
                   # current LaTeX kernel under XeTeX.
                   r"\renewcommand{\allcapsspacing}[1]{#1}",
                   r"\renewcommand{\smallcapsspacing}[1]{#1}"]
+    if cls == "llncs":
+        lines.append(_LLNCS_SUBPARAGRAPH)
     if cls in ("letter", "scrlttr2"):
         lines.insert(-1, r"\providecommand{\maketitle}{\begin{center}"
                      r"{\LARGE\@title\par}\medskip{\large\@author\par}"
@@ -956,6 +963,14 @@ def serialize_document(doc: Document) -> str:
         if cls_lower == "revtex4-2" and affiliation_parts:
             author_text += "".join(
                 f"}}\n\\affiliation{{{a}" for a in affiliation_parts)
+
+    author_text = _class_authors(cls_lower, doc.children) or author_text
+    if cls_lower == "acmart" and not author_parts:
+        # The same overflow from a \\thanks typed into the author field.
+        notes = re.findall(r"\\thanks\{([^{}]*)\}", author_text)
+        if notes:
+            author_text = re.sub(r"\\thanks\{[^{}]*\}", "", author_text)
+            author_text += f"}}\n\\authornote{{{' '.join(notes)}"
 
     has_metadata = bool(title_text or author_text)
 
@@ -1328,6 +1343,64 @@ def _title_block_parts(children: list, is_elsarticle: bool = False):
     return inline_title, author_parts, affiliation_parts, correspondence_parts
 
 
+def _acmart_authors(children: list) -> str:
+    """The inside of \\author{...} for acmart, closing and reopening the brace
+    as the revtex branch does. acmart takes one \\author per person, each
+    followed by its \\affiliation; \\thanks in \\author recurses until TeX's
+    input stack overflows, so the note goes in \\authornote on the first
+    author. The class demands a country even when empty; obeypunctuation stops
+    it printing a comma in front of that nothing."""
+    people: list[list[str]] = []
+    early_affiliations: list[str] = []
+    notes: list[str] = []
+    for block in children:
+        if not isinstance(block, (Author, Affiliation, Correspondence)):
+            continue
+        part = serialize_inlines(block.children)
+        if not part:
+            continue
+        if isinstance(block, Author):
+            people.append([f"\\author{{{part}}}"])
+        elif isinstance(block, Correspondence):
+            notes.append(part)
+        else:
+            line = (f"\\affiliation[obeypunctuation=true]"
+                    f"{{\\institution{{{part}}}\\country{{}}}}")
+            (people[-1] if people else early_affiliations).append(line)
+    if not people:
+        return ""
+    people[0][1:1] = early_affiliations
+    if notes:
+        people[0].insert(1, f"\\authornote{{{' '.join(notes)}}}")
+    commands = "\n".join(line for person in people for line in person)
+    return commands[len("\\author{"):-1]
+
+
+def _llncs_authors(children: list) -> str:
+    """The inside of \\author{...} for llncs: names split by \\and, then its
+    own \\institute, without which every paper prints "No Institute Given"."""
+    names = [serialize_inlines(b.children) for b in children
+             if isinstance(b, Author)]
+    names = [n for n in names if n]
+    if not names:
+        return ""
+    _, _, affiliations, notes = _title_block_parts(children)
+    if notes:
+        names[0] += f"\\thanks{{{' '.join(notes)}}}"
+    return (" \\and ".join(names) + "}\n\\institute{"
+            + " \\and ".join(affiliations))
+
+
+def _class_authors(cls: str, children: list) -> str:
+    """Author text for the classes that lay out names and addresses in their
+    own commands, or "" to use the plain form."""
+    if cls == "acmart":
+        return _acmart_authors(children)
+    if cls == "llncs":
+        return _llncs_authors(children)
+    return ""
+
+
 def serialize_project_master(proj: Project,
                              chapter_docs: list[Document] | None = None) -> str:
     """Generate the master .tex for a multi-chapter project.
@@ -1400,12 +1473,17 @@ def serialize_project_master(proj: Project,
     # of its own.
     has_chapter = _class_supports_chapter(m.documentclass or "")
     preamble_meta = ""
+    class_setup = (_LLNCS_SUBPARAGRAPH + "\n"
+                   if (m.documentclass or "").lower() == "llncs" else "")
     for cdoc in chapter_docs or []:
         title, authors, _aff, _corr = _title_block_parts(cdoc.children)
         if title is not None:
             preamble_meta += f"\\title{{{title or '~'}}}\n"
-            if authors:
-                preamble_meta += "\\author{" + " \\\\\n".join(authors) + "}\n"
+            authors_text = (
+                _class_authors((m.documentclass or "").lower(), cdoc.children)
+                or " \\\\\n".join(authors))
+            if authors_text:
+                preamble_meta += f"\\author{{{authors_text}}}\n"
             break
     else:
         if has_chapter and m.title and m.title != "Untitled":
@@ -1512,6 +1590,7 @@ def serialize_project_master(proj: Project,
     return (
         f"{_documentclass_line(m)}\n"
         f"{packages}\n"
+        f"{class_setup}"
         f"{preamble_meta}"
         f"\\begin{{document}}\n"
         f"{body}"

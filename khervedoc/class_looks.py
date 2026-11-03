@@ -11921,9 +11921,4 @@ LOOKS = {'article': {10: {'body': {'font': 'LMRoman10-Regular',
                               'page': 0,
                               'day_first': False},
                      'chapter_label': None,
-                     'furniture': {'first': []}}},
- 'svjour3': {12: {'broken': 'class file not available to the compiler',
-                  'geometry': {'follows_margins': False,
-                               'follows_page': False}}},
- 'aa': {12: {'broken': 'class file not available to the compiler',
-             'geometry': {'follows_margins': False, 'follows_page': False}}}}
+                     'furniture': {'first': []}}}}
