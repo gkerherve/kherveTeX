@@ -617,3 +617,57 @@ def test_table_without_caption_prints_no_table_number():
         return tex.split("\\begin{document}")[1]
     assert "\\caption" not in body("")
     assert "\\caption{Data}" in body("Data")
+
+
+def _body_and_preamble(**meta):
+    from khervedoc.model import Document, DocMeta, Paragraph, Text
+    tex = serialize_document(Document(meta=DocMeta(title="", **meta), children=[
+        Paragraph(children=[Text("x")])]))
+    return tex
+
+
+def test_memoir_line_spacing_uses_memoirs_own_commands():
+    tex = _body_and_preamble(documentclass="memoir", line_spacing=1.15)
+    assert "\\setSpacing{1.15}" in tex
+    assert "setspace" not in tex and "\\setstretch" not in tex
+    tex = _body_and_preamble(documentclass="memoir", line_spacing=1.5)
+    assert "\\OnehalfSpacing" in tex
+    assert "\\setstretch{1.15}" in _body_and_preamble(line_spacing=1.15)
+
+
+def test_elsarticle_journal_page_options_skip_geometry():
+    assert "{geometry}" not in _body_and_preamble(
+        documentclass="elsarticle", class_options="5p,twocolumn")
+    assert "{geometry}" in _body_and_preamble(documentclass="elsarticle")
+
+
+def test_percent_in_a_table_cell_or_caption_is_a_percentage():
+    from khervedoc.model import Document, DocMeta, Table
+    tex = serialize_document(Document(meta=DocMeta(title=""), children=[
+        Table(rows=[["Share", "Change"], ["40%", "\\%5"]], caption="Up 3%")]))
+    assert "40\\%" in tex and "\\%5" in tex and "Up 3\\%" in tex
+    assert "\\\\%" not in tex
+
+
+def test_keyword_separator_leaves_no_space_before_the_comma():
+    tex = _body_and_preamble()
+    assert "\\def\\sep{\\unskip, }" in tex
+
+
+def test_definitions_are_upright_theorems_italic():
+    from khervedoc.model import Document, DocMeta, Theorem, Text
+    tex = serialize_document(Document(meta=DocMeta(title=""), children=[
+        Theorem(kind="definition", children=[Text("D")]),
+        Theorem(kind="lemma", children=[Text("L")])]))
+    definition = tex.index("\\newtheorem{definition}")
+    assert tex.rfind("\\theoremstyle{definition}", 0, definition) != -1
+    # The style goes back to plain, so later theorems are italic again.
+    plain = tex.index("\\theoremstyle{plain}", definition)
+    lemma = tex.index("\\newtheorem{lemma}")
+    assert lemma < tex.rfind("\\theoremstyle{definition}", 0, definition) \
+        or lemma > plain
+
+
+def test_tufte_book_has_chapters():
+    from khervedoc.model import class_supports_chapter
+    assert class_supports_chapter("tufte-book")

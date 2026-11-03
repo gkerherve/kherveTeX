@@ -30,7 +30,9 @@ def test_preamble_defines_only_missing_environments():
     tex = serialize_document(_doc(Theorem(kind="definition",
                                           children=[Text("x")])))
     assert r"\@ifundefined{theorem}{\newtheorem{theorem}{Theorem}[section]}" in tex
-    assert r"\@ifundefined{definition}{\newtheorem{definition}[theorem]" in tex
+    # A definition is set upright, in amsthm's definition style.
+    assert (r"\@ifundefined{definition}{\@ifundefined{theoremstyle}{}"
+            r"{\theoremstyle{definition}}\newtheorem{definition}[theorem]") in tex
     assert "lemma" not in tex.split("\\begin{document}")[0]
     assert "\\newtheorem" not in serialize_document(_doc())
 

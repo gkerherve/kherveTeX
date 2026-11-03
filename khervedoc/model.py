@@ -608,6 +608,7 @@ def project_from_json(s: str) -> Project:
 CHAPTER_CLASSES = (
     "report", "book", "memoir", "scrreprt", "scrbook", "mimosis",
     "hepthesis", "suftesi", "toptesi", "disser", "amsbook", "elegantbook",
+    "tufte-book",
 )
 
 

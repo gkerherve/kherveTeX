@@ -57,3 +57,14 @@ def test_blank_example_is_an_empty_page():
     assert doc.children[0].children == []
     assert "\\maketitle" not in serialize_document(doc)
 
+
+
+def test_every_offered_document_type_has_an_example():
+    from khervedoc.editor import TEMPLATE_CHOICES
+    used = {factory().meta.documentclass for _l, factory in examples.EXAMPLES}
+    assert set(TEMPLATE_CHOICES) <= used
+
+
+def test_gallery_categories_are_all_in_use():
+    used = {c for c, *_ in examples.GALLERY}
+    assert used == set(examples.GALLERY_CATEGORIES)

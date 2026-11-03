@@ -243,6 +243,9 @@ def _serialize_theorem(env: _TheoremEnv) -> str:
     return f"\\begin{{{env.kind}}}{opt}\n{body}\n\\end{{{env.kind}}}\n"
 
 
+_UPRIGHT_KINDS = ("definition", "example", "remark", "exercise", "notation")
+
+
 def _theorem_preamble(doc: Document) -> str:
     """\\newtheorem for each kind used, only where neither the class nor
     the user's preamble defines it already (llncs, sn-jnl... do)."""
@@ -258,8 +261,14 @@ def _theorem_preamble(doc: Document) -> str:
                      r"{Theorem}[section]}{}")
     for k in numbered:
         if k != "theorem":
-            lines.append(rf"\@ifundefined{{{k}}}{{\newtheorem{{{k}}}"
+            # amsthm's definition style: upright text, as for remarks too.
+            style = (r"\@ifundefined{theoremstyle}{}{\theoremstyle{definition}}"
+                     if k in _UPRIGHT_KINDS else "")
+            lines.append(rf"\@ifundefined{{{k}}}{{{style}\newtheorem{{{k}}}"
                          rf"[theorem]{{{THEOREM_KINDS[k]}}}}}{{}}")
+            if style:
+                lines.append(r"\@ifundefined{theoremstyle}{}"
+                             r"{\theoremstyle{plain}}")
     if "proof" in kinds:
         lines.append(r"\@ifundefined{proof}{\newenvironment{proof}[1]"
                      r"[Proof]{\par\noindent\textit{#1.}\ }"
@@ -389,7 +398,14 @@ def _merge_maps(node: Table):
     return anchors, covered
 
 
+def _percent(text: str) -> str:
+    """A % in a table cell or caption is a percentage, never a LaTeX
+    comment: unescaped, it swallowed the rest of the row."""
+    return re.sub(r"(?<!\\)%", r"\\%", text or "")
+
+
 def _cell_latex(node: Table, r: int, c: int, text: str) -> str:
+    text = _percent(text)
     color = node.shading.get(f"{r},{c}")
     if node.header and r == 0 and text and "\\textbf{" not in text:
         text = f"\\textbf{{{text}}}"
@@ -472,7 +488,7 @@ def _serialize_table(node: Table, float_h: bool = True) -> str:
         elif grid and i < len(node.rows) - 1:
             row_str += " " + _grid_rule(i, cols, covered)
         body_rows.append(row_str)
-    cap = node.caption
+    cap = _percent(node.caption)
     lab = _maybe_label(node.label) if node.label else ""
     if node.repeat_header and len(body_rows) > 1:
         # longtable repeats everything before \endhead on each page.
@@ -599,6 +615,28 @@ _STANDARD_SERIALIZER_CLASSES = {
 }
 
 
+def _class_sets_page(m) -> bool:
+    """elsarticle's 1p, 3p and 5p options load geometry with the journal's
+    own page; loading it again is an option clash."""
+    return ((m.documentclass or "").lower() == "elsarticle"
+            and bool(re.search(r"\b[135]p\b", m.class_options or "")))
+
+
+def _line_spacing(m) -> tuple[str, str]:
+    """(package, command) for the document's line spacing. memoir has its
+    own spacing commands and refuses setspace's \\setstretch."""
+    memoir = (m.documentclass or "").lower() == "memoir"
+    pkg = "" if memoir else "\\usepackage{setspace}"
+    if abs(m.line_spacing - 1.0) <= 0.01:
+        return pkg, ""
+    if abs(m.line_spacing - 1.5) < 0.01:
+        return pkg, "\\OnehalfSpacing" if memoir else "\\onehalfspacing"
+    if abs(m.line_spacing - 2.0) < 0.01:
+        return pkg, "\\DoubleSpacing" if memoir else "\\doublespacing"
+    return pkg, (f"\\setSpacing{{{m.line_spacing}}}" if memoir
+                 else f"\\setstretch{{{m.line_spacing}}}")
+
+
 def _class_options(m) -> str:
     """Comma-joined documentclass options: font size, twocolumn, etc.
 
@@ -712,7 +750,7 @@ def _class_fallbacks(cls: str) -> str:
         r"\makeatletter",
         r"\AtBeginDocument{%",
         r"\@ifundefined{keyword}{\newenvironment{keyword}"
-        r"{\par\medskip\noindent\textbf{Keywords:}\ \def\sep{, }}"
+        r"{\par\medskip\noindent\textbf{Keywords:}\ \def\sep{\unskip, }}"
         r"{\par\medskip}}{}%",
         r"\@ifundefined{abstract}{\newenvironment{abstract}"
         r"{\par\begin{quote}\small\noindent\textbf{Abstract.}\ }"
@@ -873,7 +911,7 @@ def serialize_document(doc: Document) -> str:
     # Journal classes (non-standard) often define their own layout that
     # conflicts with geometry — skip it for those.
     cls_lower = (m.documentclass or "").lower()
-    if is_journal or is_beamer:
+    if is_journal or is_beamer or _class_sets_page(m):
         geometry = ""
     else:
         geometry = (
@@ -886,15 +924,7 @@ def serialize_document(doc: Document) -> str:
         spacing_pkg = ""
         spacing_cmd = ""
     else:
-        spacing_pkg = "\\usepackage{setspace}"
-        spacing_cmd = ""
-        if abs(m.line_spacing - 1.0) > 0.01:
-            if abs(m.line_spacing - 1.5) < 0.01:
-                spacing_cmd = "\\onehalfspacing"
-            elif abs(m.line_spacing - 2.0) < 0.01:
-                spacing_cmd = "\\doublespacing"
-            else:
-                spacing_cmd = f"\\setstretch{{{m.line_spacing}}}"
+        spacing_pkg, spacing_cmd = _line_spacing(m)
     parindent = "" if (m.paragraph_indent or is_journal) else "\\setlength{\\parindent}{0pt}\n\\setlength{\\parskip}{0.8em}"
 
     preamble_extras = "\n".join(p for p in (font_pkg, spacing_pkg, spacing_cmd, parindent) if p)
@@ -1418,7 +1448,7 @@ def serialize_project_master(proj: Project,
     page = page_sizes.by_code(m.page_size)
     is_journal = (m.documentclass or "").lower() not in _STANDARD_SERIALIZER_CLASSES
 
-    if is_journal:
+    if is_journal or _class_sets_page(m):
         geometry = ""
     else:
         geometry = (
@@ -1431,15 +1461,7 @@ def serialize_project_master(proj: Project,
         spacing_pkg = ""
         spacing_cmd = ""
     else:
-        spacing_pkg = "\\usepackage{setspace}"
-        spacing_cmd = ""
-        if abs(m.line_spacing - 1.0) > 0.01:
-            if abs(m.line_spacing - 1.5) < 0.01:
-                spacing_cmd = "\\onehalfspacing"
-            elif abs(m.line_spacing - 2.0) < 0.01:
-                spacing_cmd = "\\doublespacing"
-            else:
-                spacing_cmd = f"\\setstretch{{{m.line_spacing}}}"
+        spacing_pkg, spacing_cmd = _line_spacing(m)
     parindent = "" if (m.paragraph_indent or is_journal) else (
         "\\setlength{\\parindent}{0pt}\n\\setlength{\\parskip}{0.8em}")
 
