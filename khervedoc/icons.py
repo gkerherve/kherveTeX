@@ -124,30 +124,10 @@ def _draw_page(p: QPainter, box: QRectF) -> None:
 
 
 def app_pixmap(sz: int) -> QPixmap:
-    """One size of the app icon: 'kTeX' above a page bearing the LaTeX
-    logo, on a rounded blue tile."""
-    px = QPixmap(sz, sz)
-    px.fill(Qt.transparent)
-    p = QPainter(px)
-    p.setRenderHint(QPainter.Antialiasing, True)
-    p.setRenderHint(QPainter.TextAntialiasing, True)
-    m = sz * 0.06
-    radius = sz * 0.22
-    rect = QRectF(m, m, sz - 2 * m, sz - 2 * m)
-    p.setPen(Qt.NoPen)
-    p.setBrush(QColor("#1a6dd8"))              # the blue tile
-    p.drawRoundedRect(rect, radius, radius)
-    pen = QPen(QColor("#155bb5"))
-    pen.setWidthF(max(1.0, sz * 0.02))
-    p.setPen(pen)
-    p.setBrush(Qt.NoBrush)
-    p.drawRoundedRect(rect, radius, radius)
-    x, y, w, h = rect.x(), rect.y(), rect.width(), rect.height()
-    _draw_ktex(p, QRectF(x, y + h * 0.05, w, h * 0.33), "#ffffff")
-    pw, ph = w * 0.54, h * 0.48
-    _draw_page(p, QRectF(x + (w - pw) / 2.0, y + h * 0.45, pw, ph))
-    p.end()
-    return px
+    """One size of the app icon: the shared Kherve-family "kTeX" mark
+    (see ``kmark``)."""
+    from .kmark import paint
+    return paint(sz, "tex")
 
 
 def app_icon() -> QIcon:
