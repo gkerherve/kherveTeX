@@ -82,8 +82,8 @@ def _draw_latex(p: QPainter, cx: float, cy: float, avail: float,
 
 
 def _draw_ktex(p: QPainter, rect: QRectF, color: str) -> None:
-    """Draw 'KTeX' centred in *rect* with a normal bold font, fit to width."""
-    text = "KTeX"
+    """Draw 'kTeX' centred in *rect* with a normal bold font, fit to width."""
+    text = "kTeX"
     avail = rect.width() * 0.86
     font = QFont("Segoe UI")
     font.setBold(True)
@@ -124,7 +124,7 @@ def _draw_page(p: QPainter, box: QRectF) -> None:
 
 
 def app_pixmap(sz: int) -> QPixmap:
-    """One size of the app icon: 'KTeX' above a page bearing the LaTeX
+    """One size of the app icon: 'kTeX' above a page bearing the LaTeX
     logo, on a rounded blue tile."""
     px = QPixmap(sz, sz)
     px.fill(Qt.transparent)
@@ -151,7 +151,7 @@ def app_pixmap(sz: int) -> QPixmap:
 
 
 def app_icon() -> QIcon:
-    """Application icon: the 'KTeX' wordmark above a page bearing the
+    """Application icon: the 'kTeX' wordmark above a page bearing the
     LaTeX logo, on a rounded blue tile.
 
     Rendered at several sizes so the taskbar, title bar, and Alt-Tab all
