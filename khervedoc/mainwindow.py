@@ -326,6 +326,8 @@ class _ProjectSidebar(QWidget):
                 app_counter += 1
                 num = ch.chapter_number if ch.chapter_number is not None else app_counter
                 prefix = f"App. {chr(64 + num)} \u2014 "
+            elif ctype == "section":
+                prefix = "\u00a7 "   # section sign
             elif ctype == "frontmatter":
                 prefix = "\u25c7 "   # diamond
             elif ctype == "backmatter":
@@ -417,6 +419,7 @@ class _ProjectSidebar(QWidget):
             "chapter": "Chapter (numbered)",
             "appendix": "Appendix",
             "backmatter": "Back matter (bibliography, index\u2026)",
+            "section": "Sections (continue the chapter before)",
         }
         type_actions = {}
         for key, label in type_labels.items():
@@ -1322,6 +1325,8 @@ class MainWindow(QMainWindow):
         # Project
         self.act_new_project = QAction("New &project...", self,
                                        triggered=self._new_project)
+        self.act_split_documents = QAction("&Split into documents...", self,
+                                           triggered=self._split_into_documents)
         self.act_open_project = QAction(icons.project_open(), "Open pro&ject...", self,
                                         triggered=self._open_project)
         self.act_save_project = QAction("Save projec&t", self,
@@ -1766,6 +1771,7 @@ class MainWindow(QMainWindow):
         m_export.addAction(self.act_export_latex_zip)
         m_project = m_file.addMenu("Pro&ject")
         m_project.addAction(self.act_new_project)
+        m_project.addAction(self.act_split_documents)
         m_project.addAction(self.act_open_project)
         m_project.addAction(self.act_save_project)
         m_project.addAction(self.act_close_project)
@@ -3054,6 +3060,9 @@ class MainWindow(QMainWindow):
             self._io_stop()
             QMessageBox.critical(self, "Open failed", str(exc))
             return
+        if is_import and self._offer_chapter_split(path, doc):
+            self._io_stop()
+            return
         if is_import:
             self._current_path = None
             self._import_source_dir = path.parent
@@ -3078,6 +3087,98 @@ class MainWindow(QMainWindow):
             self._remember_recent(path)
         self._refresh_kherveref_bib(doc)
         self._io_stop()
+
+    def _ask_split(self, name: str, doc: Document, folder: Path,
+                   keep_label: str) -> str | None:
+        """Ask how to split `doc` into documents: "chapter", "section", or
+        None (kept as it is). Splitting by section is offered when the
+        chapters have sections."""
+        from . import chapter_split
+        plan = chapter_split.chapter_plan(doc)
+        by_section = chapter_split.chapter_plan(doc, "section")
+        chapters = sum(1 for p in plan if p[1] != "frontmatter")
+        sections = sum(1 for p in by_section if p[1] == "section")
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Question)
+        box.setWindowTitle("Split into documents")
+        box.setText(
+            f"{name} has {chapters} chapters"
+            + (f" and {sections} sections" if sections else "")
+            + f" (about {chapter_split.estimate_pages(doc)} pages).")
+        box.setInformativeText(
+            "A long document is faster to edit and compile as a project of "
+            "smaller documents, one per chapter or one per section; the "
+            "project still prints the whole document, page for page. The "
+            f"documents go in a new folder, \u201c{folder.name}\u201d, beside it.")
+        by_chapter = box.addButton("Split by chapter", QMessageBox.AcceptRole)
+        by_sec = (box.addButton("Split by section", QMessageBox.AcceptRole)
+                  if sections else None)
+        box.addButton(keep_label, QMessageBox.RejectRole)
+        box.setDefaultButton(by_chapter)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is by_chapter:
+            return "chapter"
+        if by_sec is not None and clicked is by_sec:
+            return "section"
+        return None
+
+    def _split_and_open(self, doc: Document, folder: Path, title: str, by: str) -> bool:
+        from . import chapter_split
+        try:
+            main = chapter_split.write_chapter_project(doc, folder, title, by=by)
+        except Exception as exc:
+            QMessageBox.critical(self, "Split into documents", str(exc))
+            return False
+        n = len(chapter_split.chapter_plan(doc, by))
+        self._open_project_from_path(main)
+        self._status.showMessage(f"Split into {n} documents in {folder.name}", 8000)
+        return True
+
+    def _offer_chapter_split(self, path: Path, doc: Document) -> bool:
+        """A long imported document with chapters (a thesis, a book): offer
+        to make it a project with one document per chapter or per section,
+        written to a new folder beside the file. True when it was split and
+        opened."""
+        from . import chapter_split
+        if not chapter_split.should_offer(doc):
+            return False
+        folder = chapter_split.project_folder(path)
+        self._io_stop()
+        by = self._ask_split(path.name, doc, folder, "Keep as one document")
+        return by is not None and self._split_and_open(doc, folder, path.stem, by)
+
+    def _split_into_documents(self) -> None:
+        """File > Project > Split into documents: the open document as a
+        project of its chapters (or sections), in a new folder beside it."""
+        from . import chapter_split
+        if self._project is not None:
+            QMessageBox.information(
+                self, "Split into documents",
+                "This document is already part of a project.")
+            return
+        doc = self._editor.get_document()
+        if not chapter_split.chapter_plan(doc):
+            QMessageBox.information(
+                self, "Split into documents",
+                "The document needs at least two chapters (Chapter or "
+                "Heading 1 headings) to be split.")
+            return
+        if self._current_path is None:
+            QMessageBox.information(
+                self, "Split into documents",
+                "Save the document first \u2014 the documents of the split "
+                "go in a folder beside it.")
+            self._save_as()
+            if self._current_path is None:
+                return
+        elif self._editor.text_edit.document().isModified():
+            self._save()
+        path = self._current_path
+        folder = chapter_split.project_folder(path)
+        by = self._ask_split(path.name, doc, folder, "Cancel")
+        if by is not None:
+            self._split_and_open(doc, folder, self._doc_stem(path), by)
 
     # ---- drag-and-drop document files ----
 

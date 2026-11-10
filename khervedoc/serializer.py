@@ -1576,10 +1576,14 @@ def serialize_project_master(proj: Project,
     # them for an article project stopped it compiling.
     klass = (m.documentclass or "").lower()
     has_matter = klass in ("book", "memoir", "scrbook", "amsbook")
-    for ch in proj.chapters:
+    types = [getattr(c, "chapter_type", "chapter") for c in proj.chapters]
+    for idx, ch in enumerate(proj.chapters):
         cmds: list[str] = []
-        ctype = getattr(ch, "chapter_type", "chapter")
-        if ctype != prev_type:
+        ctype = types[idx]
+        # A section document (a chapter split section by section) runs on
+        # in the chapter before it: no \\mainmatter or \\appendix of its
+        # own, no chapter number.
+        if ctype != prev_type and ctype != "section":
             if ctype == "frontmatter" and has_matter:
                 cmds.append("\\frontmatter")
             elif ctype == "chapter" and prev_type in ("frontmatter", None):
@@ -1629,8 +1633,14 @@ def serialize_project_master(proj: Project,
             body_parts.append("\n".join(cmds) + "\n")
         stem = _chapter_stem(ch)
         # \include starts a new page — right for chapters, wrong for the
-        # parts of an article, which should run on.
-        cmd = "include" if has_chapter else "input"
+        # parts of an article, which should run on, and for a section
+        # document, which continues its chapter's page.
+        # \include also ends with a \clearpage: a chapter whose sections
+        # are documents of their own would print its title on a page alone.
+        # \chapter starts its own page anyway.
+        sections_follow = idx + 1 < len(types) and types[idx + 1] == "section"
+        cmd = ("include" if has_chapter and ctype != "section"
+               and not sections_follow else "input")
         body_parts.append(f"\\{cmd}{{{stem}}}\n")
 
     body = "\n".join(body_parts)

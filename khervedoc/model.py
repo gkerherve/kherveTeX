@@ -289,6 +289,7 @@ CHAPTER_TYPES = [
     "chapter",       # numbered chapter (default)
     "appendix",      # appendix A, B, ...
     "backmatter",    # bibliography, index — unnumbered
+    "section",       # sections of the chapter before, on from its page
 ]
 
 
