@@ -1103,6 +1103,15 @@ class MainWindow(QMainWindow):
         self._status = QStatusBar(self)
         self.setStatusBar(self._status)
 
+        # Left end: the recent files by name (full path in the tooltip);
+        # picking one opens it and the combo returns to its placeholder.
+        self._recent_combo = QComboBox(self)
+        self._recent_combo.setToolTip("Open a recent file")
+        self._recent_combo.setFixedWidth(170)
+        self._recent_combo.activated.connect(self._on_recent_combo)
+        self._status.addWidget(self._recent_combo)
+        self._refresh_recent_combo()
+
         # Left side: full document path (or "Untitled" before first save).
         self._path_label = QLabel("Untitled", self)
         self._path_label.setStyleSheet(themes.status_label_stylesheet(self._theme))
@@ -4987,7 +4996,28 @@ class MainWindow(QMainWindow):
         self._settings.setValue("recent_files", [str(p) for p in self._recent])
         self._refresh_recent_menu()
 
+    def _refresh_recent_combo(self) -> None:
+        combo = self._recent_combo
+        combo.blockSignals(True)
+        combo.clear()
+        combo.setPlaceholderText(
+            "Recent files" if self._recent else "No recent files")
+        for p in self._recent:
+            combo.addItem(p.name, str(p))
+            combo.setItemData(combo.count() - 1, str(p), Qt.ToolTipRole)
+        combo.setCurrentIndex(-1)
+        combo.setEnabled(bool(self._recent))
+        combo.blockSignals(False)
+
+    def _on_recent_combo(self, index: int) -> None:
+        path = Path(self._recent_combo.itemData(index))
+        self._recent_combo.setCurrentIndex(-1)
+        if self.offer_save_before(f"opening {path.name}"):
+            self._open_path(path)
+
     def _refresh_recent_menu(self) -> None:
+        if hasattr(self, "_recent_combo"):
+            self._refresh_recent_combo()
         if not hasattr(self, "_recent_menu"): return
         self._recent_menu.clear()
         if not self._recent:
