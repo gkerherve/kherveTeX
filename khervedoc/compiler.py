@@ -146,6 +146,17 @@ _MISSING_FONT_RE = re.compile(
     r"|Cannot proceed without \.vf or \"physical\" font for (\S+)")
 
 
+# A file the engine could not read in time ("Operation timed out"): one a
+# cloud service (OneDrive, iCloud) is still syncing. Not a network failure,
+# though _NETWORK_ERROR_RE's "timed out" matches it.
+_SLOW_FILE_RE = re.compile(r"error closing out input ([^\n]+)\ncaused by: Operation timed out")
+
+
+def _slow_file_from_log(log: str) -> str | None:
+    m = _SLOW_FILE_RE.search(log)
+    return m.group(1) if m else None
+
+
 def _is_offline_failure(log: str) -> bool:
     return bool(_NETWORK_ERROR_RE.search(log))
 
@@ -714,6 +725,15 @@ def compile_tex(
         if not cached_ok and not _cancelled:
             cached_log = log
             code, log = _run(only_cached=False)
+            slow = _slow_file_from_log(cached_log) or _slow_file_from_log(log)
+            if slow:
+                return CompileResult(
+                    ok=False,
+                    pdf_path=pdf_path if pdf_path.exists() else None,
+                    log=cached_log + "\n\n--- online retry ---\n" + log,
+                    error=f"{Path(slow).name} could not be read in time: its "
+                          f"folder is being synced (OneDrive, iCloud\u2026). "
+                          f"Compile again once the sync has finished.")
             if _is_offline_failure(log):
                 names = ", ".join(sorted(set(missing))) or "some TeX files"
                 return CompileResult(

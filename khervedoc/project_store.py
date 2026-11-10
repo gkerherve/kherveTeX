@@ -7,6 +7,7 @@ them, which Git still tracks so history stays readable.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from . import kdocz
@@ -29,12 +30,43 @@ def doc_stem(path: Path) -> str:
     return Path(path).stem
 
 
+# A folder a cloud service keeps in sync (OneDrive, iCloud Drive, Dropbox,
+# Google Drive).
+_SYNCED_RE = re.compile(
+    r"[\\/]Library[\\/](?:CloudStorage|Mobile Documents)[\\/]"
+    r"|[\\/](?:OneDrive|Dropbox|Google Drive|iCloud Drive)[^\\/]*[\\/]", re.I)
+
+
+def is_synced_folder(folder: Path) -> bool:
+    return bool(_SYNCED_RE.search(str(folder) + "/"))
+
+
+def _fnv(s: str) -> str:
+    h = 0x811C9DC5
+    for ch in s:
+        h = ((h ^ ord(ch)) * 0x01000193) & 0xFFFFFFFF
+    return f"{h:08x}"
+
+
+def files_dir(folder: Path, stem: str) -> Path:
+    """Where a document's figures unpack: under .kherve/, or for a folder a
+    cloud service syncs, in a local folder of the project's own. There the
+    service uploaded every unpacked picture again, and while it did reading
+    one timed out: the compile stopped ("Operation timed out")."""
+    if is_synced_folder(folder):
+        import tempfile
+        d = Path(tempfile.gettempdir()) / "khervetex-files" / _fnv(str(folder)) / stem
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+    return work_dir(folder) / "files" / stem
+
+
 def read_doc(path: Path) -> Document:
-    """Load a project document; .ktex figures unpack under .kherve/."""
+    """Load a project document; .ktex figures unpack under .kherve/ (or
+    files_dir's local folder)."""
     path = Path(path)
     if kdocz.is_kdocz_path(path):
-        doc, _ = kdocz.load_kdocz(
-            path, work_dir(path.parent) / "files" / doc_stem(path))
+        doc, _ = kdocz.load_kdocz(path, files_dir(path.parent, doc_stem(path)))
         return doc
     return from_json(path.read_text(encoding="utf-8"))
 

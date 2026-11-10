@@ -1982,6 +1982,11 @@ def import_docx(docx_path: Path, image_dir: Path) -> Document:
             pending_list_ordered = False
 
     for child_elem in body:
+        # The paragraph before ended a Word section (its w:sectPr).
+        _prev = child_elem.getprevious()
+        if (_prev is not None and _prev.tag == qn("w:p")
+                and _prev.find(qn("w:pPr") + "/" + qn("w:sectPr")) is not None):
+            children.append(RawLatex(text=_SECTION_MARK))
         tag = child_elem.tag.rpartition("}")[-1]  # strip namespace
 
         # --- Table ---
@@ -2004,7 +2009,7 @@ def import_docx(docx_path: Path, image_dir: Path) -> Document:
         style_name = (para.style.name or "") if para.style else ""
         kind, level = _classify_style(style_name, para.style)
 
-        text_runs = _runs_to_inlines(para)
+        text_runs = _runs_to_inlines(para, author=kind == "author")
 
         # Detect embedded images.
         para_images = _images_in_paragraph(para, src, image_dir, image_counter)
@@ -2066,12 +2071,23 @@ def import_docx(docx_path: Path, image_dir: Path) -> Document:
     _flush_list()
 
     meta = DocMeta(title=title, author=author)
+    # The page in the columns of the section that holds most of the text.
+    columns = _main_columns(src.element.body)
+    if 2 <= columns <= 4:
+        meta.column_count = columns
+    children = _order_column_authors(children)
+    # Empty paragraphs before the first text (a template's spacing above
+    # its title) printed as lines of their own: before \maketitle they made
+    # a page of nothing.
+    while children and isinstance(children[0], Paragraph) and not any(
+            not (isinstance(c, Text) and not c.text.strip()) for c in children[0].children):
+        children.pop(0)
     return Document(meta=meta, children=children)
 
 
 # --- Inline extraction (with hyperlinks, footnotes, sub/superscript) -------
 
-def _runs_to_inlines(para) -> list:
+def _runs_to_inlines(para, author: bool = False) -> list:
     """Extract inline content from a paragraph, including hyperlinks."""
     from docx.oxml.ns import qn
     out: list = []
@@ -2082,6 +2098,9 @@ def _runs_to_inlines(para) -> list:
         tag = elem.tag.rpartition("}")[-1]
 
         if tag == "r":
+            if elem.find(qn("w:br")) is not None:
+                out.extend(_run_with_breaks(elem, para, author))
+                continue
             inline = _run_element_to_inline(elem, para)
             if inline is not None:
                 out.append(inline)
@@ -2110,7 +2129,169 @@ def _runs_to_inlines(para) -> list:
     # Append footnote markers at the end of inline content.
     _extract_footnotes(para, out)
 
+    return _tidy_breaks(out)
+
+
+# Word's breaks inside a paragraph (<w:br/>): a line break is LaTeX's \\,
+# and in an author paragraph that Word sets in columns (an IEEE paper's
+# authors side by side) a column break separates two authors, \and, as
+# \maketitle sets them side by side. Dropped, the lines ran together
+# ("Surnameline 2:") and off the page.
+_LINE_BREAK = "\\\\"
+_AUTHOR_BREAK = "\\and{}"
+
+
+def _run_with_breaks(run_elem, para, author: bool) -> list:
+    """A run holding breaks: each piece of its text, with its formatting,
+    and the breaks between them."""
+    import copy
+    from docx.oxml.ns import qn
+    out: list = []
+    for child in run_elem:
+        tag = child.tag.rpartition("}")[-1]
+        if tag == "t":
+            piece = copy.deepcopy(run_elem)
+            for c in list(piece):
+                if c.tag != qn("w:rPr"):
+                    piece.remove(c)
+            piece.append(copy.deepcopy(child))
+            inline = _run_element_to_inline(piece, para)
+            if inline is not None:
+                out.append(inline)
+        elif tag == "br":
+            kind = child.get(qn("w:type")) or "textWrapping"
+            if kind == "page":
+                continue
+            out.append(InlineRaw(latex=_AUTHOR_BREAK if author and kind == "column"
+                                 else _LINE_BREAK))
     return out
+
+
+def _tidy_breaks(out: list) -> list:
+    """No break at the start or the end of a paragraph (LaTeX: "There's no
+    line here to end"), and one where several follow each other."""
+    def is_break(x):
+        return isinstance(x, InlineRaw) and x.latex in (_LINE_BREAK, _AUTHOR_BREAK)
+    def blank(x):
+        return isinstance(x, Text) and not x.text.strip()
+    tidy: list = []
+    for x in out:
+        if is_break(x):
+            while tidy and blank(tidy[-1]):
+                tidy.pop()
+            if not tidy or (is_break(tidy[-1]) and tidy[-1].latex == _AUTHOR_BREAK):
+                continue
+            if is_break(tidy[-1]):
+                tidy[-1] = x if x.latex == _AUTHOR_BREAK else tidy[-1]
+                continue
+        elif blank(x) and tidy and is_break(tidy[-1]):
+            continue
+        tidy.append(x)
+    end = len(tidy)
+    while end and blank(tidy[end - 1]):
+        end -= 1
+    if end and is_break(tidy[end - 1]):
+        tidy = tidy[:end - 1]
+    return tidy
+
+
+# Between the blocks of two Word sections while a document is read
+# (_order_column_authors takes them out again).
+_SECTION_MARK = "%% kt-section-end"
+
+
+def _order_column_authors(children: list) -> list:
+    """Authors Word sets in columns, in reading order. Word fills a column
+    before the next: an IEEE paper's six authors in three columns come as
+    1, 4 | 2, 5 | 3, 6 (a column break, \\and, between columns, a new
+    paragraph for the next author down). Read row by row they are 1 to 6,
+    one author block whose \\and set them side by side. The section marks
+    are dropped."""
+    def is_mark(b):
+        return isinstance(b, RawLatex) and b.text == _SECTION_MARK
+    def is_and(x):
+        return isinstance(x, InlineRaw) and x.latex == _AUTHOR_BREAK
+    out: list = []
+    i = 0
+    while i < len(children):
+        b = children[i]
+        if is_mark(b):
+            i += 1
+            continue
+        if not isinstance(b, Author):
+            out.append(b)
+            i += 1
+            continue
+        run: list = []
+        while i < len(children) and isinstance(children[i], Author):
+            run.append(children[i])
+            i += 1
+        if not any(is_and(x) for a in run for x in a.children):
+            out.extend(run)
+            continue
+        columns: list[list[list]] = [[]]
+        col = 0
+        for a in run:
+            unit: list = []
+            for x in a.children + [None]:
+                if x is None or is_and(x):
+                    if any(not (isinstance(u, Text) and not u.text.strip()) for u in unit):
+                        columns[col].append(unit)
+                    if x is not None:
+                        col += 1
+                        if col == len(columns):
+                            columns.append([])
+                    unit = []
+                else:
+                    unit.append(x)
+        # Author paragraphs just before (a note under the title, in the
+        # Author style) are entries of their own, ahead of the rows.
+        names: list = []
+        lead: list = []
+        while out and isinstance(out[-1], Author):
+            prev = out.pop()
+            if any(not (isinstance(u, Text) and not u.text.strip()) for u in prev.children):
+                lead.insert(0, prev.children)
+        for unit in lead:
+            if names:
+                names.append(InlineRaw(latex=_AUTHOR_BREAK))
+            names.extend(unit)
+        for row in range(max(len(c) for c in columns)):
+            for c in columns:
+                if row < len(c):
+                    if names:
+                        names.append(InlineRaw(latex=_AUTHOR_BREAK))
+                    names.extend(c[row])
+        out.append(Author(children=names))
+    return out
+
+
+def _main_columns(body) -> int:
+    """The columns of the Word section that holds most of the text (an IEEE
+    paper: its title in one column, its authors in three, its body in
+    two)."""
+    from docx.oxml.ns import qn
+    def cols(sect) -> int:
+        c = sect.find(qn("w:cols")) if sect is not None else None
+        try:
+            return max(1, int(c.get(qn("w:num")) or 1)) if c is not None else 1
+        except ValueError:
+            return 1
+    sections: list[tuple[int, int]] = []
+    chars = 0
+    for el in body:
+        tag = el.tag.rpartition("}")[-1]
+        if tag in ("p", "tbl"):
+            chars += len("".join(el.itertext()))
+            ppr = el.find(qn("w:pPr")) if tag == "p" else None
+            sect = ppr.find(qn("w:sectPr")) if ppr is not None else None
+            if sect is not None:
+                sections.append((chars, cols(sect)))
+                chars = 0
+        elif tag == "sectPr":
+            sections.append((chars, cols(el)))
+            chars = 0
+    return max(sections)[1] if sections else 1
 
 
 def _run_element_to_inline(run_elem, para):
