@@ -14,6 +14,7 @@ import re
 import shutil
 from pathlib import Path
 
+from .model import class_supports_chapter as _class_supports_chapter
 from .model import (
     Abstract, Author, Citation, CrossRef, DEFAULT_PACKAGES, Document, DocMeta,
     Theorem,
@@ -1257,6 +1258,8 @@ def import_tex(tex_source: str, base_dir: Path | None = None) -> Document:
             meta.frontmatter_extras = frontmatter_extras
 
     children = _parse_blocks(body)
+    if _class_supports_chapter(meta.documentclass or ""):
+        _shift_sections_for_chapters(children)
 
     # If the source had \title{...} but no Title block was reconstructed,
     # prepend one. Parse the title text as inlines so any nested macros
@@ -1303,7 +1306,20 @@ def import_tex(tex_source: str, base_dir: Path | None = None) -> Document:
     return Document(meta=meta, children=children)
 
 
-def import_body_fragment(latex: str) -> list:
+def _shift_sections_for_chapters(blocks: list) -> None:
+    r"""In report/book/memoir the serializer writes Heading 1 (level 1) as
+    \chapter and level n as the command one step up, while _SECTION_LEVEL
+    numbers \section 1 as in article. Without this an imported report's
+    \section came back as \chapter and every level below moved up one.
+    \chapter stays level 0, the editor's Chapter style, which also
+    serializes as \chapter; \subparagraph shares \paragraph's level 5,
+    the deepest the editor has."""
+    for b in blocks:
+        if isinstance(b, Section) and b.level >= 1:
+            b.level = min(b.level + 1, 5)
+
+
+def import_body_fragment(latex: str, *, has_chapters: bool = False) -> list:
     r"""Parse a LaTeX *body* fragment (no preamble) into a list of Block
     nodes, reusing the same block parser as `import_tex`.
 
@@ -1317,7 +1333,11 @@ def import_body_fragment(latex: str) -> list:
     body_m = _BODY_RE.search(src)
     if body_m:
         src = body_m.group(1)
-    return _parse_blocks(src)
+    blocks = _parse_blocks(src)
+    # Inserted into a report/book: \section is Heading 2 there, as in import_tex.
+    if has_chapters:
+        _shift_sections_for_chapters(blocks)
+    return blocks
 
 
 # ============================================================

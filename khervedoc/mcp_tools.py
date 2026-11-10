@@ -294,10 +294,12 @@ class ToolExecutor:
                             f"0..{n - 1}. Call get_outline again.")
         return start, end
 
-    @staticmethod
-    def _parse(latex: str) -> list:
+    def _parse(self, latex: str) -> list:
         from .importers import import_body_fragment
-        blocks = import_body_fragment(latex or "")
+        from .model import class_supports_chapter
+        blocks = import_body_fragment(
+            latex or "",
+            has_chapters=class_supports_chapter(self._doc().meta.documentclass or ""))
         if not blocks:
             raise ToolError("That LaTeX produced no content.")
         return blocks

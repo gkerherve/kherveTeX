@@ -665,12 +665,13 @@ Body text after the chapter.
     sections = [b for b in doc.children if isinstance(b, Section)]
     assert sections, "no Section blocks imported"
     levels = [s.level for s in sections]
-    assert 0 in levels   # the \chapter
-    assert 1 in levels   # the \section
-    # Round-trip preserves \chapter literally.
+    assert 0 in levels   # the \chapter (the editor's Chapter style)
+    assert 2 in levels   # the \section: Heading 2 in a report
+    # Round-trip preserves \chapter and \section literally.
     from khervedoc.serializer import serialize_document
     out = serialize_document(doc)
     assert "\\chapter{Introduction}" in out
+    assert "\\section{Background}" in out
 
 
 def test_unknown_macro_with_arg_preserved():

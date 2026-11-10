@@ -277,6 +277,13 @@ def _theorem_preamble(doc: Document) -> str:
     return "\n".join(lines)
 
 
+# The display environments the importer keeps whole in MathBlock.latex
+# (everything it recognises but equation itself; split is not one: it
+# only works inside an equation).
+_PREWRAPPED_MATH_RE = re.compile(
+    r"\s*\\begin\{(?:align|alignat|gather|multline|eqnarray|flalign|displaymath)\*?\}")
+
+
 def serialize_block(node: Block, *, has_chapters: bool = False,
                     float_h: bool = True) -> str:
     if isinstance(node, _TheoremEnv):
@@ -313,8 +320,11 @@ def serialize_block(node: Block, *, has_chapters: bool = False,
         # \begin{equation*}\begin{align*}...\end{align*}\end{equation*}
         # nesting and break compilation. Detect a pre-wrapped body and
         # emit it verbatim instead.
-        stripped = node.latex.lstrip()
-        if stripped.startswith("\\begin{"):
+        # Only a display environment counts: an equation whose body opens
+        # with \begin{split}, \begin{array} or \begin{cases} still needs
+        # its equation around it, or LaTeX stops ("split won't work here",
+        # "Missing $ inserted") and the equation loses its number.
+        if _PREWRAPPED_MATH_RE.match(node.latex):
             return f"{node.latex}\n"
         env = "equation" if node.numbered else "equation*"
         lab = _maybe_label(node.label) if node.numbered else ""

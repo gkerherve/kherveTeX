@@ -2808,7 +2808,9 @@ class DocumentEditor(QWidget):
             c.insertText(md.text(), self._body_char_format())
         elif how == "latex":
             from .importers import import_body_fragment
-            blocks = import_body_fragment(md.text())
+            blocks = import_body_fragment(
+                md.text(),
+                has_chapters=class_supports_chapter(self._meta.documentclass))
             if blocks:
                 self.insert_blocks(blocks)
         elif how == "picture":
