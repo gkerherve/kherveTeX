@@ -83,10 +83,10 @@ def test_pdf_thesis_headings_are_gathered_into_chapters():
     headings, "CHAPTER I" on a line of its own, a title in two halves."""
     h = lambda t: Section(level=1, children=[Text(text=t)])
     doc = Document(meta=DocMeta(documentclass="article"), children=[
-        h("Production of metal clusters"), _para(),
+        h("A Study of River Deltas"), _para(),
         h("Acknowledgement"), _para(), h("Contents"), _para(), h("List of Figures"), _para(),
         h("CHAPTERI"), h("Introduction"), *[_para() for _ in range(10)],
-        h("CHAPTER II"), h("Investigation of clusters grown by"), h("Volmer-Weber mode"),
+        h("CHAPTER II"), h("Sediment transport in tidal"), h("channels and estuaries"),
         *[_para() for _ in range(10)],
         h("Chapter 3"), h("Summary"), _para(),
         h("Appendix A"), _para(), h("Bibliography"), _para(),
@@ -95,7 +95,7 @@ def test_pdf_thesis_headings_are_gathered_into_chapters():
     assert [(label, kind, len(blocks)) for label, kind, blocks in plan] == [
         ("Front matter", "frontmatter", 8),
         ("Introduction", "chapter", 12),
-        ("Investigation of clusters grown by Volmer-Weber mode", "chapter", 13),
+        ("Sediment transport in tidal channels and estuaries", "chapter", 13),
         ("Summary", "chapter", 3),
         ("Appendix A", "appendix", 2),
         ("Bibliography", "appendix", 2)]
