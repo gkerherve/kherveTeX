@@ -143,12 +143,78 @@ def test_split_into_documents_command_opens_the_project(tmp_path: Path, monkeypa
     w._settings = QSettings(str(tmp_path / "s.ini"), QSettings.IniFormat)
     src = tmp_path / "thesis.ktex"
     kdocz.save_kdocz(_thesis(), src)
-    w._open_path(src)
     asked = []
-    monkeypatch.setattr(w, "_ask_split", lambda name, doc, folder, keep: asked.append((name, folder.name, keep)) or "chapter")
+    # Opening it asks first (kept as one document); the command asks again.
+    answers = iter([None, "chapter"])
+    monkeypatch.setattr(w, "_ask_split", lambda name, doc, folder, keep: asked.append((name, folder.name, keep)) or next(answers))
+    w._open_path(src)
     w._split_into_documents()
-    assert asked == [("thesis.ktex", "thesis (chapters)", "Cancel")]
+    assert asked == [("thesis.ktex", "thesis (chapters)", "Keep as one document"),
+                     ("thesis.ktex", "thesis (chapters)", "Cancel")]
     assert w._project is not None
     assert [c.label for c in w._project.chapters] == [
         "Front matter", "Introduction", "Methods", "Results", "Derivations"]
     assert w._project_path == tmp_path / "thesis (chapters)" / "Front matter.ktex"
+
+
+def test_opening_a_long_document_asks_once(tmp_path: Path, monkeypatch):
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QSettings
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication([])
+    from khervedoc.mainwindow import MainWindow
+    from khervedoc import kdocz
+    w = MainWindow(theme_name="Light")
+    w._settings = QSettings(str(tmp_path / "s.ini"), QSettings.IniFormat)
+    src = tmp_path / "book.ktex"
+    kdocz.save_kdocz(_thesis(), src)
+    asked = []
+    monkeypatch.setattr(w, "_ask_split", lambda name, doc, folder, keep: asked.append(keep) or None)
+    w._open_path(src)
+    assert asked == ["Keep as one document"]
+    assert w._project is None and w._current_path == src
+    # Kept as one document: not asked again.
+    w._open_path(src)
+    assert asked == ["Keep as one document"]
+    # A short document is never asked about.
+    short = tmp_path / "note.ktex"
+    kdocz.save_kdocz(_thesis(paras=1), short)
+    w._open_path(short)
+    assert len(asked) == 1
+    # Split when asked: the project opens.
+    other = tmp_path / "other.ktex"
+    kdocz.save_kdocz(_thesis(), other)
+    monkeypatch.setattr(w, "_ask_split", lambda *a: "chapter")
+    w._open_path(other)
+    assert w._project is not None
+    assert w._project_path.parent.name == "other (chapters)"
+
+
+def test_documents_panel_button_in_the_status_bar(tmp_path: Path, monkeypatch):
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QSettings
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication([])
+    from khervedoc.mainwindow import MainWindow
+    w = MainWindow(theme_name="Light")
+    w._settings = QSettings(str(tmp_path / "s.ini"), QSettings.IniFormat)
+    w.show()
+    assert not w._docs_btn.isVisible()
+    main = chapter_split.write_chapter_project(_thesis(), tmp_path / "split", "thesis")
+    w._open_project_from_path(main)
+    # Its "Opened project" message covers the bar's left side until it ends.
+    w._status.clearMessage()
+    QApplication.processEvents()
+    assert w._docs_btn.isVisible() and w._docs_btn.isChecked() and w._project_dock.isVisible()
+    w._docs_btn.click()
+    QApplication.processEvents()
+    assert not w._project_dock.isVisible() and not w._docs_btn.isChecked()
+    w._docs_btn.click()
+    QApplication.processEvents()
+    assert w._project_dock.isVisible()
+    w._leave_project()
+    w._status.showMessage("x", 1)
+    w._status.clearMessage()
+    assert not w._docs_btn.isVisible()

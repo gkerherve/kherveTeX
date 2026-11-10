@@ -1113,6 +1113,18 @@ class MainWindow(QMainWindow):
         self._recent_combo.setFixedWidth(170)
         self._recent_combo.activated.connect(self._on_recent_combo)
         self._status.addWidget(self._recent_combo)
+        # The Documents panel of a project of several documents, on or off
+        # (the panel's own toggle, as View > Documents and Ctrl+5); shown
+        # while a project is open.
+        docs_act = self._project_dock.toggleViewAction()
+        docs_act.setIcon(icons.project_open())
+        docs_act.setToolTip("Show or hide the Documents panel (Ctrl+5)")
+        self._docs_btn = QToolButton(self)
+        self._docs_btn.setDefaultAction(docs_act)
+        self._docs_btn.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self._docs_btn.setAutoRaise(True)
+        self._docs_btn.setVisible(False)
+        self._status.addWidget(self._docs_btn)
         self._refresh_recent_combo()
 
         # Left side: full document path (or "Untitled" before first save).
@@ -3060,7 +3072,7 @@ class MainWindow(QMainWindow):
             self._io_stop()
             QMessageBox.critical(self, "Open failed", str(exc))
             return
-        if is_import and self._offer_chapter_split(path, doc):
+        if self._offer_chapter_split(path, doc, opened=not is_import):
             self._io_stop()
             return
         if is_import:
@@ -3135,18 +3147,31 @@ class MainWindow(QMainWindow):
         self._status.showMessage(f"Split into {n} documents in {folder.name}", 8000)
         return True
 
-    def _offer_chapter_split(self, path: Path, doc: Document) -> bool:
-        """A long imported document with chapters (a thesis, a book): offer
-        to make it a project with one document per chapter or per section,
-        written to a new folder beside the file. True when it was split and
-        opened."""
+    def _offer_chapter_split(self, path: Path, doc: Document,
+                             opened: bool = False) -> bool:
+        """A long document with chapters (a thesis, a book), imported or
+        opened: offer to make it a project with one document per chapter or
+        per section, written to a new folder beside the file. True when it
+        was split and opened. A file kept as one document when opened is
+        not asked about again."""
         from . import chapter_split
         if not chapter_split.should_offer(doc):
+            return False
+        declined = [str(p) for p in (self._settings.value("split_declined", []) or [])
+                    ] if opened else []
+        if isinstance(self._settings.value("split_declined", []), str):
+            declined = [self._settings.value("split_declined")]
+        if opened and str(path) in declined:
             return False
         folder = chapter_split.project_folder(path)
         self._io_stop()
         by = self._ask_split(path.name, doc, folder, "Keep as one document")
-        return by is not None and self._split_and_open(doc, folder, path.stem, by)
+        if by is None:
+            if opened:
+                self._settings.setValue("split_declined", declined + [str(path)])
+            return False
+        return self._split_and_open(
+            doc, folder, self._doc_stem(path) if opened else path.stem, by)
 
     def _split_into_documents(self) -> None:
         """File > Project > Split into documents: the open document as a
@@ -3435,6 +3460,7 @@ class MainWindow(QMainWindow):
         self._project_chapter_docs.clear()
         self._project_sidebar.set_project(proj)
         self._project_dock.show()
+        self._docs_btn.setVisible(True)
         self._update_title()
         # Open the first chapter
         if proj.chapters:
@@ -3535,6 +3561,7 @@ class MainWindow(QMainWindow):
         self._project_chapter_idx = -1
         self._project_chapter_docs.clear()
         self._project_sidebar.set_active_index(-1)
+        self._docs_btn.setVisible(False)
 
     def _flush_current_chapter(self) -> None:
         """Save the editor's current document back to the chapter file."""
