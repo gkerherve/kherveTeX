@@ -906,6 +906,9 @@ def _uses_booktabs(doc: Document) -> bool:
     return walk(doc.children)
 
 
+_DATE_ONLY_RE = re.compile(r"(?:\s*\\date\{[^{}]*\}\s*)+")
+
+
 def serialize_document(doc: Document) -> str:
     from . import page_sizes
     page = page_sizes.by_code(doc.meta.page_size)
@@ -1115,6 +1118,15 @@ def serialize_document(doc: Document) -> str:
 
     parts: list[str] = []
     emitted_maketitle = False
+    # Front matter that is only \date{} (a Word or PDF import: no date to
+    # print) is no Wiley author block: it goes first and the title, author
+    # and abstract follow as usual. Taken for one, the abstract went before
+    # \maketitle as \abstract{...}, which in article opens the abstract
+    # environment and pushed the title onto the next page.
+    if (fm_extras and not is_elsarticle
+            and _DATE_ONLY_RE.fullmatch(fm_extras)):
+        parts.append(fm_extras + "\n")
+        fm_extras = ""
     # Wiley-style journal classes: emit body-level frontmatter commands
     # (multi-author, addresses, etc.) at the top of the body, followed
     # by \maketitle.
