@@ -479,6 +479,55 @@ _ACCENT_COMBINING = {
 }
 
 
+# Text-symbol commands -> the character they print. Left as raw LaTeX
+# they showed in the editor as code chips (5~\AA{} thick); the character
+# serializes as itself, which XeLaTeX prints. Like LaTeX, the {} or the
+# spaces after the command word are part of it.
+_TEXT_SYMBOLS = {
+    "AA": "\u00c5",
+    "aa": "\u00e5",
+    "AE": "\u00c6",
+    "ae": "\u00e6",
+    "OE": "\u0152",
+    "oe": "\u0153",
+    "O": "\u00d8",
+    "o": "\u00f8",
+    "ss": "\u00df",
+    "L": "\u0141",
+    "l": "\u0142",
+    "i": "\u0131",
+    "textdegree": "\u00b0",
+    "textmu": "\u00b5",
+    "textperthousand": "\u2030",
+    "textcopyright": "\u00a9",
+    "copyright": "\u00a9",
+    "textregistered": "\u00ae",
+    "texttrademark": "\u2122",
+    "pounds": "\u00a3",
+    "textsterling": "\u00a3",
+    "S": "\u00a7",
+    "P": "\u00b6",
+    "dag": "\u2020",
+    "ddag": "\u2021",
+    "textbullet": "\u2022",
+    "textendash": "\u2013",
+    "textemdash": "\u2014",
+    "ldots": "\u2026",
+    "dots": "\u2026",
+    "textellipsis": "\u2026",
+    "textquoteleft": "\u2018",
+    "textquoteright": "\u2019",
+    "textquotedblleft": "\u201c",
+    "textquotedblright": "\u201d",
+    "guillemotleft": "\u00ab",
+    "guillemotright": "\u00bb",
+    "textless": "\u003c",
+    "textgreater": "\u003e",
+    "textbar": "\u007c",
+    "textunderscore": "\u005f",
+}
+
+
 def _match_macro(s: str, i: int) -> tuple[object, int] | None:
     """Try to consume a recognised macro at position i. Returns (node, end)
     where end is the index past the macro, or None if not recognised."""
@@ -494,6 +543,9 @@ def _match_macro(s: str, i: int) -> tuple[object, int] | None:
             arg, after = _consume_braced(s, j)
             if arg is not None and len(arg) == 1 and arg.isalpha():
                 base, end = arg, after
+            elif arg is not None and arg.strip() in ("\\i", "\\j"):
+                # na\"{\i}ve: the dotless i under an accent is the letter.
+                base, end = arg.strip()[1], after
         elif j < len(s) and s[j].isalpha():
             base, end = s[j], j + 1
         if base is not None:
@@ -549,6 +601,14 @@ def _match_macro(s: str, i: int) -> tuple[object, int] | None:
     if name == "sep":
         # Elsevier keyword separator — render as a middle dot.
         return Text(text=" · "), after
+    if name in _TEXT_SYMBOLS and s[after - 1] != "*":
+        end = after
+        if s.startswith("{}", end):
+            end += 2
+        else:
+            while end < len(s) and s[end] in " \t\n":
+                end += 1
+        return Text(text=_TEXT_SYMBOLS[name]), end
     if name == "verb":
         # \verb<delim>...<delim> — inline verbatim, render as code mark.
         if after >= len(s): return None
