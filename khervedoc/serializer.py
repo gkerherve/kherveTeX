@@ -543,6 +543,14 @@ def _table_packages(doc: Document) -> list[str]:
     return need
 
 
+def _with_strikeout(packages: str, *scanned: str) -> str:
+    """ulem for \\sout (strikethrough), [normalem] so \\emph stays italic.
+    Without it a struck-out word stopped the compile."""
+    if "\\sout{" in "".join(scanned) and "{ulem}" not in packages:
+        return packages + "\n\\usepackage[normalem]{ulem}"
+    return packages
+
+
 def _with_url_breaking(packages: str, *scanned: str) -> str:
     r"""Append ``\usepackage{xurl}`` when the document emits a URL.
 
@@ -1082,6 +1090,7 @@ def serialize_document(doc: Document) -> str:
         if natbib:
             packages = _with_natbib(packages, m)
         packages = _with_url_breaking(packages, packages, frontmatter, body)
+        packages = _with_strikeout(packages, packages, frontmatter, body)
         return (
             f"{_documentclass_line(m)}\n"
             f"{packages}\n"
@@ -1259,6 +1268,7 @@ def serialize_document(doc: Document) -> str:
     if natbib:
         packages = _with_natbib(packages, m)
     packages = _with_url_breaking(packages, packages, preamble_meta, body)
+    packages = _with_strikeout(packages, packages, preamble_meta, body)
     return (
         f"{_documentclass_line(m)}\n"
         f"{packages}\n"

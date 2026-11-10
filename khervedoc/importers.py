@@ -2035,8 +2035,17 @@ def import_docx(docx_path: Path, image_dir: Path) -> Document:
         alignment = _para_alignment(para)
 
         if kind == "title":
-            title = "".join(r.text for r in text_runs if isinstance(r, Text))
-            children.append(Title(children=text_runs))
+            # One title: an empty Title paragraph is left out, and a later
+            # one ("CONTENTS" set in the Title style) is an unnumbered
+            # heading. Two titles printed \maketitle twice, the first with
+            # no \title, and the compile stopped.
+            if not any(isinstance(r, Text) and r.text.strip() for r in text_runs):
+                pass
+            elif any(isinstance(c, Title) for c in children):
+                children.append(Section(level=1, children=text_runs, numbered=False))
+            else:
+                title = "".join(r.text for r in text_runs if isinstance(r, Text))
+                children.append(Title(children=text_runs))
         elif kind == "heading":
             children.append(Section(level=level, children=text_runs))
         elif kind == "author":
