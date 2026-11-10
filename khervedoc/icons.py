@@ -1061,6 +1061,20 @@ def project_open() -> QIcon:
     return c.done()
 
 
+def split_documents() -> QIcon:
+    """One long document split into several: a page, an arrow, three
+    small pages."""
+    c = _W()
+    c.page(2, 3, 9, 18, 2.5)
+    for y in (8, 10.5, 13, 15.5):
+        c.line(4, y, 9, y, _blue(), 1)
+    c.line(12, 12, 15, 12, _blue(), 1.4)
+    c.poly([(14, 10), (16.5, 12), (14, 14)], color=_blue(), fill=_blue(), lw=1)
+    for y in (2.5, 9.5, 16.5):
+        c.page(17, y, 5.5, 5.5, 1.5)
+    return c.done()
+
+
 def _undo_arrow(mirror: bool) -> QIcon:
     """Word's curved arrow with a solid head."""
     x = (lambda v: 24 - v) if mirror else (lambda v: v)

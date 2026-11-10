@@ -1337,8 +1337,10 @@ class MainWindow(QMainWindow):
         # Project
         self.act_new_project = QAction("New &project...", self,
                                        triggered=self._new_project)
-        self.act_split_documents = QAction("&Split into documents...", self,
+        self.act_split_documents = QAction(icons.split_documents(), "&Split into documents...", self,
                                            triggered=self._split_into_documents)
+        self.act_split_documents.setToolTip(
+            "Split into documents: one per chapter or per section, as a project")
         self.act_open_project = QAction(icons.project_open(), "Open pro&ject...", self,
                                         triggered=self._open_project)
         self.act_save_project = QAction("Save projec&t", self,
@@ -2735,6 +2737,9 @@ class MainWindow(QMainWindow):
                                            self.act_cols_1, self.act_cols_2,
                                            self.act_cols_3])
         lay.add_group("Document type", large=[self._class_button])
+        # A long document as a project of smaller ones, and their list.
+        lay.add_group("Documents", large=[self.act_split_documents,
+                                          self._project_dock.toggleViewAction()])
         ex = rb.add_tab("Examples")
         ex.add_group("Start", large=[self.act_new, self.act_tour])
         ex.add_group("Examples & templates", large=[
