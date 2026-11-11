@@ -1504,6 +1504,9 @@ class MainWindow(QMainWindow):
                                     triggered=e.insert_footnote)
         self.act_citation = QAction(icons.citation(), "&Citation...", self,
                                     triggered=self._insert_citation)
+        self.act_manage_references = QAction(
+            icons.manage_references(), "&Manage references…", self,
+            triggered=self._manage_references)
         self.act_check_citations = QAction(
             "Check c&itations", self, triggered=self._check_citations,
             statusTip="List cited keys that no KherveRef library or "
@@ -1920,6 +1923,7 @@ class MainWindow(QMainWindow):
         m_insert.addAction(self.act_link)
         m_insert.addAction(self.act_footnote)
         m_insert.addAction(self.act_citation)
+        m_insert.addAction(self.act_manage_references)
         m_insert.addAction(self.act_crossref)
         m_insert.addAction(self.act_comment)
         m_insert.addSeparator()
@@ -2777,7 +2781,8 @@ class MainWindow(QMainWindow):
         mine = self._gallery_button("My templates", self._custom_tpl_menu)
         ex.add_group("Your own", large=[mine, self.act_save_as_template])
         ref = rb.add_tab("References")
-        ref.add_group("Citations", large=[self.act_citation])
+        ref.add_group("Citations", large=[self.act_citation,
+                                          self.act_manage_references])
         ref.add_group("Footnotes", large=[self.act_footnote])
         ref.add_group("Captions", large=[self.act_caption,
                                          self.act_crossref])
@@ -4883,6 +4888,7 @@ class MainWindow(QMainWindow):
         self.act_link.setIcon(icons.link())
         self.act_footnote.setIcon(icons.footnote())
         self.act_citation.setIcon(icons.citation())
+        self.act_manage_references.setIcon(icons.manage_references())
         self.act_crossref.setIcon(icons.cross_ref())
         self.act_figure.setIcon(icons.figure())
         self.act_table.setIcon(icons.table())
@@ -6110,6 +6116,31 @@ class MainWindow(QMainWindow):
         self._editor.insert_citation_keys(dlg.keys(), dlg.style())
         self._refresh_kherveref_bib(self._editor.get_document())
 
+    def _manage_references(self) -> None:
+        """References ▸ Manage references: the document's own list. It
+        starts from the list the document has (for a document citing from
+        a KherveRef library, its cited entries); a changed list becomes
+        the document's own (DOCUMENT_LIBRARY), bundled in its .ktex."""
+        from .reference_manager import ReferenceManager
+        doc = self._editor.get_document()
+        meta = self._editor.meta()
+        start = self._bundled_bib
+        if meta.ref_library != kherveref_link.DOCUMENT_LIBRARY:
+            start, _missing = kherveref_link.bibliography_for(doc, self._bundled_bib)
+            start = start or self._bundled_bib
+        dlg = ReferenceManager(start, kherveref_link.cited_keys(doc),
+                               meta.ref_library, parent=self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        if dlg.changed() or (dlg.text() and meta.ref_library
+                             != kherveref_link.DOCUMENT_LIBRARY):
+            self._bundled_bib = dlg.text()
+            meta.ref_library = kherveref_link.DOCUMENT_LIBRARY
+            self._editor.text_edit.document().setModified(True)
+        if dlg.cite_keys():
+            self._editor.insert_citation_keys(dlg.cite_keys(), "cite")
+        self._refresh_kherveref_bib(self._editor.get_document())
+
     def _check_citations(self) -> None:
         doc = self._editor.get_document()
         keys = kherveref_link.cited_keys(doc)
@@ -6124,14 +6155,18 @@ class MainWindow(QMainWindow):
                 self, "Citations",
                 f"All {len(keys)} cited keys are defined.")
             return
-        where = (kherveref_link.library_name(doc.meta.ref_library)
+        own = doc.meta.ref_library == kherveref_link.DOCUMENT_LIBRARY
+        where = ("this document's references" if own
+                 else kherveref_link.library_name(doc.meta.ref_library)
                  if doc.meta.ref_library else "any bibliography")
         QMessageBox.warning(
             self, "Citations",
             f"{len(missing)} of {len(keys)} cited keys are not in {where}:\n\n"
             + "\n".join(missing)
-            + "\n\nAdd them in KherveRef (they then appear here), or fix "
-              "the keys.")
+            + ("\n\nAdd them in References ▸ Manage references (they are "
+               "listed there as missing), or fix the keys." if own else
+               "\n\nAdd them in KherveRef (they then appear here), in "
+               "References ▸ Manage references, or fix the keys."))
 
     def _resolved_source_dir(self) -> Path | None:
         """Where to look for relative asset paths (\\includegraphics etc.).

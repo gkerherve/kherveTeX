@@ -20,6 +20,9 @@ from .model import Citation, Document
 from .references import _walk
 
 BIB_NAME = "kherveref"           # \bibliography{kherveref}
+# DocMeta.ref_library of a document that keeps its own list of references
+# (doc_references.py): its kherveref.bib holds every entry, cited or not.
+DOCUMENT_LIBRARY = "document"
 BIB_FILE = f"{BIB_NAME}.bib"
 LIBRARY_BIB = "library.bib"
 
@@ -154,7 +157,11 @@ def bibliography_for(doc: Document, bundled: str = "",
 
     Sources, in order: the document's own library (when present on this
     machine), the copy bundled in the .ktex, then any .bib files in
-    *extra_dirs* (e.g. the document's folder)."""
+    *extra_dirs* (e.g. the document's folder).
+
+    A document with its own list (DOCUMENT_LIBRARY) gets the whole list
+    back, cited or not: it is the list, kept in the .ktex as it is; the
+    keys it lacks are those no source has."""
     texts: list[str] = []
     if is_library(doc.meta.ref_library):
         try:
@@ -172,6 +179,9 @@ def bibliography_for(doc: Document, bundled: str = "",
                 except OSError:
                     pass
     keys = cited_keys(doc)
+    if doc.meta.ref_library == DOCUMENT_LIBRARY:
+        have = {k for t in texts for k in split_bib(t)}
+        return (bundled if bundled.strip() else ""), [k for k in keys if k not in have]
     if not keys:
         return "", []
     strings = [d for t in texts for d in string_definitions(t)]

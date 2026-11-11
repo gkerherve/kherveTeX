@@ -44,7 +44,7 @@ class CitationPicker(QDialog):
         for p in libs:
             self._lib.addItem(f"{kr.library_name(p)} — {p}", str(p))
         if bundled_bib:
-            self._lib.addItem("References carried in this document", _BUNDLED)
+            self._lib.addItem("This document's references", _BUNDLED)
         self._lib.addItem("Other library folder…", _BROWSE)
         if current_library:
             i = self._lib.findData(str(Path(current_library)))
@@ -97,7 +97,7 @@ class CitationPicker(QDialog):
         lay.addLayout(bottom)
         row = QHBoxLayout()
         hint = QLabel("Ctrl/Shift-click to cite several. Add references in "
-                      "KherveRef; they appear here after it saves.")
+                      "References ▸ Manage references, or in KherveRef.")
         hint.setStyleSheet("color: gray;")
         row.addWidget(hint, 1)
         row.addWidget(buttons)

@@ -193,6 +193,12 @@ TIPS: dict[str, tuple[str, str, str]] = {
         "Cites a reference from your KherveRef library at the cursor. "
         "The reference list at the end is built automatically.",
         "Becomes \\cite{key} (or \\citep / \\citet); the reference list uses the document's bibliography style."),
+    "act_manage_references": ("Manage references",
+        "The document's own list of references, like a small KherveRef "
+        "kept inside the .ktex: search it, see which references are cited "
+        "and which cited keys are missing, add, edit or import references "
+        "(.bib, KherveRef) and cite them.",
+        "The list is the document's .bib; \\bibliography prints the cited ones."),
     "act_crossref": ("Cross-reference",
         "Refers to a numbered figure, table, equation or section, e.g. "
         "\"see Figure 3\". The number updates if things move.",

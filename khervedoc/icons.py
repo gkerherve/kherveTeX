@@ -1435,6 +1435,17 @@ def citation() -> QIcon:
     return c.done()
 
 
+def manage_references() -> QIcon:
+    """The document's references: a list of entries and a magnifier."""
+    c = _W()
+    c.rect(3, 3, 14, 18, fill=_tint(), color=_blue(), r=1)
+    for y in (7.5, 11, 14.5):
+        c.line(6, y, 14, y, _blue(), 1.2)
+    c.rect(13.5, 12.5, 7.5, 7.5, color=_fg(), fill=_paper(), r=3.75, lw=1.3)
+    c.line(19.8, 19.6, 22.5, 22.3, _fg(), 1.8)
+    return c.done()
+
+
 def cross_ref() -> QIcon:
     c = _W()
     c.poly([(6, 3), (18, 3), (18, 21), (12, 16.5), (6, 21)], fill=_tint(),
