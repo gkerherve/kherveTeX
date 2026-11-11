@@ -50,6 +50,32 @@ def _is_checkable(word: str) -> bool:
     return all(c.isalpha() or c in "'’-" for c in word)
 
 
+# Characters of the paragraph shown on each side of a mistake in the
+# Spelling panel.
+CONTEXT_CHARS = 30
+
+
+def context_around(text: str, start: int, end: int,
+                   width: int = CONTEXT_CHARS) -> tuple[str, str]:
+    """The text before and after text[start:end] in its paragraph, for
+    the Spelling panel's list: at most `width` characters each side, cut
+    at a word, whitespace runs shown as one space, an ellipsis where the
+    paragraph goes on. Inline objects (U+FFFC) read as a space."""
+    def tidy(s: str) -> str:
+        return re.sub(r"\s+", " ", s.replace("\ufffc", " "))
+    before = text[:start]
+    after = text[end:]
+    if len(before) > width:
+        cut = before[-width:]
+        sp = cut.find(" ")
+        before = "…" + (cut[sp + 1:] if 0 <= sp < width - 1 else cut)
+    if len(after) > width:
+        cut = after[:width]
+        sp = cut.rfind(" ")
+        after = (cut[:sp] if sp > 0 else cut) + "…"
+    return tidy(before).lstrip(), tidy(after).rstrip()
+
+
 class SpellHighlighter(QSyntaxHighlighter):
     """Underline unknown English words in red as the user types.
 
@@ -74,6 +100,10 @@ class SpellHighlighter(QSyntaxHighlighter):
         # custom dictionary entries land here so they're treated as
         # known. Kept lowercase.
         self._ignored: set[str] = set()
+        # The words added to the dictionary (not those only ignored),
+        # and who keeps them: MainWindow saves them in its settings.
+        self._added: list[str] = []
+        self.on_word_added = None
 
     # ---- public API ---------------------------------------------------
 
@@ -89,9 +119,21 @@ class SpellHighlighter(QSyntaxHighlighter):
         self.rehighlight()
 
     def add_to_dictionary(self, word: str) -> None:
-        """Mark `word` as known for the rest of this session. Useful
-        when the user right-clicks a flagged word and picks "Add to
-        dictionary"."""
+        """Mark `word` as known: "Add to dictionary" in the right-click
+        menu and the Spelling panel. The window keeps the user's words
+        (on_word_added) so they stay known in later sessions."""
+        if not word:
+            return
+        self.ignore_word(word)
+        key = word.lower()
+        if key not in self._added:
+            self._added.append(key)
+            if self.on_word_added is not None:
+                self.on_word_added(key)
+
+    def ignore_word(self, word: str) -> None:
+        """Stop flagging `word` for the rest of this session (the
+        Spelling panel's Ignore all)."""
         if not word:
             return
         self._ignored.add(word.lower())
@@ -99,6 +141,19 @@ class SpellHighlighter(QSyntaxHighlighter):
         # by the very next highlight pass.
         self._unknown_cache.pop(word.lower(), None)
         self.rehighlight()
+
+    def load_dictionary(self, words) -> None:
+        """The user's own words, kept from earlier sessions."""
+        for w in words:
+            if w and w.lower() not in self._added:
+                self._added.append(w.lower())
+                self._ignored.add(w.lower())
+        self._unknown_cache.clear()
+        self.rehighlight()
+
+    def added_words(self) -> list[str]:
+        """The words the user added to the dictionary, in order."""
+        return list(self._added)
 
     def is_misspelled(self, word: str) -> bool:
         """True if `word` looks like a checkable English word that the
@@ -123,7 +178,9 @@ class SpellHighlighter(QSyntaxHighlighter):
         """Top correction suggestions for `word`, ordered by
         pyspellchecker's confidence. Empty list if the dictionary has
         nothing — happens for very long nonsense strings."""
-        if not self._enabled or not _AVAILABLE or not word:
+        # Only the dictionary is needed: the Spelling panel lists
+        # mistakes with the underline turned off too.
+        if not _AVAILABLE or not word:
             return []
         if self._checker is None:
             self._checker = SpellChecker()
@@ -158,8 +215,18 @@ class SpellHighlighter(QSyntaxHighlighter):
         block = self.currentBlock()
         if block.userState() in _SKIP_STATES:
             return
+        for start, end in self.misspelled_ranges(text):
+            self.setFormat(start, end - start, self._fmt)
+
+    def misspelled_ranges(self, text: str) -> list[tuple[int, int]]:
+        """[start, end) of each unknown word in a paragraph of prose:
+        what the underline marks, and what the Spelling panel lists
+        (with the underline turned off too)."""
+        if not _AVAILABLE or not text:
+            return []
         if self._checker is None:
             self._checker = SpellChecker()  # loads English by default
+        out = []
         for m in _WORD_RE.finditer(text):
             raw = m.group(0)
             if not _is_checkable(raw):
@@ -172,4 +239,5 @@ class SpellHighlighter(QSyntaxHighlighter):
                 cached = bool(self._checker.unknown([key]))
                 self._unknown_cache[key] = cached
             if cached:
-                self.setFormat(m.start(), m.end() - m.start(), self._fmt)
+                out.append((m.start(), m.end()))
+        return out

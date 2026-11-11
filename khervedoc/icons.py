@@ -1218,6 +1218,18 @@ def spell_check() -> QIcon:
     return c.done()
 
 
+def spelling_list() -> QIcon:
+    """The Spelling panel: a word underlined in red, then the list of
+    the others."""
+    c = _W(); c.text((0, 0, 24, 12), "abc", size=8, bold=True)
+    c.poly([(4, 13.5), (6, 12), (8, 13.5), (10, 12), (12, 13.5), (14, 12),
+            (16, 13.5), (18, 12), (20, 13.5)], color=QColor("#d8000c"),
+           closed=False, lw=1.2)
+    c.line(4, 17, 20, 17, _blue(), 1.4)
+    c.line(4, 20.5, 15, 20.5, _blue(), 1.4)
+    return c.done()
+
+
 # ----- review -----
 
 def comment() -> QIcon:

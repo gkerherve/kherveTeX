@@ -3266,6 +3266,67 @@ class DocumentEditor(QWidget):
     def set_spell_check_enabled(self, enabled: bool) -> None:
         self._spell_highlighter.set_enabled(enabled)
 
+    @property
+    def spell_highlighter(self):
+        return self._spell_highlighter
+
+    def misspellings(self) -> list[dict]:
+        """Every unknown word of the document's prose, in order, for the
+        Spelling panel: its start and end in the editor's text (Qt
+        positions), the word, and the text around it in its paragraph.
+        The same blocks as the underline: not math, figures, tables'
+        frames or raw LaTeX."""
+        from .spellcheck import _SKIP_STATES, context_around
+        sh = self._spell_highlighter
+        out = []
+        block = self._edit.document().begin()
+        while block.isValid():
+            text = block.text()
+            if text and block.userState() not in _SKIP_STATES:
+                ranges = sh.misspelled_ranges(text)
+                if ranges:
+                    # Qt counts UTF-16 units, Python code points.
+                    def u16(i: int, text=text) -> int:
+                        return len(text[:i].encode("utf-16-le")) // 2
+                    for a, b in ranges:
+                        before, after = context_around(text, a, b)
+                        out.append({"start": block.position() + u16(a),
+                                    "end": block.position() + u16(b),
+                                    "word": text[a:b],
+                                    "before": before, "after": after})
+            block = block.next()
+        return out
+
+    def select_range(self, start: int, end: int) -> None:
+        """Select [start, end) and scroll the page to it, as Find does
+        (the Spelling panel going to a mistake)."""
+        doc = self._edit.document()
+        last = doc.characterCount() - 1
+        c = QTextCursor(doc)
+        c.setPosition(min(start, last))
+        c.setPosition(min(end, last), QTextCursor.KeepAnchor)
+        self._edit.setTextCursor(c)
+        self._edit.ensureCursorVisible()
+        rect = self._edit.cursorRect()
+        pos = self._edit.mapTo(self, rect.center())
+        self._scroll.ensureVisible(pos.x(), pos.y(), 50, 80)
+
+    def replace_range(self, start: int, end: int, word: str, new: str) -> bool:
+        """Put `new` in place of [start, end) if it still reads `word`,
+        keeping the word's format (bold, italic, font), as the right-click
+        suggestions do; False when the text moved on."""
+        doc = self._edit.document()
+        if end > doc.characterCount() - 1:
+            return False
+        c = QTextCursor(doc)
+        c.setPosition(start)
+        c.setPosition(end, QTextCursor.KeepAnchor)
+        if c.selectedText() != word:
+            return False
+        fmt = c.charFormat()
+        c.insertText(new, fmt)
+        return True
+
     def _body_char_format(self) -> QTextCharFormat:
         """The baseline char format every body Text fragment uses on
         render. Carrying it explicitly (instead of letting Qt inherit

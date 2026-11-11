@@ -1094,6 +1094,20 @@ class MainWindow(QMainWindow):
         # The list only holds document names; the default width (the
         # sidebar's size hint) leaves the editor cramped.
         self.resizeDocks([self._project_dock], [150], Qt.Horizontal)
+        # The Spelling panel (Review > Spelling list, F7): every spelling
+        # mistake of the document in a list, to go to each and fix it.
+        from .spelling_panel import SpellingPanel
+        self._spelling_panel = SpellingPanel(self._editor, self)
+        self._spelling_dock = QDockWidget("Spelling", self)
+        self._spelling_dock.setObjectName("spelling_dock")
+        self._spelling_dock.setWidget(self._spelling_panel)
+        self._spelling_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self.addDockWidget(Qt.RightDockWidgetArea, self._spelling_dock)
+        self._spelling_dock.hide()
+        self.resizeDocks([self._spelling_dock], [300], Qt.Horizontal)
+        # Opening the panel checks the document.
+        self._spelling_dock.visibilityChanged.connect(
+            lambda shown: shown and self._spelling_panel.refresh())
         self._project_sidebar.chapterDoubleClicked.connect(self._switch_chapter)
         self._project_sidebar.chapterToggled.connect(self._on_chapter_toggled)
         self._project_sidebar.addChapterRequested.connect(self._on_add_document)
@@ -1602,6 +1616,20 @@ class MainWindow(QMainWindow):
         # in the right state (default ON when available).
         self.act_spell_check.setChecked(wanted and spell_available)
         self._editor.set_spell_check_enabled(wanted and spell_available)
+        # The Spelling panel's toggle (the dock's own action).
+        self.act_spelling_list = self._spelling_dock.toggleViewAction()
+        self.act_spelling_list.setText("Spelling &list")
+        self.act_spelling_list.setIcon(icons.spelling_list())
+        self.act_spelling_list.setShortcut(QKeySequence("F7"))
+        self.act_spelling_list.setEnabled(spell_available)
+        self.act_spelling_list.toggled.connect(
+            lambda on: on and self._spelling_panel.refresh())
+        # The words the user added to the dictionary stay known.
+        hl = self._editor.spell_highlighter
+        words = self._settings.value("spell_words", [], type=list) or []
+        hl.load_dictionary([w for w in words if isinstance(w, str)])
+        hl.on_word_added = lambda _w: self._settings.setValue(
+            "spell_words", hl.added_words())
         if spell_available:
             self.act_spell_check.setToolTip(
                 "Underline misspelled English words in red. "
@@ -1927,6 +1955,7 @@ class MainWindow(QMainWindow):
 
         m_tools = mb.addMenu("&Tools")
         m_tools.addAction(self.act_spell_check)
+        m_tools.addAction(self.act_spelling_list)
         m_tools.addAction(self.act_check_citations)
         m_review = m_tools.addMenu("&Comments && Highlights")
         m_review.addAction(self.act_comment)
@@ -2753,7 +2782,8 @@ class MainWindow(QMainWindow):
         ref.add_group("Captions", large=[self.act_caption,
                                          self.act_crossref])
         rev = rb.add_tab("Review")
-        rev.add_group("Proofing", large=[self.act_spell_check])
+        rev.add_group("Proofing", large=[self.act_spell_check,
+                                         self.act_spelling_list])
         rev.add_group("Comments", large=[self.act_comment],
                       rows=[[self.act_accept_comment],
                             [self.act_reject_comment]], text=True)
@@ -4868,6 +4898,7 @@ class MainWindow(QMainWindow):
         self.act_history.setIcon(icons.history())
         self.act_branches.setIcon(icons.branch())
         self.act_spell_check.setIcon(icons.spell_check())
+        self.act_spelling_list.setIcon(icons.spelling_list())
         self.act_highlight.setIcon(icons.highlight())
         self.act_comment.setIcon(icons.comment())
         self.act_accept_comment.setIcon(icons.accept_change())
@@ -6012,6 +6043,9 @@ class MainWindow(QMainWindow):
         # switching docclass via the LaTeX tab) may have changed
         # whether \chapter is allowed.
         self._sync_chapter_enabled()
+        # The Spelling panel follows the text while it is open.
+        if self._spelling_dock.isVisible():
+            self._spelling_panel.refresh()
         if self._auto_compile:
             self._kick_compile()
 

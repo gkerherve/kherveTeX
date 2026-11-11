@@ -121,6 +121,12 @@ TIPS: dict[str, tuple[str, str, str]] = {
         "Underlines misspelled English words in red as you type. "
         "Right-click a word for suggestions.",
         "Display only; nothing changes in the PDF."),
+    "act_spelling_list": ("Spelling list",
+        "Lists every spelling mistake of the document beside the page. "
+        "Click one to go to it, then change it to a suggestion, ignore "
+        "it or add the word to the dictionary: nothing is corrected "
+        "without you.",
+        "Display only; nothing changes in the PDF until you change a word."),
     "act_comment": ("New comment",
         "Attaches a comment to the selected text, like Word's Review ▸ "
         "New Comment. Co-authors see it in the margin.",
