@@ -1467,6 +1467,39 @@ def _class_authors(cls: str, children: list) -> str:
     return ""
 
 
+def _counters_before(proj: Project, chapter_docs: list[Document],
+                     has_chapter: bool, has_matter: bool) -> list[list[int]]:
+    """The heading counters (chapter, section, subsection, ...: the
+    commands _SECTION_COMMANDS names) as LaTeX has them at the start of
+    each document of the project, every document counted, ticked or not:
+    an unticked document keeps its place in the numbering, as the
+    Documents panel and the page view show it."""
+    counters = [0] * 6
+    out: list[list[int]] = []
+    prev_type = None
+    for ch, doc in zip(proj.chapters, chapter_docs):
+        ctype = getattr(ch, "chapter_type", "chapter")
+        if ctype != prev_type and ctype != "section":
+            # \appendix starts the chapters (or, in an article, the
+            # sections) again, lettered.
+            if ctype == "appendix":
+                counters = [0] * 6
+            prev_type = ctype
+        out.append(list(counters))
+        # \frontmatter and \backmatter chapters are not numbered.
+        unnumbered = has_matter and ctype in ("frontmatter", "backmatter")
+        for block in doc.children:
+            if not isinstance(block, Section) or not block.numbered:
+                continue
+            level = max(0, min(5, block.level - 1 if has_chapter else block.level))
+            if level == 0 and (unnumbered or not has_chapter):
+                continue
+            counters[level] += 1
+            for k in range(level + 1, 6):
+                counters[k] = 0
+    return out
+
+
 def serialize_project_master(proj: Project,
                              chapter_docs: list[Document] | None = None) -> str:
     """Generate the master .tex for a multi-chapter project.
@@ -1580,13 +1613,25 @@ def serialize_project_master(proj: Project,
     prev_numbering = None
     prev_type = None
     running_chapter = 0       # tracks the chapter counter across all entries
+    running_appendix = 0      # and the appendix letter
     running_page_offset = 0   # pages consumed by preceding disabled chapters
+    # A document left out since the last one printed: the next one sets
+    # its numbers so they stay what they are with every document in.
+    skipped = False
+    # What a left-out document would have started with (\appendix,
+    # \pagenumbering...): the next document printed starts with it.
+    carried: list[str] = []
     # \frontmatter / \mainmatter / \backmatter exist only in book-like
     # classes and the chapter counter only where \chapter does; emitting
     # them for an article project stopped it compiling.
     klass = (m.documentclass or "").lower()
     has_matter = klass in ("book", "memoir", "scrbook", "amsbook")
     types = [getattr(c, "chapter_type", "chapter") for c in proj.chapters]
+    # chapter_docs holds every document in order unless one could not be
+    # read; the section numbers need them all.
+    before = (_counters_before(proj, chapter_docs, has_chapter, has_matter)
+              if chapter_docs and len(chapter_docs) == len(proj.chapters)
+              else None)
     for idx, ch in enumerate(proj.chapters):
         cmds: list[str] = []
         ctype = types[idx]
@@ -1603,6 +1648,7 @@ def serialize_project_master(proj: Project,
             elif ctype == "appendix":
                 cmds.append("\\appendix")
                 running_chapter = 0
+                running_appendix = 0
             elif ctype == "backmatter" and has_matter:
                 cmds.append("\\backmatter")
             prev_type = ctype
@@ -1614,6 +1660,11 @@ def serialize_project_master(proj: Project,
                 running_chapter = ch_num
             else:
                 running_chapter += 1
+        elif ctype == "appendix":
+            if ch_num is not None:
+                running_appendix = ch_num
+            else:
+                running_appendix += 1
 
         if ch.numbering != prev_numbering:
             cmds.append(f"\\pagenumbering{{{ch.numbering}}}")
@@ -1623,7 +1674,11 @@ def serialize_project_master(proj: Project,
             # Skip the \include but account for the pages and chapter
             # number this entry would have consumed.
             running_page_offset += ch.last_known_pages or 0
+            skipped = True
+            carried += cmds
             continue
+        cmds = carried + cmds
+        carried = []
 
         # Enabled chapter: set counters to compensate for any skipped
         # chapters that came before.
@@ -1638,6 +1693,18 @@ def serialize_project_master(proj: Project,
 
         if ctype == "chapter" and has_chapter:
             cmds.append(f"\\setcounter{{chapter}}{{{running_chapter - 1}}}")
+        if skipped:
+            # An appendix keeps its letter, and a document that goes on
+            # in a chapter (a section document) or an article's part its
+            # section numbers, as with every document in.
+            if ctype == "appendix" and has_chapter:
+                cmds.append(f"\\setcounter{{chapter}}{{{running_appendix - 1}}}")
+            if before is not None and (ctype == "section" or not has_chapter):
+                counts = before[idx]
+                for level in range(1, 4):
+                    cmds.append(f"\\setcounter{{{_SECTION_COMMANDS[level]}}}"
+                                f"{{{counts[level]}}}")
+            skipped = False
 
         if cmds:
             body_parts.append("\n".join(cmds) + "\n")

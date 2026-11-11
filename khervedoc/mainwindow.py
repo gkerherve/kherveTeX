@@ -3650,13 +3650,14 @@ class MainWindow(QMainWindow):
         self._editor.set_first_page_number(start)
 
     def _heading_offset_before(self, idx: int) -> list[int]:
-        """Heading counters after all enabled documents before *idx*,
-        counted the way LaTeX counts them through the \\includes."""
+        """Heading counters after all documents before *idx*, counted the
+        way LaTeX counts them through the \\includes. An unticked
+        document counts too: leaving it out of the PDF keeps the numbers
+        of the others (the master sets them past it), so Chapter 3 is
+        still Chapter 3 on the page."""
         counters = [0] * 6
         proj_dir = self._project_path.parent
         for i, ch in enumerate(self._project.chapters[:idx]):
-            if not ch.enabled:
-                continue
             doc = self._project_chapter_docs.get(i)
             if doc is None:
                 try:
@@ -3673,11 +3674,9 @@ class MainWindow(QMainWindow):
         return counters
 
     def _on_chapter_toggled(self, idx: int, enabled: bool) -> None:
+        # The numbers stay: an unticked document still counts.
         if self._project is not None:
             self._project.chapters[idx].enabled = enabled
-            if idx < self._project_chapter_idx:
-                self._editor.set_heading_offset(
-                    self._heading_offset_before(self._project_chapter_idx))
 
     def _reorder_chapters(self, order: list) -> None:
         """Put the project's documents in *order* (old indices). LaTeX

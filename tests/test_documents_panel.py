@@ -98,7 +98,8 @@ def test_section_numbers_continue_across_documents(window, tmp_path,
     from PySide6.QtCore import Qt
     window._project_sidebar._list.item(0).setCheckState(Qt.Unchecked)
     window._switch_chapter(1)
-    assert first_number() == "1"          # ...so Methods is section 1
+    # Left out of the PDF, Introduction still counts: Methods stays 2.
+    assert first_number() == "2"
 
 
 # ---------------------------------------------------------- order / remove
