@@ -1,6 +1,6 @@
 name: macOS build
 
-# Builds only: arm64 (macos-14) and x86_64 (macos-15-intel) DMGs with the
+# Builds only: arm64 (macos-15) and x86_64 (macos-15-intel) DMGs with the
 # official tectonic binary and a warmed TeX cache bundled, ad hoc signed
 # (docs/MACOS_INSTALLER_SPEC.md in khervefitting-web). Uploads them as
 # workflow artifacts and never creates a release. Trigger:
@@ -19,7 +19,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-14
+          - runner: macos-15
             arch: arm64
           - runner: macos-15-intel
             arch: x86_64
